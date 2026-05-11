@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: serenityline-api
+
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+  messages:
+    basename: messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+
+server:
+  port: ${SERVER_PORT:3001}
+
