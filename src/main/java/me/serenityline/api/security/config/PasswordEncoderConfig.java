@@ -1,4 +1,4 @@
-package me.serenityline.api.auth.config;
+package me.serenityline.api.security.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

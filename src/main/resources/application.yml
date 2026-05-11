@@ -18,3 +18,6 @@ serenityline:
     access-token-ttl: 15m
     refresh-token-ttl: 30d
     session-ttl: 30d
+  security:
+    cors:
+      allowed-origins: [ ]

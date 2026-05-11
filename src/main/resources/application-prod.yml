@@ -11,7 +11,7 @@ spring:
     open-in-view: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
 
   flyway:
     enabled: true
@@ -19,11 +19,13 @@ spring:
 
 logging:
   level:
-    org.hibernate.SQL: debug
+    root: info
+    org.hibernate.SQL: warn
+    org.hibernate.orm.jdbc.bind: warn
 
 serenityline:
   security:
     cors:
       allowed-origins:
-        - http://localhost:5173
-        - http://localhost:5174
+        - https://serenityline.me
+        - https://www.serenityline.me
