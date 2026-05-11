@@ -13,3 +13,8 @@ spring:
 server:
   port: ${SERVER_PORT:3001}
 
+serenityline:
+  auth:
+    access-token-ttl: 15m
+    refresh-token-ttl: 30d
+    session-ttl: 30d
