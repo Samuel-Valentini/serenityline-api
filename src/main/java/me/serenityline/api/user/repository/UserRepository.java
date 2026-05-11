@@ -8,7 +8,12 @@ import java.util.UUID;
 
 public interface UserRepository extends JpaRepository<User, UUID> {
 
-    Optional<User> findByEmail(String email);
-
     boolean existsByEmail(String email);
+
+    Optional<User> findByEmailAndUserDeletedAtIsNull(String email);
+
+    /*TODO auth/account recovery:
+       Permettere a un utente soft-deleted di riaprire il proprio account entro la finestra di 30 giorni.*/
+
+    Optional<User> findByEmailAndUserDeletedAtIsNotNull(String email);
 }
