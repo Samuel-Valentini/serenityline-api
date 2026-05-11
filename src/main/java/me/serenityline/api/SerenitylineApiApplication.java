@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Samuel Valentini. All rights reserved.
+
 package me.serenityline.api;
 
 import org.springframework.boot.SpringApplication;
