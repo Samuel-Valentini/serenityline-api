@@ -21,7 +21,7 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     ordered from newest to oldest
     taking only the first result */
 
-    /* Dammi il refresh token più recente di questa sessione che:
+    /* (Italian) Dammi il refresh token più recente di questa sessione che:
         - appartiene a questa userSession
         - non è mai stato usato
         - non è stato revocato
