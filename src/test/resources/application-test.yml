@@ -24,6 +24,9 @@ serenityline:
         - http://localhost:5173
     token-hashing:
       secret: ${TOKEN_HASHING_SECRET}
+    email-outbox:
+      encryption-key-id: ${EMAIL_OUTBOX_ENCRYPTION_KEY_ID}
+      encryption-key-base64: ${EMAIL_OUTBOX_ENCRYPTION_KEY_BASE64}
 
 logging:
   level:

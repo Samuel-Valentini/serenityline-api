@@ -23,3 +23,4 @@ serenityline:
       allowed-origins: [ ]
       token-hashing:
         secret: ${TOKEN_HASHING_SECRET}
+
