@@ -5,6 +5,7 @@ import me.serenityline.api.auth.dto.*;
 import me.serenityline.api.auth.service.EmailVerificationService;
 import me.serenityline.api.auth.service.LoginService;
 import me.serenityline.api.auth.service.RegisterService;
+import me.serenityline.api.auth.service.RestoreAccountService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,11 +20,13 @@ public class AuthController {
     private final RegisterService registerService;
     private final EmailVerificationService emailVerificationService;
     private final LoginService loginService;
+    private final RestoreAccountService restoreAccountService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
+        this.restoreAccountService = restoreAccountService;
     }
 
     @PostMapping("/register")
@@ -44,10 +47,30 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(
+    public ResponseEntity<?> login(
             @Valid @RequestBody LoginRequest request
     ) {
-        LoginResponse response = loginService.login(request);
-        return ResponseEntity.ok(response);
+        LoginResult result = loginService.login(request);
+
+        if (result.isRestoreRequired()) {
+            return ResponseEntity
+                    .status(HttpStatus.CONFLICT)
+                    .body(result.restoreAccountChallenge());
+        }
+
+        return ResponseEntity.ok(result.loginResponse());
+    }
+
+    @PostMapping("/restore-account")
+    public ResponseEntity<?> restoreAccount(
+            @Valid @RequestBody RestoreAccountRequest request
+    ) {
+        RestoreAccountResult result = restoreAccountService.restoreAccount(request);
+
+        if (result.isVerificationRequired()) {
+            return ResponseEntity.ok(result.verificationRequiredResponse());
+        }
+
+        return ResponseEntity.ok(result.loginResponse());
     }
 }

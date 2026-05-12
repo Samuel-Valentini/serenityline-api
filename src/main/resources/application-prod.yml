@@ -34,3 +34,6 @@ serenityline:
     email-outbox:
       encryption-key-id: ${EMAIL_OUTBOX_ENCRYPTION_KEY_ID}
       encryption-key-base64: ${EMAIL_OUTBOX_ENCRYPTION_KEY_BASE64}
+  auth:
+    restore-account:
+      token-ttl: ${RESTORE_ACCOUNT_TOKEN_TTL:10m}

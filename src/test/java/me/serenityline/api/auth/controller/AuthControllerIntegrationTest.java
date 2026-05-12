@@ -1,5 +1,7 @@
 package me.serenityline.api.auth.controller;
 
+
+import com.jayway.jsonpath.JsonPath;
 import me.serenityline.api.auth.entity.*;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
 import me.serenityline.api.auth.repository.EmailOutboxRepository;
@@ -18,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -27,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class AuthControllerIntegrationTest extends IntegrationTestSupport {
@@ -738,7 +742,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void loginShouldReturnAccountPendingDeletionForSoftDeletedUserWithCorrectPassword() throws Exception {
+    void loginShouldReturnRestoreChallengeForSoftDeletedUserWithCorrectPassword() throws Exception {
         String token = registerAndExtractVerificationToken();
 
         verifyEmail(token);
@@ -748,6 +752,9 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
+
+        assertThat(user.isUserIsEnabled()).isTrue();
+        assertThat(user.isPendingDeletion()).isTrue();
 
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -759,7 +766,15 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("auth.login.accountPendingDeletion"));
+                .andExpect(jsonPath("$.restoreToken").exists())
+                .andExpect(jsonPath("$.restoreTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.code").doesNotExist());
+
+        List<AuthActionToken> tokens = authActionTokenRepository.findAll();
+
+        assertThat(tokens)
+                .filteredOn(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.RESTORE_ACCOUNT)
+                .hasSize(1);
     }
 
     @Test
@@ -785,6 +800,270 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+    }
+
+    @Test
+    void restoreAccountShouldRestoreSoftDeletedUserAndMarkTokenAsUsed() throws Exception {
+        String verificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(verificationToken);
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        String restoreToken = loginAndExtractRestoreToken();
+
+        mockMvc.perform(post("/api/auth/restore-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "restoreToken": "%s"
+                                }
+                                """.formatted(restoreToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.userName").value("Samuel"))
+                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.userGroupId").exists())
+                .andExpect(jsonPath("$.userGroupName").value("Samuel's group"))
+                .andExpect(jsonPath("$.userRole").value("OWNER"))
+                .andExpect(jsonPath("$.userPlatformRole").value("USER"))
+                .andExpect(jsonPath("$.preferredLocale").value("en-US"))
+                .andExpect(jsonPath("$.preferredTheme").value("DEFAULT"))
+                .andExpect(jsonPath("$.wantsInvoice").value(false));
+
+        User restoredUser = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(restoredUser.isPendingDeletion()).isFalse();
+        assertThat(restoredUser.getUserDeletedAt()).isNull();
+        assertThat(restoredUser.getUserLastLoginAt()).isNotNull();
+        assertThat(restoredUser.isUserIsEnabled()).isTrue();
+        assertThat(restoredUser.getUserLastLoginAt()).isNotNull();
+
+        AuthActionToken restoreActionToken = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.RESTORE_ACCOUNT)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(restoreActionToken.getAuthActionUsedAt()).isNotNull();
+        assertThat(restoreActionToken.getAuthActionRevokedAt()).isNull();
+
+        List<EmailOutbox> verificationEmails = emailOutboxRepository.findAll().stream()
+                .filter(email -> email.getEmailType() == EmailOutboxType.EMAIL_VERIFICATION)
+                .toList();
+
+        assertThat(verificationEmails).hasSize(1);
+
+    }
+
+    @Test
+    void restoreAccountShouldRejectInvalidToken() throws Exception {
+        mockMvc.perform(post("/api/auth/restore-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "restoreToken": "invalid-token"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.restoreAccount.invalidOrExpired"));
+    }
+
+    @Test
+    void restoreAccountShouldRejectAlreadyUsedRestoreToken() throws Exception {
+        String verificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(verificationToken);
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        String restoreToken = loginAndExtractRestoreToken();
+
+        mockMvc.perform(post("/api/auth/restore-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "restoreToken": "%s"
+                                }
+                                """.formatted(restoreToken)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/auth/restore-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "restoreToken": "%s"
+                                }
+                                """.formatted(restoreToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.restoreAccount.invalidOrExpired"));
+    }
+
+    @Test
+    void loginShouldRevokePreviousRestoreTokenWhenCreatingNewRestoreChallenge() throws Exception {
+        String verificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(verificationToken);
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        String firstRestoreToken = loginAndExtractRestoreToken();
+        String secondRestoreToken = loginAndExtractRestoreToken();
+
+        assertThat(secondRestoreToken).isNotEqualTo(firstRestoreToken);
+
+        List<AuthActionToken> restoreTokens = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.RESTORE_ACCOUNT)
+                .toList();
+
+        assertThat(restoreTokens).hasSize(2);
+
+        assertThat(restoreTokens)
+                .filteredOn(actionToken -> actionToken.getAuthActionRevokedAt() != null)
+                .hasSize(1);
+
+        assertThat(restoreTokens)
+                .filteredOn(actionToken -> actionToken.getAuthActionRevokedAt() == null)
+                .hasSize(1);
+
+        mockMvc.perform(post("/api/auth/restore-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "restoreToken": "%s"
+                                }
+                                """.formatted(firstRestoreToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.restoreAccount.invalidOrExpired"));
+    }
+
+    @Test
+    void loginShouldReturnRestoreChallengeForSoftDeletedUnverifiedUserWithCorrectPassword() throws Exception {
+        registerAndExtractVerificationToken();
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(user.isUserIsEnabled()).isFalse();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.restoreToken").exists())
+                .andExpect(jsonPath("$.restoreTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.code").doesNotExist());
+
+        List<AuthActionToken> restoreTokens = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.RESTORE_ACCOUNT)
+                .toList();
+
+        assertThat(restoreTokens).hasSize(1);
+        assertThat(restoreTokens.getFirst().getAuthActionUsedAt()).isNull();
+        assertThat(restoreTokens.getFirst().getAuthActionRevokedAt()).isNull();
+    }
+
+    @Test
+    void restoreAccountShouldRestoreUnverifiedUserWithoutLoginAndCreateNewVerificationEmail() throws Exception {
+        registerAndExtractVerificationToken();
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(user.isUserIsEnabled()).isFalse();
+        assertThat(user.getUserLastLoginAt()).isNull();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        String restoreToken = loginAndExtractRestoreToken();
+
+        mockMvc.perform(post("/api/auth/restore-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "restoreToken": "%s"
+                                }
+                                """.formatted(restoreToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.preferredLocale").value("en-US"))
+                .andExpect(jsonPath("$.emailVerificationRequired").value(true))
+                .andExpect(jsonPath("$.userName").doesNotExist())
+                .andExpect(jsonPath("$.userGroupId").doesNotExist())
+                .andExpect(jsonPath("$.userRole").doesNotExist())
+                .andExpect(jsonPath("$.userPlatformRole").doesNotExist());
+
+        User restoredUser = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(restoredUser.isPendingDeletion()).isFalse();
+        assertThat(restoredUser.getUserDeletedAt()).isNull();
+        assertThat(restoredUser.isUserIsEnabled()).isFalse();
+        assertThat(restoredUser.getUserLastLoginAt()).isNull();
+
+        AuthActionToken restoreActionToken = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.RESTORE_ACCOUNT)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(restoreActionToken.getAuthActionUsedAt()).isNotNull();
+        assertThat(restoreActionToken.getAuthActionRevokedAt()).isNull();
+
+        List<AuthActionToken> emailVerificationTokens = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.EMAIL_VERIFICATION)
+                .toList();
+
+        assertThat(emailVerificationTokens).hasSize(2);
+
+        assertThat(emailVerificationTokens)
+                .filteredOn(actionToken -> actionToken.getAuthActionRevokedAt() != null)
+                .hasSize(1);
+
+        assertThat(emailVerificationTokens)
+                .filteredOn(actionToken -> actionToken.getAuthActionRevokedAt() == null)
+                .hasSize(1);
+
+        List<EmailOutbox> verificationEmails = emailOutboxRepository.findAll().stream()
+                .filter(email -> email.getEmailType() == EmailOutboxType.EMAIL_VERIFICATION)
+                .toList();
+
+        assertThat(verificationEmails).hasSize(2);
+
+        assertThat(verificationEmails)
+                .filteredOn(email -> email.getEmailStatus() == EmailOutboxStatus.CANCELLED)
+                .hasSize(1);
+
+        assertThat(verificationEmails)
+                .filteredOn(email -> email.getEmailStatus() == EmailOutboxStatus.PENDING)
+                .hasSize(1);
     }
 
     private String registerAndExtractVerificationToken() throws Exception {
@@ -816,5 +1095,27 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 """.formatted(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.emailVerified").value(true));
+    }
+
+    private String loginAndExtractRestoreToken() throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!"
+                                }
+                                """))
+                .andDo(print())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.restoreToken").exists())
+                .andExpect(jsonPath("$.restoreTokenExpiresAt").exists())
+                .andReturn();
+
+        return JsonPath.read(
+                result.getResponse().getContentAsString(),
+                "$.restoreToken"
+        );
     }
 }

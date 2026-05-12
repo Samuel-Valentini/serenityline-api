@@ -419,26 +419,30 @@ public class User {
     }
 
     public void markAsSoftDeleted() {
-        if (this.userDeletedAt != null) {
-            throw validationError("user.alreadyPendingDeletion");
+        if (isPendingDeletion()) {
+            throw new IllegalStateException("user.alreadyPendingDeletion");
         }
 
-        this.userDeletedAt = OffsetDateTime.now();
-        this.userIsEnabled = false;
+        OffsetDateTime now = OffsetDateTime.now();
+
+        this.userDeletedAt = now;
+        this.userUpdatedAt = now;
+
         incrementTokenVersion();
     }
 
     public void restoreFromSoftDelete() {
-        if (this.userDeletedAt == null) {
-            throw validationError("user.notPendingDeletion");
+        if (!isPendingDeletion()) {
+            throw new IllegalStateException("user.notPendingDeletion");
         }
 
         if (isHardDeletionDue()) {
-            throw validationError("user.softDeleteGracePeriodExpired");
+            throw new IllegalStateException("user.hardDeletionDue");
         }
 
         this.userDeletedAt = null;
-        this.userIsEnabled = true;
+        this.userUpdatedAt = OffsetDateTime.now();
+
         incrementTokenVersion();
     }
 
