@@ -1,5 +1,6 @@
 package me.serenityline.api.auth.service;
 
+import me.serenityline.api.auth.dto.VerifyEmailResponse;
 import me.serenityline.api.auth.entity.*;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
 import me.serenityline.api.auth.repository.EmailOutboxRepository;
@@ -89,6 +90,10 @@ public class EmailVerificationService {
                 || tokenTtl.compareTo(Duration.ofMinutes(1)) < 0) {
             throw new IllegalStateException("auth.emailVerification.tokenTtl.invalid");
         }
+    }
+
+    private static IllegalArgumentException invalidEmailVerificationToken() {
+        return new IllegalArgumentException("auth.emailVerification.invalidOrExpired");
     }
 
     @Transactional
@@ -250,4 +255,47 @@ public class EmailVerificationService {
                 )
                 .forEach(EmailOutbox::cancel);
     }
+
+    @Transactional
+    public VerifyEmailResponse verifyEmail(String plainToken) {
+        if (plainToken == null || plainToken.isBlank()) {
+            throw new IllegalArgumentException("auth.token.required");
+        }
+
+        String normalizedToken = plainToken.trim();
+        String tokenHash = tokenHashingService.hash(normalizedToken);
+
+        AuthActionToken actionToken = authActionTokenRepository
+                .findByAuthActionTokenHashForUpdate(tokenHash)
+                .orElseThrow(EmailVerificationService::invalidEmailVerificationToken);
+
+        if (actionToken.getAuthActionTokenType() != AuthActionTokenType.EMAIL_VERIFICATION) {
+            throw invalidEmailVerificationToken();
+        }
+
+        User user = actionToken.getUser();
+
+        if (user.isPendingDeletion()) {
+            throw invalidEmailVerificationToken();
+        }
+
+        if (user.isUserIsEnabled()) {
+            return VerifyEmailResponse.verified();
+        }
+
+        if (!actionToken.isPending()) {
+            throw invalidEmailVerificationToken();
+        }
+
+        try {
+            actionToken.markUsed(AuthActionTokenType.EMAIL_VERIFICATION);
+        } catch (IllegalStateException ex) {
+            throw invalidEmailVerificationToken();
+        }
+
+        user.setUserIsEnabled(true);
+
+        return VerifyEmailResponse.verified();
+    }
+
 }

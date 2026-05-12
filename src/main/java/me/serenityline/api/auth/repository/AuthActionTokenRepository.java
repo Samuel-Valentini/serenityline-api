@@ -1,9 +1,13 @@
 package me.serenityline.api.auth.repository;
 
+import jakarta.persistence.LockModeType;
 import me.serenityline.api.auth.entity.AuthActionToken;
 import me.serenityline.api.auth.entity.AuthActionTokenType;
 import me.serenityline.api.user.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -54,5 +58,16 @@ public interface AuthActionTokenRepository extends JpaRepository<AuthActionToken
             User user,
             AuthActionTokenType authActionTokenType,
             OffsetDateTime now
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select token
+            from AuthActionToken token
+            join fetch token.user
+            where token.authActionTokenHash = :authActionTokenHash
+            """)
+    Optional<AuthActionToken> findByAuthActionTokenHashForUpdate(
+            @Param("authActionTokenHash") String authActionTokenHash
     );
 }

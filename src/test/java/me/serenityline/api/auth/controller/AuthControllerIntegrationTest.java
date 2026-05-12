@@ -530,4 +530,145 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(pendingEmail.getEmailCancelledAt()).isNull();
         assertThat(pendingEmail.getRecipientEmail()).isEqualTo("samuel@example.com");
     }
+
+    @Test
+    void verifyEmailShouldEnableUserAndMarkTokenAsUsed() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "token": "%s"
+                                }
+                                """.formatted(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.emailVerified").value(true));
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(user.isUserIsEnabled()).isTrue();
+
+        AuthActionToken actionToken = authActionTokenRepository.findAll().getFirst();
+
+        assertThat(actionToken.getAuthActionUsedAt()).isNotNull();
+        assertThat(actionToken.getAuthActionRevokedAt()).isNull();
+    }
+
+    @Test
+    void verifyEmailShouldRejectInvalidToken() throws Exception {
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "token": "invalid-token"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.emailVerification.invalidOrExpired"));
+    }
+
+    @Test
+    void verifyEmailShouldRejectBlankToken() throws Exception {
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "token": " "
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"))
+                .andExpect(jsonPath("$.fieldErrors[0].code").value("auth.token.required"));
+    }
+
+    @Test
+    void verifyEmailShouldBeIdempotentAfterSuccessfulVerification() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "token": "%s"
+                                }
+                                """.formatted(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.emailVerified").value(true));
+
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "token": "%s"
+                                }
+                                """.formatted(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.emailVerified").value(true));
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(user.isUserIsEnabled()).isTrue();
+
+        AuthActionToken actionToken = authActionTokenRepository.findAll().getFirst();
+
+        assertThat(actionToken.getAuthActionUsedAt()).isNotNull();
+    }
+
+    @Test
+    void verifyEmailShouldRejectRevokedTokenAfterNewVerificationEmailIsCreated() throws Exception {
+        String oldToken = registerAndExtractVerificationToken();
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        emailVerificationService.createEmailVerification(user);
+
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "token": "%s"
+                                }
+                                """.formatted(oldToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.emailVerification.invalidOrExpired"));
+
+        User reloadedUser = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(reloadedUser.isUserIsEnabled()).isFalse();
+
+        assertThat(authActionTokenRepository.findAll())
+                .filteredOn(token -> token.getAuthActionRevokedAt() != null)
+                .hasSize(1);
+
+        assertThat(authActionTokenRepository.findAll())
+                .filteredOn(token -> token.getAuthActionRevokedAt() == null)
+                .hasSize(1);
+    }
+
+    private String registerAndExtractVerificationToken() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "userName": "Samuel",
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "preferredLocale": "en-US"
+                                }
+                                """))
+                .andExpect(status().isCreated());
+
+        EmailOutbox emailOutbox = emailOutboxRepository.findAll().getFirst();
+
+        return extractTokenFromBody(decryptTextBody(emailOutbox));
+    }
 }
