@@ -21,3 +21,5 @@ serenityline:
   security:
     cors:
       allowed-origins: [ ]
+      token-hashing:
+        secret: ${TOKEN_HASHING_SECRET}

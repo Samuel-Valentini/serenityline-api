@@ -22,6 +22,8 @@ serenityline:
     cors:
       allowed-origins:
         - http://localhost:5173
+    token-hashing:
+      secret: ${TOKEN_HASHING_SECRET}
 
 logging:
   level:

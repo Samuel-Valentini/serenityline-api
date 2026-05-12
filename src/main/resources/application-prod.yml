@@ -29,3 +29,5 @@ serenityline:
       allowed-origins:
         - https://serenityline.me
         - https://www.serenityline.me
+    token-hashing:
+      secret: ${TOKEN_HASHING_SECRET}

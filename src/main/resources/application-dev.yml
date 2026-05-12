@@ -27,3 +27,5 @@ serenityline:
       allowed-origins:
         - http://localhost:5173
         - http://localhost:5174
+    token-hashing:
+      secret: ${TOKEN_HASHING_SECRET}
