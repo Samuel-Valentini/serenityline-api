@@ -1,11 +1,9 @@
 package me.serenityline.api.auth.controller;
 
 import jakarta.validation.Valid;
-import me.serenityline.api.auth.dto.RegisterRequest;
-import me.serenityline.api.auth.dto.RegisterResponse;
-import me.serenityline.api.auth.dto.VerifyEmailRequest;
-import me.serenityline.api.auth.dto.VerifyEmailResponse;
+import me.serenityline.api.auth.dto.*;
 import me.serenityline.api.auth.service.EmailVerificationService;
+import me.serenityline.api.auth.service.LoginService;
 import me.serenityline.api.auth.service.RegisterService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,10 +18,12 @@ public class AuthController {
 
     private final RegisterService registerService;
     private final EmailVerificationService emailVerificationService;
+    private final LoginService loginService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
+        this.loginService = loginService;
     }
 
     @PostMapping("/register")
@@ -40,6 +40,14 @@ public class AuthController {
             @Valid @RequestBody VerifyEmailRequest request
     ) {
         VerifyEmailResponse response = emailVerificationService.verifyEmail(request.token());
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request
+    ) {
+        LoginResponse response = loginService.login(request);
         return ResponseEntity.ok(response);
     }
 }

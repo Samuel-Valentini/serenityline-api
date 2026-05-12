@@ -653,6 +653,140 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .hasSize(1);
     }
 
+    @Test
+    void loginShouldRejectUnverifiedEmail() throws Exception {
+        registerAndExtractVerificationToken();
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("auth.login.emailNotVerified"));
+    }
+
+    @Test
+    void loginShouldAuthenticateVerifiedUser() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        verifyEmail(token);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.userName").value("Samuel"))
+                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.userGroupId").exists())
+                .andExpect(jsonPath("$.userGroupName").value("Samuel's group"))
+                .andExpect(jsonPath("$.userRole").value("OWNER"))
+                .andExpect(jsonPath("$.userPlatformRole").value("USER"))
+                .andExpect(jsonPath("$.preferredLocale").value("en-US"))
+                .andExpect(jsonPath("$.preferredTheme").value("DEFAULT"))
+                .andExpect(jsonPath("$.wantsInvoice").value(false));
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(user.getUserLastLoginAt()).isNotNull();
+    }
+
+    @Test
+    void loginShouldRejectWrongPassword() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        verifyEmail(token);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "WrongPassword-2026!"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+    }
+
+    @Test
+    void loginShouldRejectUnknownEmail() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "missing@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+    }
+
+    @Test
+    void loginShouldReturnAccountPendingDeletionForSoftDeletedUserWithCorrectPassword() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        verifyEmail(token);
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("auth.login.accountPendingDeletion"));
+    }
+
+    @Test
+    void loginShouldNotRevealSoftDeletedAccountWithWrongPassword() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        verifyEmail(token);
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "WrongPassword-2026!"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+    }
+
     private String registerAndExtractVerificationToken() throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -670,5 +804,17 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         EmailOutbox emailOutbox = emailOutboxRepository.findAll().getFirst();
 
         return extractTokenFromBody(decryptTextBody(emailOutbox));
+    }
+
+    private void verifyEmail(String token) throws Exception {
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "token": "%s"
+                                }
+                                """.formatted(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.emailVerified").value(true));
     }
 }
