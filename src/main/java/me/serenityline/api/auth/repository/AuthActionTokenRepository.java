@@ -6,6 +6,7 @@ import me.serenityline.api.user.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -44,6 +45,12 @@ public interface AuthActionTokenRepository extends JpaRepository<AuthActionToken
 
 
     Optional<AuthActionToken> findFirstByUserAndAuthActionTokenTypeAndAuthActionUsedAtIsNullAndAuthActionRevokedAtIsNullAndAuthActionExpiresAtAfterOrderByAuthActionCreatedAtDesc(
+            User user,
+            AuthActionTokenType authActionTokenType,
+            OffsetDateTime now
+    );
+
+    List<AuthActionToken> findAllByUserAndAuthActionTokenTypeAndAuthActionUsedAtIsNullAndAuthActionRevokedAtIsNullAndAuthActionExpiresAtAfter(
             User user,
             AuthActionTokenType authActionTokenType,
             OffsetDateTime now

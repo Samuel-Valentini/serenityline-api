@@ -1,5 +1,12 @@
 package me.serenityline.api.auth.controller;
 
+import me.serenityline.api.auth.entity.*;
+import me.serenityline.api.auth.repository.AuthActionTokenRepository;
+import me.serenityline.api.auth.repository.EmailOutboxRepository;
+import me.serenityline.api.auth.service.EmailVerificationService;
+import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
+import me.serenityline.api.security.crypto.EncryptedValue;
+import me.serenityline.api.security.token.TokenHashingService;
 import me.serenityline.api.support.IntegrationTestSupport;
 import me.serenityline.api.user.entity.User;
 import me.serenityline.api.user.entity.UserGroup;
@@ -12,6 +19,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -31,6 +39,21 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private UserGroupRepository userGroupRepository;
+
+    @Autowired
+    private AuthActionTokenRepository authActionTokenRepository;
+
+    @Autowired
+    private EmailOutboxRepository emailOutboxRepository;
+
+    @Autowired
+    private EmailOutboxEncryptionService emailOutboxEncryptionService;
+
+    @Autowired
+    private TokenHashingService tokenHashingService;
+
+    @Autowired
+    private EmailVerificationService emailVerificationService;
 
     @Test
     void registerShouldCreateDisabledOwnerUserAndGroup() throws Exception {
@@ -254,6 +277,129 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, containsString("POST")));
     }
 
+    @Test
+    void registerShouldCreateEmailVerificationTokenAndOutboxEmail() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "userName": "Samuel",
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "preferredLocale": "en-US",
+                                  "wantsInvoice": false
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.emailVerificationRequired").value(true));
+
+        List<AuthActionToken> tokens = authActionTokenRepository.findAll();
+
+        assertThat(tokens).hasSize(1);
+
+        AuthActionToken token = tokens.getFirst();
+
+        assertThat(token.getAuthActionTokenType()).isEqualTo(AuthActionTokenType.EMAIL_VERIFICATION);
+        assertThat(token.getAuthActionTokenHash()).isNotBlank();
+        assertThat(token.getAuthActionUsedAt()).isNull();
+        assertThat(token.getAuthActionRevokedAt()).isNull();
+        assertThat(token.getAuthActionExpiresAt()).isAfter(OffsetDateTime.now());
+
+        List<EmailOutbox> emails = emailOutboxRepository.findAll();
+
+        assertThat(emails).hasSize(1);
+
+        EmailOutbox emailOutbox = emails.getFirst();
+
+        assertThat(emailOutbox.getEmailType()).isEqualTo(EmailOutboxType.EMAIL_VERIFICATION);
+        assertThat(emailOutbox.getEmailStatus()).isEqualTo(EmailOutboxStatus.PENDING);
+        assertThat(emailOutbox.getRecipientEmail()).isEqualTo("samuel@example.com");
+        assertThat(emailOutbox.getAttempts()).isZero();
+        assertThat(emailOutbox.isDeleteBodyAfterSend()).isTrue();
+
+        assertThat(emailOutbox.getSubjectEncrypted()).isNotEmpty();
+        assertThat(emailOutbox.getSubjectIv()).hasSize(12);
+        assertThat(emailOutbox.getSubjectTag()).hasSize(16);
+
+        assertThat(emailOutbox.getBodyHtmlEncrypted()).isNull();
+        assertThat(emailOutbox.getBodyTextEncrypted()).isNotEmpty();
+        assertThat(emailOutbox.getBodyTextIv()).hasSize(12);
+        assertThat(emailOutbox.getBodyTextTag()).hasSize(16);
+
+        String subject = decryptSubject(emailOutbox);
+        String body = decryptTextBody(emailOutbox);
+
+        assertThat(subject).isEqualTo("Verify your SerenityLine email");
+        assertThat(body).contains("http://localhost:5173/verify-email#token=");
+        assertThat(body).contains("http://localhost:5173/verify-email");
+        assertThat(body).contains("This link expires in 1 day.");
+    }
+
+    @Test
+    void registerShouldStoreOnlyTokenHashMatchingEmailToken() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "userName": "Samuel",
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "preferredLocale": "en-US"
+                                }
+                                """))
+                .andExpect(status().isCreated());
+
+        AuthActionToken actionToken = authActionTokenRepository.findAll().getFirst();
+        EmailOutbox emailOutbox = emailOutboxRepository.findAll().getFirst();
+
+        String body = decryptTextBody(emailOutbox);
+
+        String plainToken = extractTokenFromBody(body);
+
+        assertThat(plainToken)
+                .isNotBlank()
+                .matches("[A-Za-z0-9_-]+");
+
+        assertThat(actionToken.getAuthActionTokenHash()).isEqualTo(
+                tokenHashingService.hash(plainToken)
+        );
+
+        assertThat(actionToken.getAuthActionTokenHash()).isNotEqualTo(plainToken);
+    }
+
+    @Test
+    void registerShouldRejectDuplicateEmail() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "userName": "Samuel",
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "preferredLocale": "en-US"
+                                }
+                                """))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "userName": "Another Samuel",
+                                  "email": "samuel@example.com",
+                                  "password": "AnotherVeryStrongPassword-2026!",
+                                  "preferredLocale": "en-US"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("auth.register.emailAlreadyExists"));
+
+        assertThat(authActionTokenRepository.findAll()).hasSize(1);
+        assertThat(emailOutboxRepository.findAll()).hasSize(1);
+    }
+
     private void registerValidUser(String email) throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
@@ -274,5 +420,114 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 prefix,
                 UUID.randomUUID().toString().replace("-", "")
         );
+    }
+
+    private String decryptSubject(EmailOutbox emailOutbox) {
+        return emailOutboxEncryptionService.decrypt(
+                new EncryptedValue(
+                        emailOutbox.getSubjectEncrypted(),
+                        emailOutbox.getSubjectIv(),
+                        emailOutbox.getSubjectTag()
+                )
+        );
+    }
+
+    private String decryptTextBody(EmailOutbox emailOutbox) {
+        return emailOutboxEncryptionService.decrypt(
+                new EncryptedValue(
+                        emailOutbox.getBodyTextEncrypted(),
+                        emailOutbox.getBodyTextIv(),
+                        emailOutbox.getBodyTextTag()
+                )
+        );
+    }
+
+    private String extractTokenFromBody(String body) {
+        String marker = "#token=";
+
+        int tokenStart = body.indexOf(marker);
+
+        assertThat(tokenStart).isGreaterThanOrEqualTo(0);
+
+        tokenStart += marker.length();
+
+        int tokenEnd = body.indexOf('\n', tokenStart);
+
+        if (tokenEnd == -1) {
+            tokenEnd = body.length();
+        }
+
+        return body.substring(tokenStart, tokenEnd).trim();
+    }
+
+    @Test
+    void createEmailVerificationShouldCancelPreviousPendingEmailsAndRevokePreviousTokens() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "userName": "Samuel",
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "preferredLocale": "en-US"
+                                }
+                                """))
+                .andExpect(status().isCreated());
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(authActionTokenRepository.findAll()).hasSize(1);
+        assertThat(emailOutboxRepository.findAll()).hasSize(1);
+
+        emailVerificationService.createEmailVerification(user);
+
+        List<AuthActionToken> tokens = authActionTokenRepository.findAll();
+
+        assertThat(tokens).hasSize(2);
+
+        assertThat(tokens)
+                .filteredOn(token -> token.getAuthActionTokenType() == AuthActionTokenType.EMAIL_VERIFICATION)
+                .hasSize(2);
+
+        assertThat(tokens)
+                .filteredOn(token -> token.getAuthActionRevokedAt() == null)
+                .hasSize(1);
+
+        assertThat(tokens)
+                .filteredOn(token -> token.getAuthActionRevokedAt() != null)
+                .hasSize(1);
+
+        List<EmailOutbox> emails = emailOutboxRepository.findAll();
+
+        assertThat(emails).hasSize(2);
+
+        assertThat(emails)
+                .filteredOn(email -> email.getEmailType() == EmailOutboxType.EMAIL_VERIFICATION)
+                .hasSize(2);
+
+        assertThat(emails)
+                .filteredOn(email -> email.getEmailStatus() == EmailOutboxStatus.PENDING)
+                .hasSize(1);
+
+        assertThat(emails)
+                .filteredOn(email -> email.getEmailStatus() == EmailOutboxStatus.CANCELLED)
+                .hasSize(1);
+
+        EmailOutbox cancelledEmail = emails.stream()
+                .filter(email -> email.getEmailStatus() == EmailOutboxStatus.CANCELLED)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(cancelledEmail.getEmailCancelledAt()).isNotNull();
+
+        EmailOutbox pendingEmail = emails.stream()
+                .filter(email -> email.getEmailStatus() == EmailOutboxStatus.PENDING)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(pendingEmail.getEmailCancelledAt()).isNull();
+        assertThat(pendingEmail.getRecipientEmail()).isEqualTo("samuel@example.com");
     }
 }

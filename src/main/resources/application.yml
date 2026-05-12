@@ -18,9 +18,13 @@ serenityline:
     access-token-ttl: 15m
     refresh-token-ttl: 30d
     session-ttl: 30d
+    email-verification:
+      token-ttl: 24h
   security:
     cors:
       allowed-origins: [ ]
       token-hashing:
         secret: ${TOKEN_HASHING_SECRET}
+  frontend:
+    base-url: ${FRONTEND_BASE_URL}
 

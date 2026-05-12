@@ -21,17 +21,20 @@ public class RegisterService {
     private final UserGroupRepository userGroupRepository;
     private final PasswordEncoder passwordEncoder;
     private final PasswordPolicyService passwordPolicyService;
+    private final EmailVerificationService emailVerificationService;
 
     public RegisterService(
             UserRepository userRepository,
             UserGroupRepository userGroupRepository,
             PasswordEncoder passwordEncoder,
-            PasswordPolicyService passwordPolicyService
+            PasswordPolicyService passwordPolicyService,
+            EmailVerificationService emailVerificationService
     ) {
         this.userRepository = userRepository;
         this.userGroupRepository = userGroupRepository;
         this.passwordEncoder = passwordEncoder;
         this.passwordPolicyService = passwordPolicyService;
+        this.emailVerificationService = emailVerificationService;
     }
 
     @Transactional
@@ -82,6 +85,8 @@ public class RegisterService {
         userGroupRepository.save(userGroup);
 
         User savedUser = userRepository.save(userGroupOwner);
+
+        emailVerificationService.createEmailVerification(savedUser);
 
         return RegisterResponse.from(savedUser);
     }
