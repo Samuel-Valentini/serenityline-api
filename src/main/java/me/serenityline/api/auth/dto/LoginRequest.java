@@ -15,6 +15,9 @@ public record LoginRequest(
         @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
         @NotBlank(message = "{auth.password.required}")
         @Size(max = 128, message = "{auth.password.invalidLength}")
-        String password
+        String password,
+
+        @Size(max = 255, message = "{userSession.deviceLabel.tooLong}")
+        String deviceLabel
 ) {
 }

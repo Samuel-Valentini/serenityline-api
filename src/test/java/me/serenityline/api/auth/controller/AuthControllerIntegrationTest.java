@@ -5,9 +5,13 @@ import com.jayway.jsonpath.JsonPath;
 import me.serenityline.api.auth.entity.*;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
 import me.serenityline.api.auth.repository.EmailOutboxRepository;
+import me.serenityline.api.auth.repository.RefreshTokenRepository;
+import me.serenityline.api.auth.repository.UserSessionRepository;
 import me.serenityline.api.auth.service.EmailVerificationService;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
 import me.serenityline.api.security.crypto.EncryptedValue;
+import me.serenityline.api.security.jwt.JwtTokenClaims;
+import me.serenityline.api.security.jwt.JwtTokenService;
 import me.serenityline.api.security.token.TokenHashingService;
 import me.serenityline.api.support.IntegrationTestSupport;
 import me.serenityline.api.user.entity.User;
@@ -25,6 +29,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -61,6 +66,15 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private UserSessionRepository userSessionRepository;
+
+    @Autowired
+    private RefreshTokenRepository refreshTokenRepository;
+
+    @Autowired
+    private JwtTokenService jwtTokenService;
 
     @Test
     void registerShouldCreateDisabledOwnerUserAndGroup() throws Exception {
@@ -674,6 +688,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """))
                 .andExpect(status().isConflict())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.userId").exists())
                 .andExpect(jsonPath("$.email").value("samuel@example.com"))
                 .andExpect(jsonPath("$.emailVerificationResendToken").exists())
@@ -684,6 +699,9 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.userGroupId").doesNotExist())
                 .andExpect(jsonPath("$.userRole").doesNotExist())
                 .andExpect(jsonPath("$.userPlatformRole").doesNotExist());
+
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
 
         List<AuthActionToken> resendTokens = authActionTokenRepository.findAll().stream()
                 .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.EMAIL_VERIFICATION_RESEND)
@@ -706,9 +724,89 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         verifyEmail(token);
 
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")))
+                .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(jsonPath("$.accessTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.user.userId").exists())
+                .andExpect(jsonPath("$.user.userName").value("Samuel"))
+                .andExpect(jsonPath("$.user.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.user.userGroupId").exists())
+                .andExpect(jsonPath("$.user.userGroupName").value("Samuel's group"))
+                .andExpect(jsonPath("$.user.userRole").value("OWNER"))
+                .andExpect(jsonPath("$.user.userPlatformRole").value("USER"))
+                .andExpect(jsonPath("$.user.preferredLocale").value("en-US"))
+                .andExpect(jsonPath("$.user.preferredTheme").value("DEFAULT"))
+                .andExpect(jsonPath("$.user.wantsInvoice").value(false))
+                .andReturn();
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        assertThat(user.getUserLastLoginAt()).isNotNull();
+
+        String responseBody = result.getResponse().getContentAsString();
+        String accessToken = JsonPath.read(responseBody, "$.accessToken");
+
+        Optional<JwtTokenClaims> claims = jwtTokenService.parseAndValidate(accessToken);
+
+        assertThat(claims).isPresent();
+        assertThat(claims.get().userId()).isEqualTo(user.getUserId());
+        assertThat(claims.get().tokenVersion()).isEqualTo(user.getTokenVersion());
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+
+        assertThat(session.getUser().getUserId()).isEqualTo(user.getUserId());
+        assertThat(session.getIpAddressHash()).isNotBlank();
+        assertThat(session.getIpAddressHash()).isNotEqualTo("127.0.0.1");
+        assertThat(session.getUserAgent()).isEqualTo("JUnit Browser");
+        assertThat(session.getDeviceLabel()).isEqualTo("Samuel test device");
+        assertThat(session.getSessionExpiresAt()).isAfter(OffsetDateTime.now());
+        assertThat(session.getSessionRevokedAt()).isNull();
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getUser().getUserId()).isEqualTo(user.getUserId());
+        assertThat(refreshToken.getUserSession().getUserSessionId()).isEqualTo(session.getUserSessionId());
+        assertThat(refreshToken.getRefreshTokenHash()).isNotBlank();
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenExpiresAt()).isAfter(OffsetDateTime.now());
+
+        String setCookie = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+
+        assertThat(setCookie).isNotNull();
+        assertThat(setCookie).contains("serenityline_refresh=");
+        assertThat(setCookie).doesNotContain(refreshToken.getRefreshTokenHash());
+    }
+
+    @Test
+    void loginShouldAuthenticateVerifiedUserWithoutDeviceLabel() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        verifyEmail(token);
+
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
                         .content("""
                                 {
                                   "email": "samuel@example.com",
@@ -716,21 +814,14 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.userId").exists())
-                .andExpect(jsonPath("$.userName").value("Samuel"))
-                .andExpect(jsonPath("$.email").value("samuel@example.com"))
-                .andExpect(jsonPath("$.userGroupId").exists())
-                .andExpect(jsonPath("$.userGroupName").value("Samuel's group"))
-                .andExpect(jsonPath("$.userRole").value("OWNER"))
-                .andExpect(jsonPath("$.userPlatformRole").value("USER"))
-                .andExpect(jsonPath("$.preferredLocale").value("en-US"))
-                .andExpect(jsonPath("$.preferredTheme").value("DEFAULT"))
-                .andExpect(jsonPath("$.wantsInvoice").value(false));
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(jsonPath("$.user.email").value("samuel@example.com"));
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        UserSession session = userSessionRepository.findAll().getFirst();
 
-        assertThat(user.getUserLastLoginAt()).isNotNull();
+        assertThat(session.getUserAgent()).isEqualTo("JUnit Browser");
+        assertThat(session.getDeviceLabel()).isNull();
     }
 
     @Test
@@ -749,7 +840,11 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
     }
 
     @Test
@@ -792,9 +887,13 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """))
                 .andExpect(status().isConflict())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.restoreToken").exists())
                 .andExpect(jsonPath("$.restoreTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.code").doesNotExist());
+
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
 
         List<AuthActionToken> tokens = authActionTokenRepository.findAll();
 
@@ -826,6 +925,29 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+    }
+
+    @Test
+    void loginShouldTreatBlankDeviceLabelAsNull() throws Exception {
+        String token = registerAndExtractVerificationToken();
+
+        verifyEmail(token);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "   "
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+
+        assertThat(session.getDeviceLabel()).isNull();
     }
 
     @Test
@@ -1001,9 +1123,13 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """))
                 .andExpect(status().isConflict())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.restoreToken").exists())
                 .andExpect(jsonPath("$.restoreTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.code").doesNotExist());
+
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
 
         List<AuthActionToken> restoreTokens = authActionTokenRepository.findAll().stream()
                 .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.RESTORE_ACCOUNT)

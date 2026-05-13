@@ -1,12 +1,11 @@
 package me.serenityline.api.auth.service;
 
-import me.serenityline.api.auth.dto.LoginRequest;
-import me.serenityline.api.auth.dto.LoginResponse;
-import me.serenityline.api.auth.dto.LoginResult;
-import me.serenityline.api.auth.dto.RestoreAccountChallengeResponse;
+import me.serenityline.api.auth.dto.*;
 import me.serenityline.api.auth.entity.AuthActionToken;
 import me.serenityline.api.auth.entity.AuthActionTokenType;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
+import me.serenityline.api.security.jwt.JwtAccessToken;
+import me.serenityline.api.security.jwt.JwtTokenService;
 import me.serenityline.api.security.token.SecureTokenGenerator;
 import me.serenityline.api.security.token.TokenHashingService;
 import me.serenityline.api.user.entity.User;
@@ -33,6 +32,8 @@ public class LoginService {
     private final AuthActionTokenRepository authActionTokenRepository;
     private final Duration restoreAccountTokenTtl;
     private final EmailVerificationResendChallengeService emailVerificationResendChallengeService;
+    private final JwtTokenService jwtTokenService;
+    private final RefreshTokenService refreshTokenService;
 
     public LoginService(
             UserRepository userRepository,
@@ -40,7 +41,10 @@ public class LoginService {
             SecureTokenGenerator secureTokenGenerator,
             TokenHashingService tokenHashingService,
             AuthActionTokenRepository authActionTokenRepository,
-            @Value("${serenityline.auth.restore-account.token-ttl}") Duration restoreAccountTokenTtl, EmailVerificationResendChallengeService emailVerificationResendChallengeService
+            @Value("${serenityline.auth.restore-account.token-ttl}") Duration restoreAccountTokenTtl,
+            EmailVerificationResendChallengeService emailVerificationResendChallengeService,
+            JwtTokenService jwtTokenService,
+            RefreshTokenService refreshTokenService
     ) {
 
         validateRestoreAccountTokenTtl(restoreAccountTokenTtl);
@@ -52,6 +56,8 @@ public class LoginService {
         this.authActionTokenRepository = Objects.requireNonNull(authActionTokenRepository, "authActionTokenRepository");
         this.restoreAccountTokenTtl = Objects.requireNonNull(restoreAccountTokenTtl, "restoreAccountTokenTtl");
         this.emailVerificationResendChallengeService = Objects.requireNonNull(emailVerificationResendChallengeService, "emailVerificationResendChallengeService");
+        this.jwtTokenService = Objects.requireNonNull(jwtTokenService, "jwtTokenService");
+        this.refreshTokenService = Objects.requireNonNull(refreshTokenService, "refreshTokenService");
     }
 
     private static String normalizeEmail(String email) {
@@ -76,7 +82,7 @@ public class LoginService {
     }
 
     @Transactional
-    public LoginResult login(LoginRequest request) {
+    public LoginResult login(LoginRequest request, LoginClientMetadata metadata) {
         if (request == null) {
             throw new IllegalArgumentException("auth.login.request.required");
         }
@@ -111,7 +117,16 @@ public class LoginService {
 
         user.markSuccessfulLogin();
 
-        return LoginResult.authenticated(LoginResponse.from(user));
+        JwtAccessToken accessToken = jwtTokenService.createAccessToken(user);
+        IssuedRefreshToken refreshToken = refreshTokenService.createForLogin(user, metadata);
+
+        return LoginResult.authenticated(
+                new AuthenticatedLoginResult(
+                        LoginResponse.from(user),
+                        accessToken,
+                        refreshToken
+                )
+        );
     }
 
     private RestoreAccountChallengeResponse createRestoreAccountChallenge(User user) {

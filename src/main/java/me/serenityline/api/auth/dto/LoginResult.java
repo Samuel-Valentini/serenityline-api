@@ -3,13 +3,13 @@ package me.serenityline.api.auth.dto;
 import java.util.Objects;
 
 public record LoginResult(
-        LoginResponse loginResponse,
+        AuthenticatedLoginResult authenticatedLogin,
         RestoreAccountChallengeResponse restoreAccountChallenge,
         EmailVerificationRequiredResponse emailVerificationRequiredResponse
 ) {
-    public static LoginResult authenticated(LoginResponse loginResponse) {
+    public static LoginResult authenticated(AuthenticatedLoginResult authenticatedLogin) {
         return new LoginResult(
-                Objects.requireNonNull(loginResponse, "loginResponse"),
+                Objects.requireNonNull(authenticatedLogin, "authenticatedLogin"),
                 null,
                 null
         );
@@ -31,6 +31,10 @@ public record LoginResult(
                 null,
                 Objects.requireNonNull(emailVerificationRequiredResponse, "emailVerificationRequiredResponse")
         );
+    }
+
+    public boolean isAuthenticated() {
+        return authenticatedLogin != null;
     }
 
     public boolean isRestoreRequired() {

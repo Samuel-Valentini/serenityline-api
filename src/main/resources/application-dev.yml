@@ -42,3 +42,8 @@ serenityline:
       issuer: ${JWT_ISSUER:serenityline-api}
       access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
       secret: ${JWT_SECRET}
+    refresh-token:
+      ttl: ${REFRESH_TOKEN_TTL:30d}
+      cookie-name: ${REFRESH_TOKEN_COOKIE_NAME:serenityline_refresh}
+      cookie-secure: ${REFRESH_TOKEN_COOKIE_SECURE:true}
+      cookie-same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE:Lax}

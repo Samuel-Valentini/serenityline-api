@@ -1,9 +1,12 @@
 package me.serenityline.api.auth.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import me.serenityline.api.auth.dto.*;
 import me.serenityline.api.auth.service.*;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,13 +22,15 @@ public class AuthController {
     private final LoginService loginService;
     private final RestoreAccountService restoreAccountService;
     private final ResendEmailVerificationService resendEmailVerificationService;
+    private final AuthCookieService authCookieService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
         this.restoreAccountService = restoreAccountService;
         this.resendEmailVerificationService = resendEmailVerificationService;
+        this.authCookieService = authCookieService;
     }
 
     @PostMapping("/register")
@@ -47,9 +52,17 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<?> login(
-            @Valid @RequestBody LoginRequest request
+            @Valid @RequestBody LoginRequest request,
+            HttpServletRequest httpServletRequest
     ) {
-        LoginResult result = loginService.login(request);
+
+        LoginClientMetadata metadata = new LoginClientMetadata(
+                httpServletRequest.getRemoteAddr(),
+                httpServletRequest.getHeader(HttpHeaders.USER_AGENT),
+                request.deviceLabel()
+        );
+
+        LoginResult result = loginService.login(request, metadata);
 
         if (result.isRestoreRequired()) {
             return ResponseEntity
@@ -63,7 +76,18 @@ public class AuthController {
                     .body(result.emailVerificationRequiredResponse());
         }
 
-        return ResponseEntity.ok(result.loginResponse());
+        ResponseCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.authenticatedLogin().refreshToken().token()
+        );
+
+        AuthenticatedResponse response = AuthenticatedResponse.of(
+                result.authenticatedLogin().accessToken(),
+                result.authenticatedLogin().user()
+        );
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.toString())
+                .body(response);
     }
 
     @PostMapping("/restore-account")
