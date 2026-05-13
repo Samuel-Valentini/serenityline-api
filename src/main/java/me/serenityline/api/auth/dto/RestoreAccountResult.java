@@ -4,7 +4,7 @@ import java.util.Objects;
 
 public record RestoreAccountResult(
         LoginResponse loginResponse,
-        RestoreAccountVerificationRequiredResponse verificationRequiredResponse
+        EmailVerificationRequiredResponse emailVerificationRequiredResponse
 ) {
     public static RestoreAccountResult authenticated(LoginResponse loginResponse) {
         return new RestoreAccountResult(
@@ -13,16 +13,16 @@ public record RestoreAccountResult(
         );
     }
 
-    public static RestoreAccountResult verificationRequired(
-            RestoreAccountVerificationRequiredResponse verificationRequiredResponse
+    public static RestoreAccountResult emailVerificationRequired(
+            EmailVerificationRequiredResponse emailVerificationRequiredResponse
     ) {
         return new RestoreAccountResult(
                 null,
-                Objects.requireNonNull(verificationRequiredResponse, "verificationRequiredResponse")
+                Objects.requireNonNull(emailVerificationRequiredResponse, "emailVerificationRequiredResponse")
         );
     }
 
-    public boolean isVerificationRequired() {
-        return verificationRequiredResponse != null;
+    public boolean isEmailVerificationRequired() {
+        return emailVerificationRequiredResponse != null;
     }
 }

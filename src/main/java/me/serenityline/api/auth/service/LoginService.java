@@ -32,6 +32,7 @@ public class LoginService {
     private final TokenHashingService tokenHashingService;
     private final AuthActionTokenRepository authActionTokenRepository;
     private final Duration restoreAccountTokenTtl;
+    private final EmailVerificationResendChallengeService emailVerificationResendChallengeService;
 
     public LoginService(
             UserRepository userRepository,
@@ -39,8 +40,9 @@ public class LoginService {
             SecureTokenGenerator secureTokenGenerator,
             TokenHashingService tokenHashingService,
             AuthActionTokenRepository authActionTokenRepository,
-            @Value("${serenityline.auth.restore-account.token-ttl}") Duration restoreAccountTokenTtl
+            @Value("${serenityline.auth.restore-account.token-ttl}") Duration restoreAccountTokenTtl, EmailVerificationResendChallengeService emailVerificationResendChallengeService
     ) {
+
         validateRestoreAccountTokenTtl(restoreAccountTokenTtl);
 
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
@@ -48,7 +50,8 @@ public class LoginService {
         this.secureTokenGenerator = Objects.requireNonNull(secureTokenGenerator, "secureTokenGenerator");
         this.tokenHashingService = Objects.requireNonNull(tokenHashingService, "tokenHashingService");
         this.authActionTokenRepository = Objects.requireNonNull(authActionTokenRepository, "authActionTokenRepository");
-        this.restoreAccountTokenTtl = restoreAccountTokenTtl;
+        this.restoreAccountTokenTtl = Objects.requireNonNull(restoreAccountTokenTtl, "restoreAccountTokenTtl");
+        this.emailVerificationResendChallengeService = Objects.requireNonNull(emailVerificationResendChallengeService, "emailVerificationResendChallengeService");
     }
 
     private static String normalizeEmail(String email) {
@@ -101,7 +104,9 @@ public class LoginService {
         }
 
         if (!user.isUserIsEnabled()) {
-            throw new IllegalStateException("auth.login.emailNotVerified");
+            return LoginResult.emailVerificationRequired(
+                    emailVerificationResendChallengeService.createChallenge(user)
+            );
         }
 
         user.markSuccessfulLogin();

@@ -37,3 +37,6 @@ serenityline:
   auth:
     restore-account:
       token-ttl: ${RESTORE_ACCOUNT_TOKEN_TTL:10m}
+    email-verification-resend:
+      token-ttl: ${EMAIL_VERIFICATION_RESEND_TOKEN_TTL:15m}
+      cooldown: ${EMAIL_VERIFICATION_RESEND_COOLDOWN:60s}

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -30,7 +31,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class AuthControllerIntegrationTest extends IntegrationTestSupport {
@@ -58,6 +58,9 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private EmailVerificationService emailVerificationService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void registerShouldCreateDisabledOwnerUserAndGroup() throws Exception {
@@ -658,7 +661,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void loginShouldRejectUnverifiedEmail() throws Exception {
+    void loginShouldReturnEmailVerificationRequiredChallengeForUnverifiedEmail() throws Exception {
         registerAndExtractVerificationToken();
 
         mockMvc.perform(post("/api/auth/login")
@@ -671,7 +674,30 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("auth.login.emailNotVerified"));
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.emailVerificationResendToken").exists())
+                .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
+                .andExpect(jsonPath("$.code").doesNotExist())
+                .andExpect(jsonPath("$.userName").doesNotExist())
+                .andExpect(jsonPath("$.userGroupId").doesNotExist())
+                .andExpect(jsonPath("$.userRole").doesNotExist())
+                .andExpect(jsonPath("$.userPlatformRole").doesNotExist());
+
+        List<AuthActionToken> resendTokens = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.EMAIL_VERIFICATION_RESEND)
+                .toList();
+
+        assertThat(resendTokens).hasSize(1);
+        assertThat(resendTokens.getFirst().getAuthActionUsedAt()).isNull();
+        assertThat(resendTokens.getFirst().getAuthActionRevokedAt()).isNull();
+
+        List<EmailOutbox> verificationEmails = emailOutboxRepository.findAll().stream()
+                .filter(email -> email.getEmailType() == EmailOutboxType.EMAIL_VERIFICATION)
+                .toList();
+
+        assertThat(verificationEmails).hasSize(1);
     }
 
     @Test
@@ -1014,8 +1040,11 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").exists())
                 .andExpect(jsonPath("$.email").value("samuel@example.com"))
-                .andExpect(jsonPath("$.preferredLocale").value("en-US"))
-                .andExpect(jsonPath("$.emailVerificationRequired").value(true))
+                .andExpect(jsonPath("$.emailVerificationResendToken").exists())
+                .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
+                .andExpect(jsonPath("$.preferredLocale").doesNotExist())
+                .andExpect(jsonPath("$.emailVerificationRequired").doesNotExist())
                 .andExpect(jsonPath("$.userName").doesNotExist())
                 .andExpect(jsonPath("$.userGroupId").doesNotExist())
                 .andExpect(jsonPath("$.userRole").doesNotExist())
@@ -1064,6 +1093,180 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(verificationEmails)
                 .filteredOn(email -> email.getEmailStatus() == EmailOutboxStatus.PENDING)
                 .hasSize(1);
+
+        List<AuthActionToken> resendTokens = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.EMAIL_VERIFICATION_RESEND)
+                .toList();
+
+        assertThat(resendTokens).hasSize(1);
+        assertThat(resendTokens.getFirst().getAuthActionUsedAt()).isNull();
+        assertThat(resendTokens.getFirst().getAuthActionRevokedAt()).isNull();
+    }
+
+    @Test
+    void resendEmailVerificationShouldRejectInvalidToken() throws Exception {
+        mockMvc.perform(post("/api/auth/resend-email-verification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "emailVerificationResendToken": "invalid-token"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.emailVerificationResend.invalidOrExpired"));
+    }
+
+    @Test
+    void resendEmailVerificationShouldRejectWhenCooldownHasNotExpired() throws Exception {
+        registerAndExtractVerificationToken();
+
+        String resendToken = loginAndExtractEmailVerificationResendToken();
+
+        mockMvc.perform(post("/api/auth/resend-email-verification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "emailVerificationResendToken": "%s"
+                                }
+                                """.formatted(resendToken)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("auth.emailVerificationResend.tooSoon"));
+
+        AuthActionToken resendActionToken = authActionTokenRepository
+                .findByAuthActionTokenHash(tokenHashingService.hash(resendToken))
+                .orElseThrow();
+
+        assertThat(resendActionToken.getAuthActionUsedAt()).isNull();
+        assertThat(resendActionToken.getAuthActionRevokedAt()).isNull();
+    }
+
+    @Test
+    void resendEmailVerificationShouldCreateNewVerificationEmailAndRotateResendToken() throws Exception {
+        registerAndExtractVerificationToken();
+
+        String firstResendToken = loginAndExtractEmailVerificationResendToken();
+
+        makeEmailVerificationCooldownExpired("samuel@example.com");
+
+        MvcResult result = mockMvc.perform(post("/api/auth/resend-email-verification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "emailVerificationResendToken": "%s"
+                                }
+                                """.formatted(firstResendToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.emailVerificationResendToken").exists())
+                .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
+                .andExpect(jsonPath("$.code").doesNotExist())
+                .andReturn();
+
+        String secondResendToken = JsonPath.read(
+                result.getResponse().getContentAsString(),
+                "$.emailVerificationResendToken"
+        );
+
+        assertThat(secondResendToken).isNotEqualTo(firstResendToken);
+
+        AuthActionToken firstResendActionToken = authActionTokenRepository
+                .findByAuthActionTokenHash(tokenHashingService.hash(firstResendToken))
+                .orElseThrow();
+
+        assertThat(firstResendActionToken.getAuthActionTokenType())
+                .isEqualTo(AuthActionTokenType.EMAIL_VERIFICATION_RESEND);
+        assertThat(firstResendActionToken.getAuthActionUsedAt()).isNotNull();
+
+        AuthActionToken secondResendActionToken = authActionTokenRepository
+                .findByAuthActionTokenHash(tokenHashingService.hash(secondResendToken))
+                .orElseThrow();
+
+        assertThat(secondResendActionToken.getAuthActionTokenType())
+                .isEqualTo(AuthActionTokenType.EMAIL_VERIFICATION_RESEND);
+        assertThat(secondResendActionToken.getAuthActionUsedAt()).isNull();
+        assertThat(secondResendActionToken.getAuthActionRevokedAt()).isNull();
+
+        List<AuthActionToken> emailVerificationTokens = authActionTokenRepository.findAll().stream()
+                .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.EMAIL_VERIFICATION)
+                .toList();
+
+        assertThat(emailVerificationTokens).hasSize(2);
+
+        assertThat(emailVerificationTokens)
+                .filteredOn(actionToken -> actionToken.getAuthActionRevokedAt() != null)
+                .hasSize(1);
+
+        assertThat(emailVerificationTokens)
+                .filteredOn(actionToken -> actionToken.getAuthActionRevokedAt() == null)
+                .hasSize(1);
+
+        List<EmailOutbox> verificationEmails = emailOutboxRepository.findAll().stream()
+                .filter(email -> email.getEmailType() == EmailOutboxType.EMAIL_VERIFICATION)
+                .toList();
+
+        assertThat(verificationEmails).hasSize(2);
+
+        assertThat(verificationEmails)
+                .filteredOn(email -> email.getEmailStatus() == EmailOutboxStatus.CANCELLED)
+                .hasSize(1);
+
+        assertThat(verificationEmails)
+                .filteredOn(email -> email.getEmailStatus() == EmailOutboxStatus.PENDING)
+                .hasSize(1);
+    }
+
+    @Test
+    void resendEmailVerificationShouldRejectAlreadyUsedResendToken() throws Exception {
+        registerAndExtractVerificationToken();
+
+        String resendToken = loginAndExtractEmailVerificationResendToken();
+
+        makeEmailVerificationCooldownExpired("samuel@example.com");
+
+        mockMvc.perform(post("/api/auth/resend-email-verification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "emailVerificationResendToken": "%s"
+                                }
+                                """.formatted(resendToken)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/auth/resend-email-verification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "emailVerificationResendToken": "%s"
+                                }
+                                """.formatted(resendToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.emailVerificationResend.invalidOrExpired"));
+    }
+
+    @Test
+    void resendEmailVerificationShouldRejectWhenUserIsAlreadyVerified() throws Exception {
+        String verificationToken = registerAndExtractVerificationToken();
+
+        String resendToken = loginAndExtractEmailVerificationResendToken();
+
+        verifyEmail(verificationToken);
+
+        mockMvc.perform(post("/api/auth/resend-email-verification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "emailVerificationResendToken": "%s"
+                                }
+                                """.formatted(resendToken)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("auth.emailVerification.userAlreadyVerified"));
     }
 
     private String registerAndExtractVerificationToken() throws Exception {
@@ -1107,7 +1310,6 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                   "password": "VeryStrongPassword-2026-SerenityLine!"
                                 }
                                 """))
-                .andDo(print())
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.restoreToken").exists())
                 .andExpect(jsonPath("$.restoreTokenExpiresAt").exists())
@@ -1117,5 +1319,45 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 result.getResponse().getContentAsString(),
                 "$.restoreToken"
         );
+    }
+
+    private String loginAndExtractEmailVerificationResendToken() throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.emailVerificationResendToken").exists())
+                .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
+                .andExpect(jsonPath("$.code").doesNotExist())
+                .andReturn();
+
+        return JsonPath.read(
+                result.getResponse().getContentAsString(),
+                "$.emailVerificationResendToken"
+        );
+    }
+
+    private void makeEmailVerificationCooldownExpired(String email) {
+        jdbcTemplate.update("""
+                update auth_action_tokens
+                set auth_action_created_at = now() - interval '2 minutes'
+                where user_id = (
+                    select user_id
+                    from users
+                    where email = ?
+                )
+                and auth_action_token_type = 'EMAIL_VERIFICATION'
+                and auth_action_used_at is null
+                and auth_action_revoked_at is null
+                """, email);
     }
 }

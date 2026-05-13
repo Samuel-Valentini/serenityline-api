@@ -2,10 +2,7 @@ package me.serenityline.api.auth.controller;
 
 import jakarta.validation.Valid;
 import me.serenityline.api.auth.dto.*;
-import me.serenityline.api.auth.service.EmailVerificationService;
-import me.serenityline.api.auth.service.LoginService;
-import me.serenityline.api.auth.service.RegisterService;
-import me.serenityline.api.auth.service.RestoreAccountService;
+import me.serenityline.api.auth.service.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,12 +18,14 @@ public class AuthController {
     private final EmailVerificationService emailVerificationService;
     private final LoginService loginService;
     private final RestoreAccountService restoreAccountService;
+    private final ResendEmailVerificationService resendEmailVerificationService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
         this.restoreAccountService = restoreAccountService;
+        this.resendEmailVerificationService = resendEmailVerificationService;
     }
 
     @PostMapping("/register")
@@ -58,6 +57,12 @@ public class AuthController {
                     .body(result.restoreAccountChallenge());
         }
 
+        if (result.isEmailVerificationRequired()) {
+            return ResponseEntity
+                    .status(HttpStatus.CONFLICT)
+                    .body(result.emailVerificationRequiredResponse());
+        }
+
         return ResponseEntity.ok(result.loginResponse());
     }
 
@@ -67,10 +72,18 @@ public class AuthController {
     ) {
         RestoreAccountResult result = restoreAccountService.restoreAccount(request);
 
-        if (result.isVerificationRequired()) {
-            return ResponseEntity.ok(result.verificationRequiredResponse());
+        if (result.isEmailVerificationRequired()) {
+            return ResponseEntity.ok(result.emailVerificationRequiredResponse());
         }
 
         return ResponseEntity.ok(result.loginResponse());
+    }
+
+    @PostMapping("/resend-email-verification")
+    public ResponseEntity<EmailVerificationRequiredResponse> resendEmailVerification(
+            @Valid @RequestBody ResendEmailVerificationRequest request
+    ) {
+        EmailVerificationRequiredResponse response = resendEmailVerificationService.resend(request);
+        return ResponseEntity.ok(response);
     }
 }
