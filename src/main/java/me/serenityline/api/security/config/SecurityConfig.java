@@ -1,5 +1,6 @@
 package me.serenityline.api.security.config;
 
+import me.serenityline.api.security.jwt.JwtProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,7 +19,7 @@ import java.util.List;
 
 @Configuration
 @EnableMethodSecurity
-@EnableConfigurationProperties(SecurityCorsProperties.class)
+@EnableConfigurationProperties({SecurityCorsProperties.class, JwtProperties.class})
 public class SecurityConfig {
 
     private static final List<String> ALLOWED_METHODS = List.of(

@@ -33,6 +33,10 @@ serenityline:
     email-verification-resend:
       token-ttl: ${EMAIL_VERIFICATION_RESEND_TOKEN_TTL:15m}
       cooldown: ${EMAIL_VERIFICATION_RESEND_COOLDOWN:60s}
+    jwt:
+      issuer: ${JWT_ISSUER:serenityline-api}
+      access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
+      secret: ${JWT_SECRET}
 
 logging:
   level:
