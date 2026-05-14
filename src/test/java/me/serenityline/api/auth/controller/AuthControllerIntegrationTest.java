@@ -1792,6 +1792,222 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void deleteMeShouldRequireAccessToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String refreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        performDeleteMeWithoutAccessToken(refreshToken)
+                .andExpect(status().isUnauthorized());
+
+        User user = defaultUser();
+
+        assertThat(user.isPendingDeletion()).isFalse();
+        assertThat(user.getUserDeletedAt()).isNull();
+
+        performRefresh(refreshToken)
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void deleteMeShouldSoftDeleteUserRevokeAuthAndClearCookie() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String accessToken = extractAccessToken(loginResult);
+        String refreshToken = extractRefreshCookie(loginResult);
+
+        User userBeforeDeletion = defaultUser();
+        Long tokenVersionBeforeDeletion = userBeforeDeletion.getTokenVersion();
+
+        ResultActions deleteResult = performDeleteMe(accessToken, refreshToken)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(deleteResult);
+
+        assertThat(userRepository.findByEmailAndUserDeletedAtIsNull(DEFAULT_EMAIL))
+                .isEmpty();
+
+        User deletedUser = userRepository.findByEmailAndUserDeletedAtIsNotNull(DEFAULT_EMAIL)
+                .orElseThrow();
+
+        assertThat(deletedUser.isPendingDeletion()).isTrue();
+        assertThat(deletedUser.getUserDeletedAt()).isNotNull();
+        assertThat(deletedUser.isUserIsEnabled()).isTrue();
+        assertThat(deletedUser.getTokenVersion())
+                .isEqualTo(tokenVersionBeforeDeletion + 1);
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshTokenEntity = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNotNull();
+        assertThat(session.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.ACCOUNT_DELETED);
+
+        assertThat(refreshTokenEntity.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(refreshTokenEntity.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.ACCOUNT_DELETED);
+        assertThat(refreshTokenEntity.getRefreshTokenUsedAt()).isNull();
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+
+        ResultActions refreshResult = performRefresh(refreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(refreshResult);
+
+        performDefaultRegister()
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("auth.register.accountPendingDeletion"))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+    }
+
+    @Test
+    void deleteMeShouldWorkWithoutRefreshCookieWhenAccessTokenIsValid() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String accessToken = extractAccessToken(loginResult);
+        String refreshToken = extractRefreshCookie(loginResult);
+
+        ResultActions deleteResult = performDeleteMe(accessToken)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(deleteResult);
+
+        assertThat(userRepository.findByEmailAndUserDeletedAtIsNull(DEFAULT_EMAIL))
+                .isEmpty();
+
+        assertThat(userRepository.findByEmailAndUserDeletedAtIsNotNull(DEFAULT_EMAIL))
+                .isPresent();
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(refreshToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deleteMeShouldRevokeAllUserSessionsAndRefreshTokens() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult firstLoginResult = performDefaultLoginWithDevice()
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String firstAccessToken = extractAccessToken(firstLoginResult);
+        String firstRefreshToken = extractRefreshCookie(firstLoginResult);
+
+        MvcResult secondLoginResult = performLoginWithDevice(
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
+                "Second test device"
+        )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String secondAccessToken = extractAccessToken(secondLoginResult);
+        String secondRefreshToken = extractRefreshCookie(secondLoginResult);
+
+        ResultActions deleteResult = performDeleteMe(firstAccessToken, firstRefreshToken)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(deleteResult);
+
+        assertThat(userSessionRepository.findAll()).hasSize(2);
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        assertThat(userSessionRepository.findAll())
+                .allSatisfy(session -> {
+                    assertThat(session.getSessionRevokedAt()).isNotNull();
+                    assertThat(session.getSessionRevokeReason())
+                            .isEqualTo(SessionRevokeReason.ACCOUNT_DELETED);
+                });
+
+        assertThat(refreshTokenRepository.findAll())
+                .allSatisfy(refreshToken -> {
+                    assertThat(refreshToken.getRefreshTokenRevokedAt()).isNotNull();
+                    assertThat(refreshToken.getRefreshTokenRevokeReason())
+                            .isEqualTo(RefreshTokenRevokeReason.ACCOUNT_DELETED);
+                });
+
+        performMe(firstAccessToken)
+                .andExpect(status().isUnauthorized());
+
+        performMe(secondAccessToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(firstRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(secondRefreshToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deleteMeShouldRevokeCurrentRefreshTokenAfterRotation() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String firstRefreshToken = extractRefreshCookie(loginResult);
+
+        MvcResult refreshResult = performRefresh(firstRefreshToken)
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String accessToken = extractAccessToken(refreshResult);
+        String secondRefreshToken = extractRefreshCookie(refreshResult);
+
+        assertThat(secondRefreshToken).isNotEqualTo(firstRefreshToken);
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        RefreshToken usedParentToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getRefreshTokenUsedAt() != null)
+                .findFirst()
+                .orElseThrow();
+
+        RefreshToken activeChildToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getParentRefreshToken() != null)
+                .findFirst()
+                .orElseThrow();
+
+        performDeleteMe(accessToken, secondRefreshToken)
+                .andExpect(status().isNoContent());
+
+        RefreshToken reloadedParentToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getRefreshTokenId().equals(usedParentToken.getRefreshTokenId()))
+                .findFirst()
+                .orElseThrow();
+
+        RefreshToken reloadedChildToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getRefreshTokenId().equals(activeChildToken.getRefreshTokenId()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(reloadedParentToken.getRefreshTokenUsedAt()).isNotNull();
+
+        assertThat(reloadedChildToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(reloadedChildToken.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.ACCOUNT_DELETED);
+
+        performRefresh(secondRefreshToken)
+                .andExpect(status().isUnauthorized());
+    }
+
     private void registerValidUser(String email) throws Exception {
         performRegister(
                 IT_LOCALE,
@@ -2196,5 +2412,30 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         return mockMvc.perform(post("/api/auth/logout-all")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE));
+    }
+
+    private ResultActions performDeleteMe(
+            String accessToken,
+            String refreshToken
+    ) throws Exception {
+        return mockMvc.perform(delete("/api/me")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+    }
+
+    private ResultActions performDeleteMe(String accessToken) throws Exception {
+        return mockMvc.perform(delete("/api/me")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken));
+    }
+
+    private ResultActions performDeleteMeWithoutAccessToken(String refreshToken) throws Exception {
+        return mockMvc.perform(delete("/api/me")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
     }
 }
