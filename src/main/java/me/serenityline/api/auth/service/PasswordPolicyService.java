@@ -20,8 +20,35 @@ public class PasswordPolicyService {
             String userName,
             String email
     ) {
+        validatePassword(
+                password,
+                userName,
+                email,
+                "auth.password.required"
+        );
+    }
+
+    public void validateChangePassword(
+            String newPassword,
+            String userName,
+            String email
+    ) {
+        validatePassword(
+                newPassword,
+                userName,
+                email,
+                "auth.password.new.required"
+        );
+    }
+
+    private void validatePassword(
+            String password,
+            String userName,
+            String email,
+            String requiredMessageKey
+    ) {
         if (password == null || password.isBlank()) {
-            throw new IllegalArgumentException("auth.password.required");
+            throw new IllegalArgumentException(requiredMessageKey);
         }
 
         if (password.length() < PASSWORD_MIN_LENGTH || password.length() > PASSWORD_MAX_LENGTH) {

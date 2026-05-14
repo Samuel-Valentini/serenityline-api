@@ -480,4 +480,11 @@ public class User {
         this.userLastLoginAt = OffsetDateTime.now();
     }
 
+    public void changePassword(String newPasswordHash) {
+        setUserPasswordHash(newPasswordHash);
+        this.userUpdatedAt = OffsetDateTime.now();
+
+        incrementTokenVersion();
+    }
+
 }

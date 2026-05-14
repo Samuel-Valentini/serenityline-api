@@ -57,6 +57,8 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     private static final String DEV_ORIGIN = "http://localhost:5173";
 
     private static final String IT_TEST_PASSWORD = "TrenoMareLuna2026!";
+    private static final String NEW_PASSWORD = "NewVeryStrongPassword-2026-SerenityLine!";
+    private static final String WEAK_PASSWORD = "password12345";
 
     @Autowired
     private MockMvc mockMvc;
@@ -2008,6 +2010,278 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void changePasswordShouldRequireAccessToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String refreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        performChangePasswordWithoutAccessToken(DEFAULT_PASSWORD, NEW_PASSWORD)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(refreshToken)
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void changePasswordShouldRejectInvalidCurrentPasswordWithoutRevokingAuth() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String accessToken = extractAccessToken(loginResult);
+
+        performChangePassword(accessToken, WRONG_PASSWORD, NEW_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.password.current.invalid"));
+
+        performMe(accessToken)
+                .andExpect(status().isOk());
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+    }
+
+    @Test
+    void changePasswordShouldRejectWeakNewPasswordWithoutRevokingAuth() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String accessToken = extractAccessToken(loginResult);
+
+        performChangePassword(accessToken, DEFAULT_PASSWORD, WEAK_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.password.tooWeak"));
+
+        performMe(accessToken)
+                .andExpect(status().isOk());
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void changePasswordShouldRejectSameAsCurrentPasswordWithoutRevokingAuth() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String accessToken = extractAccessToken(loginResult);
+
+        performChangePassword(accessToken, DEFAULT_PASSWORD, DEFAULT_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.password.new.sameAsCurrent"));
+
+        performMe(accessToken)
+                .andExpect(status().isOk());
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void changePasswordShouldUpdatePasswordRevokeAuthAndClearCookie() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String accessToken = extractAccessToken(loginResult);
+        String refreshToken = extractRefreshCookie(loginResult);
+
+        User userBeforeChange = defaultUser();
+        Long tokenVersionBeforeChange = userBeforeChange.getTokenVersion();
+        String oldPasswordHash = userBeforeChange.getUserPasswordHash();
+
+        ResultActions changePasswordResult = performChangePassword(
+                accessToken,
+                DEFAULT_PASSWORD,
+                NEW_PASSWORD
+        )
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(changePasswordResult);
+
+        User userAfterChange = defaultUser();
+
+        assertThat(userAfterChange.getTokenVersion())
+                .isEqualTo(tokenVersionBeforeChange + 1);
+        assertThat(userAfterChange.getUserPasswordHash())
+                .isNotEqualTo(oldPasswordHash);
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshTokenEntity = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNotNull();
+        assertThat(session.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.PASSWORD_CHANGED);
+
+        assertThat(refreshTokenEntity.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(refreshTokenEntity.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.PASSWORD_CHANGED);
+        assertThat(refreshTokenEntity.getRefreshTokenUsedAt()).isNull();
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(refreshToken)
+                .andExpect(status().isUnauthorized());
+
+        performLogin(DEFAULT_EMAIL, DEFAULT_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+
+        performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists());
+    }
+
+    @Test
+    void changePasswordShouldRevokeAllUserSessionsAndRefreshTokens() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult firstLoginResult = performDefaultLoginWithDevice()
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String firstAccessToken = extractAccessToken(firstLoginResult);
+        String firstRefreshToken = extractRefreshCookie(firstLoginResult);
+
+        MvcResult secondLoginResult = performLoginWithDevice(
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
+                "Second test device"
+        )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String secondAccessToken = extractAccessToken(secondLoginResult);
+        String secondRefreshToken = extractRefreshCookie(secondLoginResult);
+
+        performChangePassword(firstAccessToken, DEFAULT_PASSWORD, NEW_PASSWORD)
+                .andExpect(status().isNoContent());
+
+        assertThat(userSessionRepository.findAll()).hasSize(2);
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        assertThat(userSessionRepository.findAll())
+                .allSatisfy(session -> {
+                    assertThat(session.getSessionRevokedAt()).isNotNull();
+                    assertThat(session.getSessionRevokeReason())
+                            .isEqualTo(SessionRevokeReason.PASSWORD_CHANGED);
+                });
+
+        assertThat(refreshTokenRepository.findAll())
+                .allSatisfy(refreshToken -> {
+                    assertThat(refreshToken.getRefreshTokenRevokedAt()).isNotNull();
+                    assertThat(refreshToken.getRefreshTokenRevokeReason())
+                            .isEqualTo(RefreshTokenRevokeReason.PASSWORD_CHANGED);
+                });
+
+        performMe(firstAccessToken)
+                .andExpect(status().isUnauthorized());
+
+        performMe(secondAccessToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(firstRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(secondRefreshToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void changePasswordShouldRevokeCurrentRefreshTokenAfterRotation() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String firstRefreshToken = extractRefreshCookie(loginResult);
+
+        MvcResult refreshResult = performRefresh(firstRefreshToken)
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String accessToken = extractAccessToken(refreshResult);
+        String secondRefreshToken = extractRefreshCookie(refreshResult);
+
+        assertThat(secondRefreshToken).isNotEqualTo(firstRefreshToken);
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        RefreshToken usedParentToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getRefreshTokenUsedAt() != null)
+                .findFirst()
+                .orElseThrow();
+
+        RefreshToken activeChildToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getParentRefreshToken() != null)
+                .findFirst()
+                .orElseThrow();
+
+        performChangePassword(accessToken, DEFAULT_PASSWORD, NEW_PASSWORD)
+                .andExpect(status().isNoContent());
+
+        RefreshToken reloadedParentToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getRefreshTokenId().equals(usedParentToken.getRefreshTokenId()))
+                .findFirst()
+                .orElseThrow();
+
+        RefreshToken reloadedChildToken = refreshTokenRepository.findAll().stream()
+                .filter(refreshToken -> refreshToken.getRefreshTokenId().equals(activeChildToken.getRefreshTokenId()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(reloadedParentToken.getRefreshTokenUsedAt()).isNotNull();
+
+        assertThat(reloadedChildToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(reloadedChildToken.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.PASSWORD_CHANGED);
+
+        performRefresh(secondRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void changePasswordShouldReturnValidationErrors() throws Exception {
+        String accessToken = loginAndExtractAccessToken();
+
+        mockMvc.perform(post("/api/me/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                        .content("""
+                                {
+                                  "currentPassword": "",
+                                  "newPassword": "short"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"))
+                .andExpect(jsonPath("$.fieldErrors[*].code", hasItems(
+                        "auth.password.current.required",
+                        "auth.password.invalidLength"
+                )));
+    }
+
     private void registerValidUser(String email) throws Exception {
         performRegister(
                 IT_LOCALE,
@@ -2437,5 +2711,43 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
                 .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+    }
+
+    private ResultActions performChangePassword(
+            String accessToken,
+            String currentPassword,
+            String newPassword
+    ) throws Exception {
+        return mockMvc.perform(post("/api/me/change-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                .content("""
+                        {
+                          "currentPassword": "%s",
+                          "newPassword": "%s"
+                        }
+                        """.formatted(
+                        currentPassword,
+                        newPassword
+                )));
+    }
+
+    private ResultActions performChangePasswordWithoutAccessToken(
+            String currentPassword,
+            String newPassword
+    ) throws Exception {
+        return mockMvc.perform(post("/api/me/change-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .content("""
+                        {
+                          "currentPassword": "%s",
+                          "newPassword": "%s"
+                        }
+                        """.formatted(
+                        currentPassword,
+                        newPassword
+                )));
     }
 }
