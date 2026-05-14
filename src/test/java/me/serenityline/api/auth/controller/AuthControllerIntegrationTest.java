@@ -1458,7 +1458,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void meShouldReturnCurrentUserWithValidAccessToken() throws Exception {
-        String accessToken = loginAndExtractAccessToken();
+        String accessToken = registerVerifyLoginAndExtractAccessToken();
 
         performMe(accessToken)
                 .andExpect(status().isOk())
@@ -1492,7 +1492,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void meShouldRejectTamperedAccessToken() throws Exception {
-        String accessToken = loginAndExtractAccessToken();
+        String accessToken = registerVerifyLoginAndExtractAccessToken();
 
         String tamperedAccessToken = tamperToken(accessToken);
 
@@ -1504,7 +1504,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void meShouldRejectAccessTokenAfterTokenVersionChanged() throws Exception {
-        String accessToken = loginAndExtractAccessToken();
+        String accessToken = registerVerifyLoginAndExtractAccessToken();
 
         User user = defaultUser();
 
@@ -1521,7 +1521,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void meShouldRejectDisabledUser() throws Exception {
-        String accessToken = loginAndExtractAccessToken();
+        String accessToken = registerVerifyLoginAndExtractAccessToken();
 
         User user = defaultUser();
 
@@ -1534,7 +1534,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void meShouldRejectSoftDeletedUser() throws Exception {
-        String accessToken = loginAndExtractAccessToken();
+        String accessToken = registerVerifyLoginAndExtractAccessToken();
 
         User user = defaultUser();
 
@@ -1547,7 +1547,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void meShouldReturnUpdatedUserDataFromDatabase() throws Exception {
-        String accessToken = loginAndExtractAccessToken();
+        String accessToken = registerVerifyLoginAndExtractAccessToken();
 
         User user = defaultUser();
 
@@ -2262,7 +2262,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void changePasswordShouldReturnValidationErrors() throws Exception {
-        String accessToken = loginAndExtractAccessToken();
+        String accessToken = registerVerifyLoginAndExtractAccessToken();
 
         mockMvc.perform(post("/api/me/change-password")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -2280,6 +2280,314 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                         "auth.password.current.required",
                         "auth.password.invalidLength"
                 )));
+    }
+
+    @Test
+    void forgotPasswordShouldCreatePasswordResetTokenAndEmailForExistingEnabledUser() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        performForgotPassword(DEFAULT_EMAIL)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        List<AuthActionToken> passwordResetTokens = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .toList();
+
+        assertThat(passwordResetTokens).hasSize(1);
+
+        AuthActionToken token = passwordResetTokens.getFirst();
+
+        assertThat(token.getAuthActionUsedAt()).isNull();
+        assertThat(token.getAuthActionRevokedAt()).isNull();
+        assertThat(token.getAuthActionExpiresAt()).isAfter(OffsetDateTime.now());
+
+        EmailOutbox emailOutbox = passwordResetEmailOutbox();
+
+        assertThat(emailOutbox.getEmailType()).isEqualTo(EmailOutboxType.PASSWORD_RESET);
+        assertThat(emailOutbox.getEmailStatus()).isEqualTo(EmailOutboxStatus.PENDING);
+        assertThat(emailOutbox.isDeleteBodyAfterSend()).isTrue();
+
+        String subject = decryptSubject(emailOutbox);
+        String textBody = decryptTextBody(emailOutbox);
+
+        assertThat(subject).isNotBlank();
+        assertThat(textBody).contains(DEFAULT_USER_NAME);
+        assertThat(textBody).contains("/reset-password#token=");
+        assertThat(textBody).contains("/reset-password");
+
+        String plainToken = extractTokenFromBody(textBody);
+
+        assertThat(plainToken).isNotBlank();
+        assertThat(token.getAuthActionTokenHash()).isNotEqualTo(plainToken);
+    }
+
+    @Test
+    void forgotPasswordShouldAlwaysReturnNoContentForUnknownEmail() throws Exception {
+        performForgotPassword(MISSING_EMAIL)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(authActionTokenRepository.findAll()).isEmpty();
+        assertThat(emailOutboxRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void forgotPasswordShouldCreateResetForUnverifiedUser() throws Exception {
+        performDefaultRegister()
+                .andExpect(status().isCreated());
+
+        performForgotPassword(DEFAULT_EMAIL)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .toList()).hasSize(1);
+
+        assertThat(emailOutboxRepository.findAll().stream()
+                .filter(emailOutbox -> emailOutbox.getEmailType() == EmailOutboxType.PASSWORD_RESET)
+                .toList()).hasSize(1);
+    }
+
+    @Test
+    void resetPasswordForUnverifiedUserShouldChangePasswordButKeepEmailUnverified() throws Exception {
+        performDefaultRegister()
+                .andExpect(status().isCreated());
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPassword(resetToken, NEW_PASSWORD)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        User user = userRepository.findLoginCandidateByEmail(DEFAULT_EMAIL)
+                .orElseThrow();
+
+        assertThat(user.isUserIsEnabled()).isFalse();
+        assertThat(user.isPendingDeletion()).isFalse();
+
+        performLogin(DEFAULT_EMAIL, DEFAULT_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+
+        performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.emailVerificationResendToken").exists())
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL));
+    }
+
+    @Test
+    void resetPasswordForSoftDeletedUserShouldChangePasswordButKeepAccountPendingDeletion() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String accessToken = loginDefaultUserAndExtractAccessToken();
+
+        performDeleteMe(accessToken)
+                .andExpect(status().isNoContent());
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPassword(resetToken, NEW_PASSWORD)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        User deletedUser = userRepository.findByEmailAndUserDeletedAtIsNotNull(DEFAULT_EMAIL)
+                .orElseThrow();
+
+        assertThat(deletedUser.isPendingDeletion()).isTrue();
+        assertThat(deletedUser.getUserDeletedAt()).isNotNull();
+        assertThat(deletedUser.isUserIsEnabled()).isTrue();
+
+        performLogin(DEFAULT_EMAIL, DEFAULT_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+
+        performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.restoreToken").exists())
+                .andExpect(jsonPath("$.restoreTokenExpiresAt").exists());
+    }
+
+    @Test
+    void resetPasswordShouldChangePasswordRevokeAuthAndAllowLoginWithNewPassword() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        String accessToken = extractAccessToken(loginResult);
+        String refreshToken = extractRefreshCookie(loginResult);
+
+        User userBeforeReset = defaultUser();
+        Long tokenVersionBeforeReset = userBeforeReset.getTokenVersion();
+        String oldPasswordHash = userBeforeReset.getUserPasswordHash();
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPassword(resetToken, NEW_PASSWORD)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        User userAfterReset = defaultUser();
+
+        assertThat(userAfterReset.getTokenVersion())
+                .isEqualTo(tokenVersionBeforeReset + 1);
+        assertThat(userAfterReset.getUserPasswordHash())
+                .isNotEqualTo(oldPasswordHash);
+
+        AuthActionToken passwordResetToken = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(passwordResetToken.getAuthActionUsedAt()).isNotNull();
+        assertThat(passwordResetToken.getAuthActionRevokedAt()).isNull();
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshTokenEntity = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNotNull();
+        assertThat(session.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.PASSWORD_CHANGED);
+
+        assertThat(refreshTokenEntity.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(refreshTokenEntity.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.PASSWORD_CHANGED);
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(refreshToken)
+                .andExpect(status().isUnauthorized());
+
+        performLogin(DEFAULT_EMAIL, DEFAULT_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+
+        performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists());
+    }
+
+    @Test
+    void resetPasswordShouldRejectInvalidToken() throws Exception {
+        performResetPassword("invalid-reset-token", NEW_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.passwordReset.invalidOrExpired"));
+    }
+
+    @Test
+    void resetPasswordShouldRejectAlreadyUsedToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPassword(resetToken, NEW_PASSWORD)
+                .andExpect(status().isNoContent());
+
+        performResetPassword(resetToken, "AnotherVeryStrongPassword-2026-SerenityLine!")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.passwordReset.invalidOrExpired"));
+    }
+
+    @Test
+    void resetPasswordShouldRejectSameAsCurrentPassword() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPassword(resetToken, DEFAULT_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.password.new.sameAsCurrent"));
+
+        AuthActionToken passwordResetToken = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(passwordResetToken.getAuthActionUsedAt()).isNull();
+        assertThat(passwordResetToken.getAuthActionRevokedAt()).isNull();
+
+        performLogin(DEFAULT_EMAIL, DEFAULT_PASSWORD)
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void resetPasswordShouldRejectWeakPasswordWithoutUsingToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPassword(resetToken, WEAK_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.password.tooWeak"));
+
+        AuthActionToken passwordResetToken = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(passwordResetToken.getAuthActionUsedAt()).isNull();
+        assertThat(passwordResetToken.getAuthActionRevokedAt()).isNull();
+
+        performLogin(DEFAULT_EMAIL, DEFAULT_PASSWORD)
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void forgotPasswordShouldRevokePreviousPendingResetTokensAndCancelPreviousEmails() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        performForgotPassword(DEFAULT_EMAIL)
+                .andExpect(status().isNoContent());
+
+        performForgotPassword(DEFAULT_EMAIL)
+                .andExpect(status().isNoContent());
+
+        List<AuthActionToken> passwordResetTokens = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .toList();
+
+        assertThat(passwordResetTokens).hasSize(2);
+
+        assertThat(passwordResetTokens)
+                .filteredOn(token -> token.getAuthActionRevokedAt() == null)
+                .hasSize(1);
+
+        assertThat(passwordResetTokens)
+                .filteredOn(token -> token.getAuthActionRevokedAt() != null)
+                .hasSize(1);
+
+        List<EmailOutbox> passwordResetEmails = emailOutboxRepository.findAll().stream()
+                .filter(emailOutbox -> emailOutbox.getEmailType() == EmailOutboxType.PASSWORD_RESET)
+                .toList();
+
+        assertThat(passwordResetEmails).hasSize(2);
+
+        assertThat(passwordResetEmails)
+                .filteredOn(emailOutbox -> emailOutbox.getEmailStatus() == EmailOutboxStatus.PENDING)
+                .hasSize(1);
+
+        assertThat(passwordResetEmails)
+                .filteredOn(emailOutbox -> emailOutbox.getEmailStatus() == EmailOutboxStatus.CANCELLED)
+                .hasSize(1);
+    }
+
+    @Test
+    void resetPasswordShouldIgnoreInvalidAuthorizationHeader() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPasswordWithAuthorization(
+                resetToken,
+                NEW_PASSWORD,
+                "Bearer invalid-token"
+        )
+                .andExpect(status().isNoContent());
+
+        performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
+                .andExpect(status().isOk());
     }
 
     private void registerValidUser(String email) throws Exception {
@@ -2392,7 +2700,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 """, email);
     }
 
-    private String loginAndExtractAccessToken() throws Exception {
+    private String registerVerifyLoginAndExtractAccessToken() throws Exception {
         registerAndVerifyDefaultUser();
 
         MvcResult loginResult = performDefaultLoginWithDevice()
@@ -2749,5 +3057,79 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                         currentPassword,
                         newPassword
                 )));
+    }
+
+    private ResultActions performForgotPassword(String email) throws Exception {
+        return mockMvc.perform(post("/api/auth/forgot-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .content("""
+                        {
+                          "email": "%s"
+                        }
+                        """.formatted(email)));
+    }
+
+    private ResultActions performResetPassword(
+            String resetToken,
+            String newPassword
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/reset-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .content("""
+                        {
+                          "resetToken": "%s",
+                          "newPassword": "%s"
+                        }
+                        """.formatted(
+                        resetToken,
+                        newPassword
+                )));
+    }
+
+    private ResultActions performResetPasswordWithAuthorization(
+            String resetToken,
+            String newPassword,
+            String authorizationHeader
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/reset-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, authorizationHeader)
+                .content("""
+                        {
+                          "resetToken": "%s",
+                          "newPassword": "%s"
+                        }
+                        """.formatted(
+                        resetToken,
+                        newPassword
+                )));
+    }
+
+    private EmailOutbox passwordResetEmailOutbox() {
+        return emailOutboxRepository.findAll().stream()
+                .filter(emailOutbox -> emailOutbox.getEmailType() == EmailOutboxType.PASSWORD_RESET)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private String requestPasswordResetAndExtractToken(String email) throws Exception {
+        performForgotPassword(email)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        EmailOutbox emailOutbox = passwordResetEmailOutbox();
+
+        return extractTokenFromBody(decryptTextBody(emailOutbox));
+    }
+
+    private String loginDefaultUserAndExtractAccessToken() throws Exception {
+        MvcResult loginResult = performDefaultLoginWithDevice()
+                .andExpect(status().isOk())
+                .andReturn();
+
+        return extractAccessToken(loginResult);
     }
 }

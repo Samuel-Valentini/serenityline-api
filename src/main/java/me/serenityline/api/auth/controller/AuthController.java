@@ -31,8 +31,9 @@ public class AuthController {
     private final AuthCookieService authCookieService;
     private final RefreshTokenService refreshTokenService;
     private final LogoutService logoutService;
+    private final PasswordResetService passwordResetService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService, PasswordResetService passwordResetService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
@@ -41,6 +42,7 @@ public class AuthController {
         this.authCookieService = authCookieService;
         this.refreshTokenService = refreshTokenService;
         this.logoutService = logoutService;
+        this.passwordResetService = passwordResetService;
     }
 
     @PostMapping("/register")
@@ -203,6 +205,24 @@ public class AuthController {
                 .status(HttpStatus.UNAUTHORIZED)
                 .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
                 .build();
+    }
+
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Void> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest request
+    ) {
+        passwordResetService.requestPasswordReset(request);
+
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<Void> resetPassword(
+            @Valid @RequestBody ResetPasswordRequest request
+    ) {
+        passwordResetService.resetPassword(request);
+
+        return ResponseEntity.noContent().build();
     }
 
 }
