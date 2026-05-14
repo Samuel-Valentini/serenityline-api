@@ -38,6 +38,7 @@ public class PasswordResetService {
     private final AuthSessionRevocationService authSessionRevocationService;
     private final MessageSource messageSource;
     private final String frontendBaseUrl;
+    private final Duration passwordResetCooldown;
 
     public PasswordResetService(
             UserRepository userRepository,
@@ -51,9 +52,13 @@ public class PasswordResetService {
             AuthSessionRevocationService authSessionRevocationService,
             MessageSource messageSource,
             @Value("${serenityline.auth.password-reset.token-ttl}") Duration passwordResetTokenTtl,
-            @Value("${serenityline.frontend.base-url}") String frontendBaseUrl
+            @Value("${serenityline.frontend.base-url}") String frontendBaseUrl,
+            @Value("${serenityline.auth.password-reset.cooldown}") Duration passwordResetCooldown
     ) {
+
         validatePasswordResetTokenTtl(passwordResetTokenTtl);
+        validatePasswordResetCooldown(passwordResetCooldown);
+
 
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.secureTokenGenerator = Objects.requireNonNull(secureTokenGenerator, "secureTokenGenerator");
@@ -67,6 +72,7 @@ public class PasswordResetService {
         this.messageSource = Objects.requireNonNull(messageSource, "messageSource");
         this.passwordResetTokenTtl = passwordResetTokenTtl;
         this.frontendBaseUrl = normalizeFrontendBaseUrl(frontendBaseUrl);
+        this.passwordResetCooldown = passwordResetCooldown;
     }
 
     private static void validatePasswordResetTokenTtl(Duration tokenTtl) {
@@ -101,6 +107,12 @@ public class PasswordResetService {
         return new IllegalArgumentException("auth.passwordReset.invalidOrExpired");
     }
 
+    private static void validatePasswordResetCooldown(Duration cooldown) {
+        if (cooldown == null || cooldown.isNegative()) {
+            throw new IllegalStateException("auth.passwordReset.cooldown.invalid");
+        }
+    }
+
     @Transactional
     public void requestPasswordReset(ForgotPasswordRequest request) {
         if (request == null) {
@@ -115,12 +127,10 @@ public class PasswordResetService {
 
         userRepository.findLoginCandidateByEmail(normalizedEmail)
                 .filter(user -> !user.isHardDeletionDue())
-                .ifPresent(this::createPasswordReset);
+                .ifPresent(this::createPasswordResetIfCooldownExpired);
     }
 
-    private void createPasswordReset(User user) {
-        OffsetDateTime now = OffsetDateTime.now();
-
+    private void createPasswordReset(User user, OffsetDateTime now) {
         cancelPendingPasswordResetEmails(user);
         revokePendingPasswordResetTokens(user, now);
 
@@ -337,5 +347,28 @@ public class PasswordResetService {
                 SessionRevokeReason.PASSWORD_CHANGED,
                 RefreshTokenRevokeReason.PASSWORD_CHANGED
         );
+    }
+
+    private void createPasswordResetIfCooldownExpired(User user) {
+        OffsetDateTime now = OffsetDateTime.now();
+
+        if (isPasswordResetCooldownActive(user, now)) {
+            return;
+        }
+
+        createPasswordReset(user, now);
+    }
+
+    private boolean isPasswordResetCooldownActive(User user, OffsetDateTime now) {
+        return authActionTokenRepository
+                .findFirstByUserAndAuthActionTokenTypeAndAuthActionUsedAtIsNullAndAuthActionRevokedAtIsNullAndAuthActionExpiresAtAfterOrderByAuthActionCreatedAtDesc(
+                        user,
+                        AuthActionTokenType.PASSWORD_RESET,
+                        now
+                )
+                .map(AuthActionToken::getAuthActionCreatedAt)
+                .map(createdAt -> createdAt.plus(passwordResetCooldown))
+                .filter(availableAt -> availableAt.isAfter(now))
+                .isPresent();
     }
 }

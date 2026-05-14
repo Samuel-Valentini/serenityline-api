@@ -49,3 +49,4 @@ serenityline:
       cookie-same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE:Lax}
     password-reset:
       token-ttl: ${PASSWORD_RESET_TOKEN_TTL:30m}
+      cooldown: ${PASSWORD_RESET_COOLDOWN:60s}

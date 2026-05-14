@@ -28,6 +28,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
@@ -2535,11 +2536,61 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void forgotPasswordShouldRevokePreviousPendingResetTokensAndCancelPreviousEmails() throws Exception {
+    void resetPasswordShouldIgnoreInvalidAuthorizationHeader() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
+
+        performResetPasswordWithAuthorization(
+                resetToken,
+                NEW_PASSWORD,
+                "Bearer invalid-token"
+        )
+                .andExpect(status().isNoContent());
+
+        performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void forgotPasswordShouldNotCreateAnotherResetEmailDuringCooldown() throws Exception {
         registerAndVerifyDefaultUser();
 
         performForgotPassword(DEFAULT_EMAIL)
                 .andExpect(status().isNoContent());
+
+        performForgotPassword(DEFAULT_EMAIL)
+                .andExpect(status().isNoContent());
+
+        List<AuthActionToken> passwordResetTokens = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .toList();
+
+        assertThat(passwordResetTokens).hasSize(1);
+
+        List<EmailOutbox> passwordResetEmails = emailOutboxRepository.findAll().stream()
+                .filter(emailOutbox -> emailOutbox.getEmailType() == EmailOutboxType.PASSWORD_RESET)
+                .toList();
+
+        assertThat(passwordResetEmails).hasSize(1);
+
+        assertThat(passwordResetEmails.getFirst().getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+    }
+
+    @Test
+    void forgotPasswordShouldCreateNewResetEmailAfterCooldown() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        performForgotPassword(DEFAULT_EMAIL)
+                .andExpect(status().isNoContent());
+
+        AuthActionToken firstToken = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .findFirst()
+                .orElseThrow();
+
+        moveAuthActionTokenCreatedAtBack(firstToken, Duration.ofMinutes(5));
 
         performForgotPassword(DEFAULT_EMAIL)
                 .andExpect(status().isNoContent());
@@ -2574,21 +2625,58 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void resetPasswordShouldIgnoreInvalidAuthorizationHeader() throws Exception {
+    void resetPasswordShouldRejectExpiredTokenWithoutChangingPassword() throws Exception {
         registerAndVerifyDefaultUser();
 
         String resetToken = requestPasswordResetAndExtractToken(DEFAULT_EMAIL);
 
-        performResetPasswordWithAuthorization(
-                resetToken,
-                NEW_PASSWORD,
-                "Bearer invalid-token"
-        )
-                .andExpect(status().isNoContent());
+        User userBeforeReset = defaultUser();
+        String passwordHashBeforeReset = userBeforeReset.getUserPasswordHash();
+
+        AuthActionToken passwordResetToken = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .findFirst()
+                .orElseThrow();
+
+        OffsetDateTime now = OffsetDateTime.now();
+
+        jdbcTemplate.update(
+                """
+                        update auth_action_tokens
+                        set auth_action_created_at = ?,
+                            auth_action_expires_at = ?
+                        where auth_action_token_id = ?
+                        """,
+                now.minusMinutes(10),
+                now.minusMinutes(1),
+                passwordResetToken.getAuthActionTokenId()
+        );
+
+        performResetPassword(resetToken, NEW_PASSWORD)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.passwordReset.invalidOrExpired"));
+
+        User userAfterReset = defaultUser();
+
+        assertThat(userAfterReset.getUserPasswordHash())
+                .isEqualTo(passwordHashBeforeReset);
+
+        AuthActionToken reloadedPasswordResetToken = authActionTokenRepository.findAll().stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.PASSWORD_RESET)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(reloadedPasswordResetToken.getAuthActionUsedAt()).isNull();
+        assertThat(reloadedPasswordResetToken.getAuthActionRevokedAt()).isNull();
+
+        performLogin(DEFAULT_EMAIL, DEFAULT_PASSWORD)
+                .andExpect(status().isOk());
 
         performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
-                .andExpect(status().isOk());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
     }
+
 
     private void registerValidUser(String email) throws Exception {
         performRegister(
@@ -3131,5 +3219,20 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andReturn();
 
         return extractAccessToken(loginResult);
+    }
+
+    private void moveAuthActionTokenCreatedAtBack(
+            AuthActionToken token,
+            Duration duration
+    ) {
+        jdbcTemplate.update(
+                """
+                        update auth_action_tokens
+                        set auth_action_created_at = ?
+                        where auth_action_token_id = ?
+                        """,
+                OffsetDateTime.now().minus(duration),
+                token.getAuthActionTokenId()
+        );
     }
 }
