@@ -1,6 +1,5 @@
 package me.serenityline.api.auth.controller;
 
-
 import com.jayway.jsonpath.JsonPath;
 import jakarta.servlet.http.Cookie;
 import me.serenityline.api.auth.entity.*;
@@ -27,6 +26,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultActions;
 
 import java.time.OffsetDateTime;
 import java.util.Arrays;
@@ -36,11 +36,27 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class AuthControllerIntegrationTest extends IntegrationTestSupport {
+
+    private static final String DEFAULT_EMAIL = "samuel@example.com";
+    private static final String DEFAULT_PASSWORD = "VeryStrongPassword-2026-SerenityLine!";
+    private static final String DEFAULT_USER_NAME = "Samuel";
+    private static final String DEFAULT_LOCALE = "en-US";
+    private static final String DEFAULT_USER_AGENT = "JUnit Browser";
+    private static final String DEFAULT_DEVICE_LABEL = "Samuel test device";
+
+    private static final String IT_LOCALE = "it-IT";
+    private static final String DEFAULT_GROUP_NAME = "Samuel's group";
+    private static final String IT_GROUP_NAME = "Gruppo di Samuel";
+    private static final String REFRESH_COOKIE_NAME = "serenityline_refresh";
+    private static final String WRONG_PASSWORD = "WrongPassword-2026!";
+    private static final String MISSING_EMAIL = "missing@example.com";
+    private static final String DEV_ORIGIN = "http://localhost:5173";
+
+    private static final String IT_TEST_PASSWORD = "TrenoMareLuna2026!";
 
     @Autowired
     private MockMvc mockMvc;
@@ -91,29 +107,61 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .orElseThrow();
     }
 
+    private static String tamperToken(String token) {
+        assertThat(token).isNotBlank();
+
+        String[] parts = token.split("\\.", -1);
+
+        assertThat(parts).hasSize(3);
+        assertThat(parts[0]).isNotBlank();
+        assertThat(parts[1]).isNotBlank();
+        assertThat(parts[2]).isNotBlank();
+
+        return parts[0]
+                + "."
+                + parts[1]
+                + "."
+                + tamperFirstCharacter(parts[2]);
+    }
+
+    private static String tamperFirstCharacter(String value) {
+        assertThat(value).isNotBlank();
+
+        char first = value.charAt(0);
+        char replacement = first == 'A' ? 'B' : 'A';
+
+        return replacement + value.substring(1);
+    }
+
+    private static String jsonPathString(
+            MvcResult result,
+            String path
+    ) throws Exception {
+        return JsonPath.read(
+                result.getResponse().getContentAsString(),
+                path
+        );
+    }
+
     @Test
     void registerShouldCreateDisabledOwnerUserAndGroup() throws Exception {
         String email = uniqueEmail("valid");
 
-        mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Samuel",
-                                  "email": "%s",
-                                  "password": "TrenoMareLuna2026!",
-                                  "preferredLocale": "it-IT"
-                                }
-                                """.formatted(email)))
+        performRegister(
+                IT_LOCALE,
+                DEFAULT_USER_NAME,
+                email,
+                IT_TEST_PASSWORD,
+                IT_LOCALE
+        )
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.userId").isString())
-                .andExpect(jsonPath("$.userName").value("Samuel"))
+                .andExpect(jsonPath("$.userName").value(DEFAULT_USER_NAME))
                 .andExpect(jsonPath("$.email").value(email))
                 .andExpect(jsonPath("$.userGroupId").isString())
-                .andExpect(jsonPath("$.userGroupName").value("Gruppo di Samuel"))
+                .andExpect(jsonPath("$.userGroupName").value(IT_GROUP_NAME))
                 .andExpect(jsonPath("$.userRole").value("OWNER"))
-                .andExpect(jsonPath("$.preferredLocale").value("it-IT"))
+                .andExpect(jsonPath("$.preferredLocale").value(IT_LOCALE))
                 .andExpect(jsonPath("$.wantsInvoice").value(false))
                 .andExpect(jsonPath("$.emailVerificationRequired").value(true))
                 .andExpect(content().string(not(containsString("password"))))
@@ -123,7 +171,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .orElseThrow();
 
         assertThat(savedUser.getEmail()).isEqualTo(email);
-        assertThat(savedUser.getUserName()).isEqualTo("Samuel");
+        assertThat(savedUser.getUserName()).isEqualTo(DEFAULT_USER_NAME);
         assertThat(savedUser.getUserRole()).isEqualTo(UserRole.OWNER);
         assertThat(savedUser.isUserIsEnabled()).isFalse();
         assertThat(savedUser.isWantsInvoice()).isFalse();
@@ -132,7 +180,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         List<UserGroup> groups = userGroupRepository.findAll();
 
         assertThat(groups).hasSize(1);
-        assertThat(groups.getFirst().getUserGroupName()).isEqualTo("Gruppo di Samuel");
+        assertThat(groups.getFirst().getUserGroupName()).isEqualTo(IT_GROUP_NAME);
     }
 
     @Test
@@ -141,17 +189,13 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         registerValidUser(email);
 
-        mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Samuel Duplicate",
-                                  "email": "%s",
-                                  "password": "TrenoMareLuna2026!",
-                                  "preferredLocale": "it-IT"
-                                }
-                                """.formatted(email)))
+        performRegister(
+                IT_LOCALE,
+                "Samuel Duplicate",
+                email,
+                IT_TEST_PASSWORD,
+                IT_LOCALE
+        )
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("auth.register.emailAlreadyExists"))
                 .andExpect(jsonPath("$.message").value("Esiste già un account con questa email."))
@@ -166,17 +210,13 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         registerValidUser(email);
 
-        mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Samuel Duplicate",
-                                  "email": "%s",
-                                  "password": "TrenoMareLuna2026!",
-                                  "preferredLocale": "it-IT"
-                                }
-                                """.formatted(email)))
+        performRegister(
+                DEFAULT_LOCALE,
+                "Samuel Duplicate",
+                email,
+                IT_TEST_PASSWORD,
+                IT_LOCALE
+        )
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("auth.register.emailAlreadyExists"))
                 .andExpect(jsonPath("$.message").value("An account with this email already exists."));
@@ -186,17 +226,13 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     void registerShouldRejectWeakPassword() throws Exception {
         String email = uniqueEmail("weak");
 
-        mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Weak Password User",
-                                  "email": "%s",
-                                  "password": "password12345",
-                                  "preferredLocale": "it-IT"
-                                }
-                                """.formatted(email)))
+        performRegister(
+                IT_LOCALE,
+                "Weak Password User",
+                email,
+                "password12345",
+                IT_LOCALE
+        )
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.password.tooWeak"))
                 .andExpect(jsonPath("$.message").value("La password scelta è troppo debole."))
@@ -210,7 +246,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     @Test
     void registerShouldReturnDtoValidationErrors() throws Exception {
         mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -242,7 +278,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         String email = uniqueEmail("defaults");
 
         mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -252,7 +288,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                                 }
                                 """.formatted(email)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.preferredLocale").value("it-IT"))
+                .andExpect(jsonPath("$.preferredLocale").value(IT_LOCALE))
                 .andExpect(jsonPath("$.wantsInvoice").value(false))
                 .andExpect(jsonPath("$.userRole").value("OWNER"))
                 .andExpect(jsonPath("$.emailVerificationRequired").value(true));
@@ -262,19 +298,15 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     void registerShouldUseEnglishGroupNameWhenPreferredLocaleIsEnglish() throws Exception {
         String email = uniqueEmail("english");
 
-        mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "John",
-                                  "email": "%s",
-                                  "password": "RiverMountainCloud2026!",
-                                  "preferredLocale": "en-US"
-                                }
-                                """.formatted(email)))
+        performRegister(
+                IT_LOCALE,
+                "John",
+                email,
+                "RiverMountainCloud2026!",
+                DEFAULT_LOCALE
+        )
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.preferredLocale").value("en-US"))
+                .andExpect(jsonPath("$.preferredLocale").value(DEFAULT_LOCALE))
                 .andExpect(jsonPath("$.userGroupName").value("John's group"));
     }
 
@@ -284,17 +316,13 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         String rawEmail = "UPPER.%s@EXAMPLE.COM".formatted(uniquePart);
         String expectedEmail = "upper.%s@example.com".formatted(uniquePart);
 
-        mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Upper Email",
-                                  "email": "%s",
-                                  "password": "SoleVentoMare2026!",
-                                  "preferredLocale": "it-IT"
-                                }
-                                """.formatted(rawEmail)))
+        performRegister(
+                IT_LOCALE,
+                "Upper Email",
+                rawEmail,
+                "SoleVentoMare2026!",
+                IT_LOCALE
+        )
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.email").value(expectedEmail));
 
@@ -304,29 +332,24 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     @Test
     void corsPreflightShouldAllowConfiguredDevOrigin() throws Exception {
         mockMvc.perform(options("/api/auth/register")
-                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ORIGIN, DEV_ORIGIN)
                         .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
                         .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "Content-Type"))
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:5173"))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, DEV_ORIGIN))
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"))
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, containsString("POST")));
     }
 
     @Test
     void registerShouldCreateEmailVerificationTokenAndOutboxEmail() throws Exception {
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "userName": "Samuel",
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "preferredLocale": "en-US",
-                                  "wantsInvoice": false
-                                }
-                                """))
+        performRegisterWithWantsInvoice(
+                DEFAULT_USER_NAME,
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
+                DEFAULT_LOCALE,
+                false
+        )
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.emailVerificationRequired").value(true));
 
@@ -350,7 +373,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         assertThat(emailOutbox.getEmailType()).isEqualTo(EmailOutboxType.EMAIL_VERIFICATION);
         assertThat(emailOutbox.getEmailStatus()).isEqualTo(EmailOutboxStatus.PENDING);
-        assertThat(emailOutbox.getRecipientEmail()).isEqualTo("samuel@example.com");
+        assertThat(emailOutbox.getRecipientEmail()).isEqualTo(DEFAULT_EMAIL);
         assertThat(emailOutbox.getAttempts()).isZero();
         assertThat(emailOutbox.isDeleteBodyAfterSend()).isTrue();
 
@@ -367,31 +390,20 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         String body = decryptTextBody(emailOutbox);
 
         assertThat(subject).isEqualTo("Verify your SerenityLine email");
-        assertThat(body).contains("http://localhost:5173/verify-email#token=");
-        assertThat(body).contains("http://localhost:5173/verify-email");
+        assertThat(body).contains(DEV_ORIGIN + "/verify-email#token=");
+        assertThat(body).contains(DEV_ORIGIN + "/verify-email");
         assertThat(body).contains("This link expires in 1 day.");
     }
 
     @Test
     void registerShouldStoreOnlyTokenHashMatchingEmailToken() throws Exception {
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "userName": "Samuel",
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "preferredLocale": "en-US"
-                                }
-                                """))
+        performDefaultRegister()
                 .andExpect(status().isCreated());
 
         AuthActionToken actionToken = authActionTokenRepository.findAll().getFirst();
         EmailOutbox emailOutbox = emailOutboxRepository.findAll().getFirst();
 
         String body = decryptTextBody(emailOutbox);
-
         String plainToken = extractTokenFromBody(body);
 
         assertThat(plainToken)
@@ -407,28 +419,16 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void registerShouldRejectDuplicateEmail() throws Exception {
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Samuel",
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "preferredLocale": "en-US"
-                                }
-                                """))
+        performDefaultRegister()
                 .andExpect(status().isCreated());
 
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Another Samuel",
-                                  "email": "samuel@example.com",
-                                  "password": "AnotherVeryStrongPassword-2026!",
-                                  "preferredLocale": "en-US"
-                                }
-                                """))
+        performRegister(
+                DEFAULT_LOCALE,
+                "Another Samuel",
+                DEFAULT_EMAIL,
+                "AnotherVeryStrongPassword-2026!",
+                DEFAULT_LOCALE
+        )
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("auth.register.emailAlreadyExists"));
 
@@ -436,83 +436,12 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(emailOutboxRepository.findAll()).hasSize(1);
     }
 
-    private void registerValidUser(String email) throws Exception {
-        mockMvc.perform(post("/api/auth/register")
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "it-IT")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "userName": "Samuel",
-                                  "email": "%s",
-                                  "password": "TrenoMareLuna2026!",
-                                  "preferredLocale": "it-IT"
-                                }
-                                """.formatted(email)))
-                .andExpect(status().isCreated());
-    }
-
-    private String uniqueEmail(String prefix) {
-        return "%s.%s@example.com".formatted(
-                prefix,
-                UUID.randomUUID().toString().replace("-", "")
-        );
-    }
-
-    private String decryptSubject(EmailOutbox emailOutbox) {
-        return emailOutboxEncryptionService.decrypt(
-                new EncryptedValue(
-                        emailOutbox.getSubjectEncrypted(),
-                        emailOutbox.getSubjectIv(),
-                        emailOutbox.getSubjectTag()
-                )
-        );
-    }
-
-    private String decryptTextBody(EmailOutbox emailOutbox) {
-        return emailOutboxEncryptionService.decrypt(
-                new EncryptedValue(
-                        emailOutbox.getBodyTextEncrypted(),
-                        emailOutbox.getBodyTextIv(),
-                        emailOutbox.getBodyTextTag()
-                )
-        );
-    }
-
-    private String extractTokenFromBody(String body) {
-        String marker = "#token=";
-
-        int tokenStart = body.indexOf(marker);
-
-        assertThat(tokenStart).isGreaterThanOrEqualTo(0);
-
-        tokenStart += marker.length();
-
-        int tokenEnd = body.indexOf('\n', tokenStart);
-
-        if (tokenEnd == -1) {
-            tokenEnd = body.length();
-        }
-
-        return body.substring(tokenStart, tokenEnd).trim();
-    }
-
     @Test
     void createEmailVerificationShouldCancelPreviousPendingEmailsAndRevokePreviousTokens() throws Exception {
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "userName": "Samuel",
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "preferredLocale": "en-US"
-                                }
-                                """))
+        performDefaultRegister()
                 .andExpect(status().isCreated());
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         assertThat(authActionTokenRepository.findAll()).hasSize(1);
         assertThat(emailOutboxRepository.findAll()).hasSize(1);
@@ -564,25 +493,16 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .orElseThrow();
 
         assertThat(pendingEmail.getEmailCancelledAt()).isNull();
-        assertThat(pendingEmail.getRecipientEmail()).isEqualTo("samuel@example.com");
+        assertThat(pendingEmail.getRecipientEmail()).isEqualTo(DEFAULT_EMAIL);
     }
 
     @Test
     void verifyEmailShouldEnableUserAndMarkTokenAsUsed() throws Exception {
         String token = registerAndExtractVerificationToken();
 
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "token": "%s"
-                                }
-                                """.formatted(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.emailVerified").value(true));
+        verifyEmail(token);
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         assertThat(user.isUserIsEnabled()).isTrue();
 
@@ -594,28 +514,14 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void verifyEmailShouldRejectInvalidToken() throws Exception {
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "token": "invalid-token"
-                                }
-                                """))
+        performVerifyEmail("invalid-token")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.emailVerification.invalidOrExpired"));
     }
 
     @Test
     void verifyEmailShouldRejectBlankToken() throws Exception {
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "token": " "
-                                }
-                                """))
+        performVerifyEmail(" ")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("validation.failed"))
                 .andExpect(jsonPath("$.fieldErrors[0].code").value("auth.token.required"));
@@ -625,28 +531,10 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     void verifyEmailShouldBeIdempotentAfterSuccessfulVerification() throws Exception {
         String token = registerAndExtractVerificationToken();
 
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "token": "%s"
-                                }
-                                """.formatted(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.emailVerified").value(true));
+        verifyEmail(token);
+        verifyEmail(token);
 
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "token": "%s"
-                                }
-                                """.formatted(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.emailVerified").value(true));
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         assertThat(user.isUserIsEnabled()).isTrue();
 
@@ -659,24 +547,15 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     void verifyEmailShouldRejectRevokedTokenAfterNewVerificationEmailIsCreated() throws Exception {
         String oldToken = registerAndExtractVerificationToken();
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         emailVerificationService.createEmailVerification(user);
 
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "token": "%s"
-                                }
-                                """.formatted(oldToken)))
+        performVerifyEmail(oldToken)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.emailVerification.invalidOrExpired"));
 
-        User reloadedUser = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User reloadedUser = defaultUser();
 
         assertThat(reloadedUser.isUserIsEnabled()).isFalse();
 
@@ -693,19 +572,11 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     void loginShouldReturnEmailVerificationRequiredChallengeForUnverifiedEmail() throws Exception {
         registerAndExtractVerificationToken();
 
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!"
-                                }
-                                """))
+        performDefaultLogin()
                 .andExpect(status().isConflict())
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.userId").exists())
-                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL))
                 .andExpect(jsonPath("$.emailVerificationResendToken").exists())
                 .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
@@ -735,47 +606,31 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void loginShouldAuthenticateVerifiedUser() throws Exception {
-        String token = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(token);
-
-        MvcResult result = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
+        MvcResult result = performDefaultLoginWithDevice()
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")))
                 .andExpect(jsonPath("$.accessToken").exists())
                 .andExpect(jsonPath("$.accessTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.user.userId").exists())
-                .andExpect(jsonPath("$.user.userName").value("Samuel"))
-                .andExpect(jsonPath("$.user.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.user.userName").value(DEFAULT_USER_NAME))
+                .andExpect(jsonPath("$.user.email").value(DEFAULT_EMAIL))
                 .andExpect(jsonPath("$.user.userGroupId").exists())
-                .andExpect(jsonPath("$.user.userGroupName").value("Samuel's group"))
+                .andExpect(jsonPath("$.user.userGroupName").value(DEFAULT_GROUP_NAME))
                 .andExpect(jsonPath("$.user.userRole").value("OWNER"))
                 .andExpect(jsonPath("$.user.userPlatformRole").value("USER"))
-                .andExpect(jsonPath("$.user.preferredLocale").value("en-US"))
+                .andExpect(jsonPath("$.user.preferredLocale").value(DEFAULT_LOCALE))
                 .andExpect(jsonPath("$.user.preferredTheme").value("DEFAULT"))
                 .andExpect(jsonPath("$.user.wantsInvoice").value(false))
                 .andReturn();
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        assertRefreshCookieIssued(result);
+
+        User user = defaultUser();
 
         assertThat(user.getUserLastLoginAt()).isNotNull();
 
-        String responseBody = result.getResponse().getContentAsString();
-        String accessToken = JsonPath.read(responseBody, "$.accessToken");
+        String accessToken = extractAccessToken(result);
 
         Optional<JwtTokenClaims> claims = jwtTokenService.parseAndValidate(accessToken);
 
@@ -791,8 +646,8 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(session.getUser().getUserId()).isEqualTo(user.getUserId());
         assertThat(session.getIpAddressHash()).isNotBlank();
         assertThat(session.getIpAddressHash()).isNotEqualTo("127.0.0.1");
-        assertThat(session.getUserAgent()).isEqualTo("JUnit Browser");
-        assertThat(session.getDeviceLabel()).isEqualTo("Samuel test device");
+        assertThat(session.getUserAgent()).isEqualTo(DEFAULT_USER_AGENT);
+        assertThat(session.getDeviceLabel()).isEqualTo(DEFAULT_DEVICE_LABEL);
         assertThat(session.getSessionExpiresAt()).isAfter(OffsetDateTime.now());
         assertThat(session.getSessionRevokedAt()).isNull();
 
@@ -808,52 +663,31 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         String setCookie = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
 
         assertThat(setCookie).isNotNull();
-        assertThat(setCookie).contains("serenityline_refresh=");
+        assertThat(setCookie).contains(REFRESH_COOKIE_NAME + "=");
         assertThat(setCookie).doesNotContain(refreshToken.getRefreshTokenHash());
     }
 
     @Test
     void loginShouldAuthenticateVerifiedUserWithoutDeviceLabel() throws Exception {
-        String token = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(token);
-
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!"
-                                }
-                                """))
+        performDefaultLoginWithUserAgent()
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE_NAME + "=")))
                 .andExpect(jsonPath("$.accessToken").exists())
-                .andExpect(jsonPath("$.user.email").value("samuel@example.com"));
+                .andExpect(jsonPath("$.user.email").value(DEFAULT_EMAIL));
 
         UserSession session = userSessionRepository.findAll().getFirst();
 
-        assertThat(session.getUserAgent()).isEqualTo("JUnit Browser");
+        assertThat(session.getUserAgent()).isEqualTo(DEFAULT_USER_AGENT);
         assertThat(session.getDeviceLabel()).isNull();
     }
 
     @Test
     void loginShouldRejectWrongPassword() throws Exception {
-        String token = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(token);
-
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "WrongPassword-2026!"
-                                }
-                                """))
+        performLogin(DEFAULT_EMAIL, WRONG_PASSWORD)
                 .andExpect(status().isBadRequest())
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
@@ -864,27 +698,16 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void loginShouldRejectUnknownEmail() throws Exception {
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "missing@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!"
-                                }
-                                """))
+        performLogin(MISSING_EMAIL, DEFAULT_PASSWORD)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
     }
 
     @Test
     void loginShouldReturnRestoreChallengeForSoftDeletedUserWithCorrectPassword() throws Exception {
-        String token = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(token);
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
@@ -892,15 +715,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(user.isUserIsEnabled()).isTrue();
         assertThat(user.isPendingDeletion()).isTrue();
 
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!"
-                                }
-                                """))
+        performDefaultLogin()
                 .andExpect(status().isConflict())
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.restoreToken").exists())
@@ -919,45 +734,23 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void loginShouldNotRevealSoftDeletedAccountWithWrongPassword() throws Exception {
-        String token = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(token);
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
 
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "WrongPassword-2026!"
-                                }
-                                """))
+        performLogin(DEFAULT_EMAIL, WRONG_PASSWORD)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
     }
 
     @Test
     void loginShouldTreatBlankDeviceLabelAsNull() throws Exception {
-        String token = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(token);
-
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "   "
-                                }
-                                """))
+        performLoginWithDevice(DEFAULT_EMAIL, DEFAULT_PASSWORD, "   ")
                 .andExpect(status().isOk());
 
         UserSession session = userSessionRepository.findAll().getFirst();
@@ -967,46 +760,34 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void restoreAccountShouldRestoreSoftDeletedUserAndMarkTokenAsUsed() throws Exception {
-        String verificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(verificationToken);
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
 
         String restoreToken = loginAndExtractRestoreToken();
 
-        mockMvc.perform(post("/api/auth/restore-account")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "restoreToken": "%s"
-                                }
-                                """.formatted(restoreToken)))
+        performRestoreAccount(restoreToken)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").exists())
-                .andExpect(jsonPath("$.userName").value("Samuel"))
-                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.userName").value(DEFAULT_USER_NAME))
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL))
                 .andExpect(jsonPath("$.userGroupId").exists())
-                .andExpect(jsonPath("$.userGroupName").value("Samuel's group"))
+                .andExpect(jsonPath("$.userGroupName").value(DEFAULT_GROUP_NAME))
                 .andExpect(jsonPath("$.userRole").value("OWNER"))
                 .andExpect(jsonPath("$.userPlatformRole").value("USER"))
-                .andExpect(jsonPath("$.preferredLocale").value("en-US"))
+                .andExpect(jsonPath("$.preferredLocale").value(DEFAULT_LOCALE))
                 .andExpect(jsonPath("$.preferredTheme").value("DEFAULT"))
                 .andExpect(jsonPath("$.wantsInvoice").value(false));
 
-        User restoredUser = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User restoredUser = defaultUser();
 
         assertThat(restoredUser.isPendingDeletion()).isFalse();
         assertThat(restoredUser.getUserDeletedAt()).isNull();
         assertThat(restoredUser.getUserLastLoginAt()).isNotNull();
         assertThat(restoredUser.isUserIsEnabled()).isTrue();
-        assertThat(restoredUser.getUserLastLoginAt()).isNotNull();
 
         AuthActionToken restoreActionToken = authActionTokenRepository.findAll().stream()
                 .filter(actionToken -> actionToken.getAuthActionTokenType() == AuthActionTokenType.RESTORE_ACCOUNT)
@@ -1021,66 +802,39 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .toList();
 
         assertThat(verificationEmails).hasSize(1);
-
     }
 
     @Test
     void restoreAccountShouldRejectInvalidToken() throws Exception {
-        mockMvc.perform(post("/api/auth/restore-account")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "restoreToken": "invalid-token"
-                                }
-                                """))
+        performRestoreAccount("invalid-token")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.restoreAccount.invalidOrExpired"));
     }
 
     @Test
     void restoreAccountShouldRejectAlreadyUsedRestoreToken() throws Exception {
-        String verificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(verificationToken);
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
 
         String restoreToken = loginAndExtractRestoreToken();
 
-        mockMvc.perform(post("/api/auth/restore-account")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "restoreToken": "%s"
-                                }
-                                """.formatted(restoreToken)))
+        performRestoreAccount(restoreToken)
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/auth/restore-account")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "restoreToken": "%s"
-                                }
-                                """.formatted(restoreToken)))
+        performRestoreAccount(restoreToken)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.restoreAccount.invalidOrExpired"));
     }
 
     @Test
     void loginShouldRevokePreviousRestoreTokenWhenCreatingNewRestoreChallenge() throws Exception {
-        String verificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(verificationToken);
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
@@ -1104,14 +858,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .filteredOn(actionToken -> actionToken.getAuthActionRevokedAt() == null)
                 .hasSize(1);
 
-        mockMvc.perform(post("/api/auth/restore-account")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "restoreToken": "%s"
-                                }
-                                """.formatted(firstRestoreToken)))
+        performRestoreAccount(firstRestoreToken)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.restoreAccount.invalidOrExpired"));
     }
@@ -1120,23 +867,14 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     void loginShouldReturnRestoreChallengeForSoftDeletedUnverifiedUserWithCorrectPassword() throws Exception {
         registerAndExtractVerificationToken();
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         assertThat(user.isUserIsEnabled()).isFalse();
 
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
 
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!"
-                                }
-                                """))
+        performDefaultLogin()
                 .andExpect(status().isConflict())
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE))
                 .andExpect(jsonPath("$.restoreToken").exists())
@@ -1159,8 +897,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     void restoreAccountShouldRestoreUnverifiedUserWithoutLoginAndCreateNewVerificationEmail() throws Exception {
         registerAndExtractVerificationToken();
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         assertThat(user.isUserIsEnabled()).isFalse();
         assertThat(user.getUserLastLoginAt()).isNull();
@@ -1170,17 +907,10 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         String restoreToken = loginAndExtractRestoreToken();
 
-        mockMvc.perform(post("/api/auth/restore-account")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "restoreToken": "%s"
-                                }
-                                """.formatted(restoreToken)))
+        performRestoreAccount(restoreToken)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").exists())
-                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL))
                 .andExpect(jsonPath("$.emailVerificationResendToken").exists())
                 .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
@@ -1191,8 +921,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.userRole").doesNotExist())
                 .andExpect(jsonPath("$.userPlatformRole").doesNotExist());
 
-        User restoredUser = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User restoredUser = defaultUser();
 
         assertThat(restoredUser.isPendingDeletion()).isFalse();
         assertThat(restoredUser.getUserDeletedAt()).isNull();
@@ -1246,14 +975,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void resendEmailVerificationShouldRejectInvalidToken() throws Exception {
-        mockMvc.perform(post("/api/auth/resend-email-verification")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "emailVerificationResendToken": "invalid-token"
-                                }
-                                """))
+        performResendEmailVerification("invalid-token")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.emailVerificationResend.invalidOrExpired"));
     }
@@ -1264,14 +986,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         String resendToken = loginAndExtractEmailVerificationResendToken();
 
-        mockMvc.perform(post("/api/auth/resend-email-verification")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "emailVerificationResendToken": "%s"
-                                }
-                                """.formatted(resendToken)))
+        performResendEmailVerification(resendToken)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("auth.emailVerificationResend.tooSoon"));
 
@@ -1289,29 +1004,19 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         String firstResendToken = loginAndExtractEmailVerificationResendToken();
 
-        makeEmailVerificationCooldownExpired("samuel@example.com");
+        makeEmailVerificationCooldownExpired(DEFAULT_EMAIL);
 
-        MvcResult result = mockMvc.perform(post("/api/auth/resend-email-verification")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "emailVerificationResendToken": "%s"
-                                }
-                                """.formatted(firstResendToken)))
+        MvcResult result = performResendEmailVerification(firstResendToken)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").exists())
-                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL))
                 .andExpect(jsonPath("$.emailVerificationResendToken").exists())
                 .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
                 .andExpect(jsonPath("$.code").doesNotExist())
                 .andReturn();
 
-        String secondResendToken = JsonPath.read(
-                result.getResponse().getContentAsString(),
-                "$.emailVerificationResendToken"
-        );
+        String secondResendToken = jsonPathString(result, "$.emailVerificationResendToken");
 
         assertThat(secondResendToken).isNotEqualTo(firstResendToken);
 
@@ -1367,25 +1072,12 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         String resendToken = loginAndExtractEmailVerificationResendToken();
 
-        makeEmailVerificationCooldownExpired("samuel@example.com");
+        makeEmailVerificationCooldownExpired(DEFAULT_EMAIL);
 
-        mockMvc.perform(post("/api/auth/resend-email-verification")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "emailVerificationResendToken": "%s"
-                                }
-                                """.formatted(resendToken)))
+        performResendEmailVerification(resendToken)
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/auth/resend-email-verification")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "emailVerificationResendToken": "%s"
-                                }
-                                """.formatted(resendToken)))
+        performResendEmailVerification(resendToken)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.emailVerificationResend.invalidOrExpired"));
     }
@@ -1398,87 +1090,58 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
         verifyEmail(verificationToken);
 
-        mockMvc.perform(post("/api/auth/resend-email-verification")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "emailVerificationResendToken": "%s"
-                                }
-                                """.formatted(resendToken)))
+        performResendEmailVerification(resendToken)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("auth.emailVerification.userAlreadyVerified"));
     }
 
     @Test
     void refreshShouldRejectMissingCookie() throws Exception {
-        mockMvc.perform(post("/api/auth/refresh")
+        ResultActions resultActions = mockMvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE))
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
     }
 
     @Test
     void refreshShouldRotateRefreshTokenAndIssueNewAccessToken() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
-
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
+        MvcResult loginResult = performDefaultLoginWithDevice()
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
                 .andReturn();
 
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String firstPlainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+        assertRefreshCookieIssued(loginResult);
+
+        String firstPlainRefreshToken = extractRefreshCookie(loginResult);
 
         assertThat(refreshTokenRepository.findAll()).hasSize(1);
 
         RefreshToken firstRefreshToken = refreshTokenRepository.findAll().getFirst();
 
-        MvcResult refreshResult = mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
+        MvcResult refreshResult = performRefresh(firstPlainRefreshToken)
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")))
                 .andExpect(jsonPath("$.accessToken").exists())
                 .andExpect(jsonPath("$.accessTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.user.userId").exists())
-                .andExpect(jsonPath("$.user.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.user.email").value(DEFAULT_EMAIL))
                 .andExpect(jsonPath("$.user.userRole").value("OWNER"))
                 .andExpect(jsonPath("$.user.userPlatformRole").value("USER"))
                 .andReturn();
 
+        assertRefreshCookieIssued(refreshResult);
+
         String refreshSetCookie = refreshResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String secondPlainRefreshToken = extractCookieValue(refreshSetCookie, "serenityline_refresh");
+        String secondPlainRefreshToken = extractRefreshCookie(refreshResult);
 
         assertThat(secondPlainRefreshToken).isNotBlank();
         assertThat(secondPlainRefreshToken).isNotEqualTo(firstPlainRefreshToken);
 
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
-        String responseBody = refreshResult.getResponse().getContentAsString();
-        String accessToken = JsonPath.read(responseBody, "$.accessToken");
+        String accessToken = extractAccessToken(refreshResult);
 
         Optional<JwtTokenClaims> claims = jwtTokenService.parseAndValidate(accessToken);
 
@@ -1524,50 +1187,23 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectUsedRefreshTokenAndMarkReuseDetected() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
+        String firstPlainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
+        MvcResult firstRefreshResult = performRefresh(firstPlainRefreshToken)
                 .andExpect(status().isOk())
                 .andReturn();
 
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String firstPlainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
-
-        MvcResult firstRefreshResult = mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String firstRefreshSetCookie = firstRefreshResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String secondPlainRefreshToken = extractCookieValue(firstRefreshSetCookie, "serenityline_refresh");
+        String secondPlainRefreshToken = extractRefreshCookie(firstRefreshResult);
 
         assertThat(secondPlainRefreshToken).isNotBlank();
         assertThat(secondPlainRefreshToken).isNotEqualTo(firstPlainRefreshToken);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions reuseResultActions = performRefresh(firstPlainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(reuseResultActions);
 
         assertThat(userSessionRepository.findAll()).hasSize(1);
         assertThat(refreshTokenRepository.findAll()).hasSize(2);
@@ -1599,44 +1235,20 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectCurrentRefreshTokenAfterReuseDetectionRevokedSession() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
+        String firstPlainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
+        MvcResult firstRefreshResult = performRefresh(firstPlainRefreshToken)
                 .andExpect(status().isOk())
                 .andReturn();
 
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String firstPlainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
-
-        MvcResult firstRefreshResult = mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String firstRefreshSetCookie = firstRefreshResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String secondPlainRefreshToken = extractCookieValue(firstRefreshSetCookie, "serenityline_refresh");
+        String secondPlainRefreshToken = extractRefreshCookie(firstRefreshResult);
 
         assertThat(secondPlainRefreshToken).isNotBlank();
         assertThat(secondPlainRefreshToken).isNotEqualTo(firstPlainRefreshToken);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
+        performRefresh(firstPlainRefreshToken)
                 .andExpect(status().isUnauthorized());
 
         UserSession sessionAfterReuse = userSessionRepository.findAll().getFirst();
@@ -1645,16 +1257,10 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(sessionAfterReuse.getSessionRevokeReason())
                 .isEqualTo(SessionRevokeReason.TOKEN_REUSE_DETECTED);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", secondPlainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions resultActions = performRefresh(secondPlainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(userSessionRepository.findAll()).hasSize(1);
         assertThat(refreshTokenRepository.findAll()).hasSize(2);
@@ -1670,18 +1276,10 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectUnknownRefreshToken() throws Exception {
-        String unknownRefreshToken = "unknown-refresh-token";
+        ResultActions resultActions = performRefresh("unknown-refresh-token")
+                .andExpect(status().isUnauthorized());
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", unknownRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(userSessionRepository.findAll()).isEmpty();
         assertThat(refreshTokenRepository.findAll()).isEmpty();
@@ -1689,41 +1287,18 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectRevokedRefreshToken() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
-
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
         RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
         refreshToken.revoke(RefreshTokenRevokeReason.USER_LOGOUT);
         refreshTokenRepository.save(refreshToken);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions resultActions = performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(refreshTokenRepository.findAll()).hasSize(1);
 
@@ -1737,41 +1312,18 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectRevokedSession() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
-
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
         UserSession session = userSessionRepository.findAll().getFirst();
         session.revoke(SessionRevokeReason.USER_LOGOUT);
         userSessionRepository.save(session);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions resultActions = performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(userSessionRepository.findAll()).hasSize(1);
         assertThat(refreshTokenRepository.findAll()).hasSize(1);
@@ -1789,26 +1341,9 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectExpiredRefreshToken() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
-
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
         RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
 
@@ -1819,16 +1354,10 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 where refresh_token_id = ?
                 """, refreshToken.getRefreshTokenId());
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions resultActions = performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(refreshTokenRepository.findAll()).hasSize(1);
 
@@ -1840,26 +1369,9 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectExpiredSession() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
-
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
         UserSession session = userSessionRepository.findAll().getFirst();
 
@@ -1871,16 +1383,10 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 where user_session_id = ?
                 """, session.getUserSessionId());
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions resultActions = performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(userSessionRepository.findAll()).hasSize(1);
         assertThat(refreshTokenRepository.findAll()).hasSize(1);
@@ -1893,43 +1399,19 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectDisabledUser() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         user.setUserIsEnabled(false);
         userRepository.save(user);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions resultActions = performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(userSessionRepository.findAll()).hasSize(1);
         assertThat(refreshTokenRepository.findAll()).hasSize(1);
@@ -1942,43 +1424,19 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void refreshShouldRejectSoftDeletedUser() throws Exception {
-        String emailVerificationToken = registerAndExtractVerificationToken();
+        registerAndVerifyDefaultUser();
 
-        verifyEmail(emailVerificationToken);
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
 
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "deviceLabel": "Samuel test device"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
-        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
-
-        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
-                .orElseThrow();
+        User user = defaultUser();
 
         user.markAsSoftDeleted();
         userRepository.save(user);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+        ResultActions resultActions = performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
 
         assertThat(userSessionRepository.findAll()).hasSize(1);
         assertThat(refreshTokenRepository.findAll()).hasSize(1);
@@ -1989,19 +1447,194 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
     }
 
+    @Test
+    void meShouldRejectMissingAccessToken() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meShouldReturnCurrentUserWithValidAccessToken() throws Exception {
+        String accessToken = loginAndExtractAccessToken();
+
+        performMe(accessToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.userName").value(DEFAULT_USER_NAME))
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL))
+                .andExpect(jsonPath("$.userGroupId").exists())
+                .andExpect(jsonPath("$.userGroupName").value(DEFAULT_GROUP_NAME))
+                .andExpect(jsonPath("$.userRole").value("OWNER"))
+                .andExpect(jsonPath("$.userPlatformRole").value("USER"))
+                .andExpect(jsonPath("$.preferredLocale").value(DEFAULT_LOCALE))
+                .andExpect(jsonPath("$.preferredTheme").value("DEFAULT"))
+                .andExpect(jsonPath("$.wantsInvoice").value(false));
+    }
+
+    @Test
+    void meShouldRejectUnsupportedAuthorizationScheme() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, "Basic abc123"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meShouldRejectBlankBearerToken() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer "))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meShouldRejectTamperedAccessToken() throws Exception {
+        String accessToken = loginAndExtractAccessToken();
+
+        String tamperedAccessToken = tamperToken(accessToken);
+
+        assertThat(tamperedAccessToken).isNotEqualTo(accessToken);
+
+        performMe(tamperedAccessToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meShouldRejectAccessTokenAfterTokenVersionChanged() throws Exception {
+        String accessToken = loginAndExtractAccessToken();
+
+        User user = defaultUser();
+
+        jdbcTemplate.update("""
+                update users
+                set token_version = token_version + 1,
+                    user_updated_at = now()
+                where user_id = ?
+                """, user.getUserId());
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meShouldRejectDisabledUser() throws Exception {
+        String accessToken = loginAndExtractAccessToken();
+
+        User user = defaultUser();
+
+        user.setUserIsEnabled(false);
+        userRepository.saveAndFlush(user);
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meShouldRejectSoftDeletedUser() throws Exception {
+        String accessToken = loginAndExtractAccessToken();
+
+        User user = defaultUser();
+
+        user.markAsSoftDeleted();
+        userRepository.saveAndFlush(user);
+
+        performMe(accessToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void meShouldReturnUpdatedUserDataFromDatabase() throws Exception {
+        String accessToken = loginAndExtractAccessToken();
+
+        User user = defaultUser();
+
+        jdbcTemplate.update("""
+                update users
+                set user_platform_role = 'ADMIN',
+                    preferred_theme = 'DARK',
+                    user_updated_at = now()
+                where user_id = ?
+                """, user.getUserId());
+
+        performMe(accessToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL))
+                .andExpect(jsonPath("$.userRole").value("OWNER"))
+                .andExpect(jsonPath("$.userPlatformRole").value("ADMIN"))
+                .andExpect(jsonPath("$.preferredTheme").value("DARK"));
+    }
+
+    @Test
+    void refreshShouldIgnoreInvalidAuthorizationHeaderAndUseRefreshCookie() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        performRefreshWithAuthorization(plainRefreshToken, "Bearer invalid-access-token")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE_NAME + "=")));
+    }
+
+    private void registerValidUser(String email) throws Exception {
+        performRegister(
+                IT_LOCALE,
+                DEFAULT_USER_NAME,
+                email,
+                IT_TEST_PASSWORD,
+                IT_LOCALE
+        )
+                .andExpect(status().isCreated());
+    }
+
+    private String uniqueEmail(String prefix) {
+        return "%s.%s@example.com".formatted(
+                prefix,
+                UUID.randomUUID().toString().replace("-", "")
+        );
+    }
+
+    private String decryptSubject(EmailOutbox emailOutbox) {
+        return emailOutboxEncryptionService.decrypt(
+                new EncryptedValue(
+                        emailOutbox.getSubjectEncrypted(),
+                        emailOutbox.getSubjectIv(),
+                        emailOutbox.getSubjectTag()
+                )
+        );
+    }
+
+    private String decryptTextBody(EmailOutbox emailOutbox) {
+        return emailOutboxEncryptionService.decrypt(
+                new EncryptedValue(
+                        emailOutbox.getBodyTextEncrypted(),
+                        emailOutbox.getBodyTextIv(),
+                        emailOutbox.getBodyTextTag()
+                )
+        );
+    }
+
+    private String extractTokenFromBody(String body) {
+        String marker = "#token=";
+
+        int tokenStart = body.indexOf(marker);
+
+        assertThat(tokenStart).isGreaterThanOrEqualTo(0);
+
+        tokenStart += marker.length();
+
+        int tokenEnd = body.indexOf('\n', tokenStart);
+
+        if (tokenEnd == -1) {
+            tokenEnd = body.length();
+        }
+
+        return body.substring(tokenStart, tokenEnd).trim();
+    }
 
     private String registerAndExtractVerificationToken() throws Exception {
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "userName": "Samuel",
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!",
-                                  "preferredLocale": "en-US"
-                                }
-                                """))
+        performDefaultRegister()
                 .andExpect(status().isCreated());
 
         EmailOutbox emailOutbox = emailOutboxRepository.findAll().getFirst();
@@ -2010,61 +1643,33 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     private void verifyEmail(String token) throws Exception {
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "token": "%s"
-                                }
-                                """.formatted(token)))
+        performVerifyEmail(token)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.emailVerified").value(true));
     }
 
     private String loginAndExtractRestoreToken() throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!"
-                                }
-                                """))
+        MvcResult result = performDefaultLogin()
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.restoreToken").exists())
                 .andExpect(jsonPath("$.restoreTokenExpiresAt").exists())
                 .andReturn();
 
-        return JsonPath.read(
-                result.getResponse().getContentAsString(),
-                "$.restoreToken"
-        );
+        return jsonPathString(result, "$.restoreToken");
     }
 
     private String loginAndExtractEmailVerificationResendToken() throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
-                        .content("""
-                                {
-                                  "email": "samuel@example.com",
-                                  "password": "VeryStrongPassword-2026-SerenityLine!"
-                                }
-                                """))
+        MvcResult result = performDefaultLogin()
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.userId").exists())
-                .andExpect(jsonPath("$.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.email").value(DEFAULT_EMAIL))
                 .andExpect(jsonPath("$.emailVerificationResendToken").exists())
                 .andExpect(jsonPath("$.emailVerificationResendTokenExpiresAt").exists())
                 .andExpect(jsonPath("$.emailVerificationResendAvailableAt").exists())
                 .andExpect(jsonPath("$.code").doesNotExist())
                 .andReturn();
 
-        return JsonPath.read(
-                result.getResponse().getContentAsString(),
-                "$.emailVerificationResendToken"
-        );
+        return jsonPathString(result, "$.emailVerificationResendToken");
     }
 
     private void makeEmailVerificationCooldownExpired(String email) {
@@ -2080,5 +1685,264 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 and auth_action_used_at is null
                 and auth_action_revoked_at is null
                 """, email);
+    }
+
+    private String loginAndExtractAccessToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = performDefaultLoginWithDevice()
+                .andExpect(status().isOk())
+                .andReturn();
+
+        return extractAccessToken(loginResult);
+    }
+
+    private ResultActions performDefaultRegister() throws Exception {
+        return performRegister(
+                DEFAULT_LOCALE,
+                DEFAULT_USER_NAME,
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
+                DEFAULT_LOCALE
+        );
+    }
+
+    private ResultActions performVerifyEmail(String token) throws Exception {
+        return mockMvc.perform(post("/api/auth/verify-email")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .content("""
+                        {
+                          "token": "%s"
+                        }
+                        """.formatted(token)));
+    }
+
+    private ResultActions performDefaultLogin() throws Exception {
+        return performLogin(
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD
+        );
+    }
+
+    private ResultActions performDefaultLoginWithDevice() throws Exception {
+        return performLoginWithDevice(
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
+                DEFAULT_DEVICE_LABEL
+        );
+    }
+
+    private ResultActions performDefaultLoginWithUserAgent() throws Exception {
+        return mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.USER_AGENT, DEFAULT_USER_AGENT)
+                .content("""
+                        {
+                          "email": "%s",
+                          "password": "%s"
+                        }
+                        """.formatted(
+                        DEFAULT_EMAIL,
+                        DEFAULT_PASSWORD
+                )));
+    }
+
+    private ResultActions performRegister(
+            String acceptLanguage,
+            String userName,
+            String email,
+            String password,
+            String preferredLocale
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, acceptLanguage)
+                .content("""
+                        {
+                          "userName": "%s",
+                          "email": "%s",
+                          "password": "%s",
+                          "preferredLocale": "%s"
+                        }
+                        """.formatted(
+                        userName,
+                        email,
+                        password,
+                        preferredLocale
+                )));
+    }
+
+    private ResultActions performRegisterWithWantsInvoice(
+            String userName,
+            String email,
+            String password,
+            String preferredLocale,
+            boolean wantsInvoice
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, preferredLocale)
+                .content("""
+                        {
+                          "userName": "%s",
+                          "email": "%s",
+                          "password": "%s",
+                          "preferredLocale": "%s",
+                          "wantsInvoice": %s
+                        }
+                        """.formatted(
+                        userName,
+                        email,
+                        password,
+                        preferredLocale,
+                        wantsInvoice
+                )));
+    }
+
+    private ResultActions performLogin(
+            String email,
+            String password
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .content("""
+                        {
+                          "email": "%s",
+                          "password": "%s"
+                        }
+                        """.formatted(
+                        email,
+                        password
+                )));
+    }
+
+    private ResultActions performLoginWithDevice(
+            String email,
+            String password,
+            String deviceLabel
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.USER_AGENT, DEFAULT_USER_AGENT)
+                .content("""
+                        {
+                          "email": "%s",
+                          "password": "%s",
+                          "deviceLabel": "%s"
+                        }
+                        """.formatted(
+                        email,
+                        password,
+                        deviceLabel
+                )));
+    }
+
+    private ResultActions performRefresh(String refreshToken) throws Exception {
+        return mockMvc.perform(post("/api/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+    }
+
+    private ResultActions performRefreshWithAuthorization(
+            String refreshToken,
+            String authorizationHeader
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, authorizationHeader)
+                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+    }
+
+    private ResultActions performRestoreAccount(String restoreToken) throws Exception {
+        return mockMvc.perform(post("/api/auth/restore-account")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .content("""
+                        {
+                          "restoreToken": "%s"
+                        }
+                        """.formatted(restoreToken)));
+    }
+
+    private ResultActions performResendEmailVerification(String resendToken) throws Exception {
+        return mockMvc.perform(post("/api/auth/resend-email-verification")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .content("""
+                        {
+                          "emailVerificationResendToken": "%s"
+                        }
+                        """.formatted(resendToken)));
+    }
+
+    private ResultActions performMe(String accessToken) throws Exception {
+        return mockMvc.perform(get("/api/me")
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken));
+    }
+
+    private void registerAndVerifyDefaultUser() throws Exception {
+        String verificationToken = registerAndExtractVerificationToken();
+        verifyEmail(verificationToken);
+    }
+
+    private User defaultUser() {
+        return userRepository.findByEmailAndUserDeletedAtIsNull(DEFAULT_EMAIL)
+                .orElseThrow();
+    }
+
+    private MvcResult loginDefaultUserWithDevice() throws Exception {
+        return performDefaultLoginWithDevice()
+                .andExpect(status().isOk())
+                .andReturn();
+    }
+
+    private String loginDefaultUserWithDeviceAndExtractRefreshToken() throws Exception {
+        MvcResult loginResult = loginDefaultUserWithDevice();
+
+        return extractRefreshCookie(loginResult);
+    }
+
+    private String extractRefreshCookie(MvcResult result) {
+        String setCookie = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+
+        return extractCookieValue(setCookie, REFRESH_COOKIE_NAME);
+    }
+
+    private String extractAccessToken(MvcResult result) throws Exception {
+        return jsonPathString(result, "$.accessToken");
+    }
+
+    private void assertRefreshCookieCleared(ResultActions resultActions) throws Exception {
+        resultActions
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE_NAME + "=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+    }
+
+    private void assertRefreshCookieIssued(ResultActions resultActions) throws Exception {
+        resultActions
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE_NAME + "=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+    }
+
+    private void assertRefreshCookieIssued(MvcResult result) {
+        String setCookie = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+
+        assertThat(setCookie).isNotBlank();
+        assertThat(setCookie).contains(REFRESH_COOKIE_NAME + "=");
+        assertThat(setCookie).contains("HttpOnly");
+        assertThat(setCookie).contains("Path=/api/auth");
+        assertThat(setCookie).contains("SameSite=Lax");
     }
 }

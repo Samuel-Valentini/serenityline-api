@@ -26,4 +26,14 @@ public interface UserRepository extends JpaRepository<User, UUID> {
             where user.email = :email
             """)
     Optional<User> findLoginCandidateByEmail(@Param("email") String email);
+
+    @Query("""
+            select user
+            from User user
+            join fetch user.userGroup
+            where user.userId = :userId
+              and user.userDeletedAt is null
+              and user.userIsEnabled = true
+            """)
+    Optional<User> findAuthenticationUserById(@Param("userId") UUID userId);
 }

@@ -1,6 +1,8 @@
 package me.serenityline.api.security.config;
 
+import jakarta.servlet.http.HttpServletResponse;
 import me.serenityline.api.auth.config.RefreshTokenProperties;
+import me.serenityline.api.security.auth.JwtAuthenticationFilter;
 import me.serenityline.api.security.jwt.JwtProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -12,6 +14,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -42,20 +45,19 @@ public class SecurityConfig {
     private static final long CORS_MAX_AGE_SECONDS = 3600L;
 
     private final SecurityCorsProperties corsProperties;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    public SecurityConfig(SecurityCorsProperties corsProperties) {
+    public SecurityConfig(SecurityCorsProperties corsProperties, JwtAuthenticationFilter jwtAuthenticationFilter) {
         this.corsProperties = corsProperties;
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
     }
 
     /*
-     *TODO: CSRF è disabilitato in questa fase perché non sono ancora usati cookie
-     * di autenticazione. Quando verranno introdotti JWT/refresh token in cookie
-     * HttpOnly, la protezione CSRF andrà rivalutata.
-     *
-
-     *TODO: CSRF is disabled at this stage because authentication cookies are not used
-     * yet. When JWT/refresh tokens are introduced through HttpOnly cookies,
-     * CSRF protection must be reviewed.
+     * TODO CSRF:
+     * Access token is sent through Authorization: Bearer header.
+     * Refresh token is stored in HttpOnly cookie and currently exposed only on auth endpoints.
+     * Before production, evaluate endpoint-specific CSRF protection for cookie-sensitive actions
+     * such as refresh/logout.
      */
 
     @Bean
@@ -66,11 +68,25 @@ public class SecurityConfig {
                 .sessionManagement(sessionManagement -> sessionManagement
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
+                .exceptionHandling(exceptionHandling -> exceptionHandling
+                        .authenticationEntryPoint((request, response, authException) ->
+                                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED)
+                        )
+                )
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(authorizeHttpRequests -> authorizeHttpRequests
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/verify-email", "/api/auth/login", "/api/auth/restore-account", "/api/auth/resend-email-verification", "/api/auth/refresh").permitAll()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/auth/register",
+                                "/api/auth/verify-email",
+                                "/api/auth/login",
+                                "/api/auth/restore-account",
+                                "/api/auth/resend-email-verification",
+                                "/api/auth/refresh"
+                        ).permitAll()
                         .anyRequest().authenticated()
                 )
                 .build();

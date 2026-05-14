@@ -38,15 +38,18 @@ public class JwtTokenService {
     private final ObjectMapper objectMapper;
 
     @Autowired
-    public JwtTokenService(JwtProperties jwtProperties) {
+    public JwtTokenService(
+            JwtProperties jwtProperties,
+            Clock clock
+    ) {
         this(
                 jwtProperties,
-                Clock.systemUTC(),
+                clock,
                 new ObjectMapper()
         );
     }
 
-    JwtTokenService(
+    public JwtTokenService(
             JwtProperties jwtProperties,
             Clock clock,
             ObjectMapper objectMapper
