@@ -19,24 +19,24 @@ public class AuthLoginAttempt {
     private UUID authLoginAttemptId;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = true)
-    @JoinColumn(name = "user_id")
+    @JoinColumn(name = "user_id", updatable = false)
     private User user;
 
-    @Column(name = "email_hash", nullable = false, length = 255)
+    @Column(name = "email_hash", nullable = false, length = 255, updatable = false)
     @NotBlank(message = "authLoginAttempt.emailHash.required")
     @Size(max = 255, message = "authLoginAttempt.emailHash.tooLong")
     private String emailHash;
 
-    @Column(name = "ip_address_hash", nullable = false, length = 255)
+    @Column(name = "ip_address_hash", nullable = false, length = 255, updatable = false)
     @NotBlank(message = "authLoginAttempt.ipAddressHash.required")
     @Size(max = 255, message = "authLoginAttempt.ipAddressHash.tooLong")
     private String ipAddressHash;
 
-    @Column(name = "login_successful", nullable = false)
+    @Column(name = "login_successful", nullable = false, updatable = false)
     private boolean loginSuccessful;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "failure_reason", length = 50)
+    @Column(name = "failure_reason", length = 50, updatable = false)
     private AuthLoginFailureReason failureReason;
 
     @Column(name = "auth_login_attempt_at", nullable = false, updatable = false)

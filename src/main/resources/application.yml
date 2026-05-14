@@ -25,6 +25,8 @@ serenityline:
       allowed-origins: [ ]
       token-hashing:
         secret: ${TOKEN_HASHING_SECRET}
+    sensitive-hash:
+      key-base64: ${SENSITIVE_HASH_KEY_BASE64}
   frontend:
     base-url: ${FRONTEND_BASE_URL}
 

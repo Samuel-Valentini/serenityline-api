@@ -3,7 +3,9 @@ package me.serenityline.api.auth.service;
 import me.serenityline.api.auth.dto.*;
 import me.serenityline.api.auth.entity.AuthActionToken;
 import me.serenityline.api.auth.entity.AuthActionTokenType;
+import me.serenityline.api.auth.exception.TooManyLoginAttemptsException;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
+import me.serenityline.api.security.crypto.SensitiveHashService;
 import me.serenityline.api.security.jwt.JwtAccessToken;
 import me.serenityline.api.security.jwt.JwtTokenService;
 import me.serenityline.api.security.token.SecureTokenGenerator;
@@ -34,6 +36,8 @@ public class LoginService {
     private final EmailVerificationResendChallengeService emailVerificationResendChallengeService;
     private final JwtTokenService jwtTokenService;
     private final RefreshTokenService refreshTokenService;
+    private final LoginAttemptService loginAttemptService;
+    private final SensitiveHashService sensitiveHashService;
 
     public LoginService(
             UserRepository userRepository,
@@ -44,9 +48,10 @@ public class LoginService {
             @Value("${serenityline.auth.restore-account.token-ttl}") Duration restoreAccountTokenTtl,
             EmailVerificationResendChallengeService emailVerificationResendChallengeService,
             JwtTokenService jwtTokenService,
-            RefreshTokenService refreshTokenService
+            RefreshTokenService refreshTokenService,
+            LoginAttemptService loginAttemptService,
+            SensitiveHashService sensitiveHashService
     ) {
-
         validateRestoreAccountTokenTtl(restoreAccountTokenTtl);
 
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
@@ -58,6 +63,8 @@ public class LoginService {
         this.emailVerificationResendChallengeService = Objects.requireNonNull(emailVerificationResendChallengeService, "emailVerificationResendChallengeService");
         this.jwtTokenService = Objects.requireNonNull(jwtTokenService, "jwtTokenService");
         this.refreshTokenService = Objects.requireNonNull(refreshTokenService, "refreshTokenService");
+        this.loginAttemptService = Objects.requireNonNull(loginAttemptService, "loginAttemptService");
+        this.sensitiveHashService = Objects.requireNonNull(sensitiveHashService, "sensitiveHashService");
     }
 
     private static String normalizeEmail(String email) {
@@ -66,6 +73,14 @@ public class LoginService {
         }
 
         return email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeClientIp(LoginClientMetadata metadata) {
+        if (metadata == null || metadata.ipAddress() == null || metadata.ipAddress().isBlank()) {
+            return "unknown";
+        }
+
+        return metadata.ipAddress().trim();
     }
 
     private static IllegalArgumentException invalidCredentials() {
@@ -90,16 +105,21 @@ public class LoginService {
         String email = normalizeEmail(request.email());
         String password = request.password();
 
+        String emailHash = sensitiveHashService.hash(email);
+        String ipAddressHash = sensitiveHashService.hash(normalizeClientIp(metadata));
+
         if (password == null || password.isBlank()) {
-            throw invalidCredentials();
+            rejectInvalidCredentials(null, emailHash, ipAddressHash);
         }
 
         User user = userRepository.findLoginCandidateByEmail(email)
-                .orElseThrow(LoginService::invalidCredentials);
+                .orElse(null);
 
-        if (!passwordEncoder.matches(password, user.getUserPasswordHash())) {
-            throw invalidCredentials();
+        if (user == null || !passwordEncoder.matches(password, user.getUserPasswordHash())) {
+            rejectInvalidCredentials(user, emailHash, ipAddressHash);
         }
+
+        loginAttemptService.recordCredentialAccepted(user, emailHash, ipAddressHash);
 
         if (user.isPendingDeletion()) {
             if (user.isHardDeletionDue()) {
@@ -127,6 +147,21 @@ public class LoginService {
                         refreshToken
                 )
         );
+    }
+
+    private void rejectInvalidCredentials(
+            User user,
+            String emailHash,
+            String ipAddressHash
+    ) {
+        if (loginAttemptService.isOverLimit(emailHash, ipAddressHash)) {
+            loginAttemptService.recordRateLimited(emailHash, ipAddressHash);
+            throw new TooManyLoginAttemptsException();
+        }
+
+        loginAttemptService.recordInvalidCredentials(user, emailHash, ipAddressHash);
+
+        throw invalidCredentials();
     }
 
     private RestoreAccountChallengeResponse createRestoreAccountChallenge(User user) {

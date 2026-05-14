@@ -50,3 +50,8 @@ serenityline:
     password-reset:
       token-ttl: ${PASSWORD_RESET_TOKEN_TTL:30m}
       cooldown: ${PASSWORD_RESET_COOLDOWN:60s}
+    login-attempt:
+      window: ${LOGIN_ATTEMPT_WINDOW:15m}
+      max-failed-by-email-ip: ${LOGIN_ATTEMPT_MAX_FAILED_BY_EMAIL_IP:5}
+      max-failed-by-email: ${LOGIN_ATTEMPT_MAX_FAILED_BY_EMAIL:10}
+      max-failed-by-ip: ${LOGIN_ATTEMPT_MAX_FAILED_BY_IP:50}
