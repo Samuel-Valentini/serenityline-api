@@ -61,6 +61,7 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
               and token.refreshTokenUsedAt is null
               and token.refreshTokenRevokedAt is null
               and token.refreshTokenExpiresAt > :now
+            order by token.refreshTokenId
             """)
     List<RefreshToken> findActiveByUserForUpdate(
             @Param("user") User user,

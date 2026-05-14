@@ -134,7 +134,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                  "/api/auth/login",
                  "/api/auth/restore-account",
                  "/api/auth/resend-email-verification",
-                 "/api/auth/refresh" -> true;
+                 "/api/auth/refresh",
+                 "/api/auth/logout" -> true;
             default -> false;
         };
     }

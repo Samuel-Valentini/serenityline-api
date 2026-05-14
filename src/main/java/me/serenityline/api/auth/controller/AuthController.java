@@ -5,10 +5,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import me.serenityline.api.auth.dto.*;
 import me.serenityline.api.auth.service.*;
+import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,8 +30,9 @@ public class AuthController {
     private final ResendEmailVerificationService resendEmailVerificationService;
     private final AuthCookieService authCookieService;
     private final RefreshTokenService refreshTokenService;
+    private final LogoutService logoutService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
@@ -37,6 +40,7 @@ public class AuthController {
         this.resendEmailVerificationService = resendEmailVerificationService;
         this.authCookieService = authCookieService;
         this.refreshTokenService = refreshTokenService;
+        this.logoutService = logoutService;
     }
 
     @PostMapping("/register")
@@ -94,6 +98,36 @@ public class AuthController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie.toString())
                 .body(response);
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(
+            HttpServletRequest httpServletRequest
+    ) {
+        Optional<String> refreshToken = refreshCookieValueFrom(httpServletRequest);
+
+        refreshToken.ifPresent(logoutService::logout);
+
+        ResponseCookie clearCookie = authCookieService.clearRefreshTokenCookie();
+
+        return ResponseEntity
+                .noContent()
+                .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                .build();
+    }
+
+    @PostMapping("/logout-all")
+    public ResponseEntity<Void> logoutAll(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser
+    ) {
+        logoutService.logoutAllDevices(authenticatedUser.userId());
+
+        ResponseCookie clearCookie = authCookieService.clearRefreshTokenCookie();
+
+        return ResponseEntity
+                .noContent()
+                .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                .build();
     }
 
     @PostMapping("/restore-account")

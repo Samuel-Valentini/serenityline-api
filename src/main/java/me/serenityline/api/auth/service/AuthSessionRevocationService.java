@@ -52,19 +52,25 @@ public class AuthSessionRevocationService {
 
         OffsetDateTime now = OffsetDateTime.now(clock);
 
-        List<UserSession> activeSessions = userSessionRepository.findActiveByUserForUpdate(user, now);
-
-        for (UserSession session : activeSessions) {
-            if (!session.isRevoked()) {
-                session.revoke(sessionRevokeReason);
-            }
-        }
-
-        List<RefreshToken> activeRefreshTokens = refreshTokenRepository.findActiveByUserForUpdate(user, now);
+        List<RefreshToken> activeRefreshTokens = refreshTokenRepository.findActiveByUserForUpdate(
+                user,
+                now
+        );
 
         for (RefreshToken refreshToken : activeRefreshTokens) {
             if (!refreshToken.isRevoked()) {
                 refreshToken.revoke(refreshTokenRevokeReason);
+            }
+        }
+
+        List<UserSession> activeSessions = userSessionRepository.findActiveByUserForUpdate(
+                user,
+                now
+        );
+
+        for (UserSession session : activeSessions) {
+            if (!session.isRevoked()) {
+                session.revoke(sessionRevokeReason);
             }
         }
     }

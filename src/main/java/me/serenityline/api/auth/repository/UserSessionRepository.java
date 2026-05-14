@@ -21,6 +21,7 @@ public interface UserSessionRepository extends JpaRepository<UserSession, UUID> 
             where session.user = :user
               and session.sessionRevokedAt is null
               and session.sessionExpiresAt > :now
+            order by session.userSessionId
             """)
     List<UserSession> findActiveByUserForUpdate(
             @Param("user") User user,

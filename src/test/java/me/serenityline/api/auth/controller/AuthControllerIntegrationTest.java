@@ -1577,6 +1577,221 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(REFRESH_COOKIE_NAME + "=")));
     }
 
+    @Test
+    void logoutShouldRevokeCurrentRefreshTokenAndSessionAndClearCookie() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        ResultActions logoutResult = performLogout(plainRefreshToken)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(logoutResult);
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNotNull();
+        assertThat(session.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.USER_LOGOUT);
+
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(refreshToken.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.USER_LOGOUT);
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+    }
+
+    @Test
+    void refreshAfterLogoutShouldBeRejected() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        performLogout(plainRefreshToken)
+                .andExpect(status().isNoContent());
+
+        ResultActions refreshResult = performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(refreshResult);
+    }
+
+    @Test
+    void logoutShouldSucceedWithoutCookieAndClearCookie() throws Exception {
+        ResultActions logoutResult = performLogoutWithoutCookie()
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(logoutResult);
+
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void logoutShouldSucceedWithUnknownRefreshTokenAndClearCookie() throws Exception {
+        ResultActions logoutResult = performLogout("unknown-refresh-token")
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(logoutResult);
+
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void logoutShouldSucceedWithAlreadyRevokedRefreshToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+        refreshToken.revoke(RefreshTokenRevokeReason.USER_LOGOUT);
+        refreshTokenRepository.save(refreshToken);
+
+        ResultActions logoutResult = performLogout(plainRefreshToken)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(logoutResult);
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken reloadedToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(reloadedToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(reloadedToken.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.USER_LOGOUT);
+    }
+
+    @Test
+    void logoutShouldIgnoreInvalidAuthorizationHeaderAndUseRefreshCookie() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        ResultActions logoutResult = performLogoutWithAuthorization(
+                plainRefreshToken,
+                "Bearer invalid-access-token"
+        )
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(logoutResult);
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNotNull();
+        assertThat(session.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.USER_LOGOUT);
+
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(refreshToken.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.USER_LOGOUT);
+    }
+
+    @Test
+    void logoutShouldRevokeRefreshTokenButNotAlreadyIssuedAccessToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult loginResult = performDefaultLoginWithDevice()
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String accessToken = extractAccessToken(loginResult);
+        String plainRefreshToken = extractRefreshCookie(loginResult);
+
+        performLogout(plainRefreshToken)
+                .andExpect(status().isNoContent());
+
+        performRefresh(plainRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        performMe(accessToken)
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void logoutAllShouldRevokeAllSessionsAndRefreshTokensAndInvalidateAccessTokens() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        MvcResult firstLoginResult = performDefaultLoginWithDevice()
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String firstAccessToken = extractAccessToken(firstLoginResult);
+        String firstRefreshToken = extractRefreshCookie(firstLoginResult);
+
+        MvcResult secondLoginResult = performLoginWithDevice(
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
+                "Second test device"
+        )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String secondRefreshToken = extractRefreshCookie(secondLoginResult);
+
+        User userBeforeLogoutAll = defaultUser();
+        Long tokenVersionBeforeLogoutAll = userBeforeLogoutAll.getTokenVersion();
+
+        ResultActions logoutAllResult = performLogoutAll(firstAccessToken)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(logoutAllResult);
+
+        User userAfterLogoutAll = defaultUser();
+
+        assertThat(userAfterLogoutAll.getTokenVersion())
+                .isEqualTo(tokenVersionBeforeLogoutAll + 1);
+
+        assertThat(userSessionRepository.findAll()).hasSize(2);
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        assertThat(userSessionRepository.findAll())
+                .allSatisfy(session -> {
+                    assertThat(session.getSessionRevokedAt()).isNotNull();
+                    assertThat(session.getSessionRevokeReason())
+                            .isEqualTo(SessionRevokeReason.USER_LOGOUT);
+                });
+
+        assertThat(refreshTokenRepository.findAll())
+                .allSatisfy(refreshToken -> {
+                    assertThat(refreshToken.getRefreshTokenRevokedAt()).isNotNull();
+                    assertThat(refreshToken.getRefreshTokenRevokeReason())
+                            .isEqualTo(RefreshTokenRevokeReason.USER_LOGOUT);
+                });
+
+        performMe(firstAccessToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(firstRefreshToken)
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(secondRefreshToken)
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logoutAllShouldRequireAccessToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String refreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        performLogoutAllWithoutAccessToken()
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(refreshToken)
+                .andExpect(status().isOk());
+    }
+
     private void registerValidUser(String email) throws Exception {
         performRegister(
                 IT_LOCALE,
@@ -1944,5 +2159,42 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(setCookie).contains("HttpOnly");
         assertThat(setCookie).contains("Path=/api/auth");
         assertThat(setCookie).contains("SameSite=Lax");
+    }
+
+    private ResultActions performLogout(String refreshToken) throws Exception {
+        return mockMvc.perform(post("/api/auth/logout")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+    }
+
+    private ResultActions performLogoutWithoutCookie() throws Exception {
+        return mockMvc.perform(post("/api/auth/logout")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE));
+    }
+
+    private ResultActions performLogoutWithAuthorization(
+            String refreshToken,
+            String authorizationHeader
+    ) throws Exception {
+        return mockMvc.perform(post("/api/auth/logout")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, authorizationHeader)
+                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+    }
+
+    private ResultActions performLogoutAll(String accessToken) throws Exception {
+        return mockMvc.perform(post("/api/auth/logout-all")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken));
+    }
+
+    private ResultActions performLogoutAllWithoutAccessToken() throws Exception {
+        return mockMvc.perform(post("/api/auth/logout-all")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE));
     }
 }
