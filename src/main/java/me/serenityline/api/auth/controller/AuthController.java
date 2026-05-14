@@ -1,5 +1,6 @@
 package me.serenityline.api.auth.controller;
 
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import me.serenityline.api.auth.dto.*;
@@ -13,6 +14,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Arrays;
+import java.util.Optional;
+
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -23,14 +27,16 @@ public class AuthController {
     private final RestoreAccountService restoreAccountService;
     private final ResendEmailVerificationService resendEmailVerificationService;
     private final AuthCookieService authCookieService;
+    private final RefreshTokenService refreshTokenService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
         this.restoreAccountService = restoreAccountService;
         this.resendEmailVerificationService = resendEmailVerificationService;
         this.authCookieService = authCookieService;
+        this.refreshTokenService = refreshTokenService;
     }
 
     @PostMapping("/register")
@@ -110,4 +116,59 @@ public class AuthController {
         EmailVerificationRequiredResponse response = resendEmailVerificationService.resend(request);
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refresh(
+            HttpServletRequest httpServletRequest
+    ) {
+        Optional<String> refreshToken = refreshCookieValueFrom(httpServletRequest);
+
+        if (refreshToken.isEmpty() || refreshToken.get().isBlank()) {
+            return unauthorizedRefreshResponse();
+        }
+
+        Optional<AuthenticatedLoginResult> result = refreshTokenService.refresh(refreshToken.get());
+
+        if (result.isEmpty()) {
+            return unauthorizedRefreshResponse();
+        }
+
+        AuthenticatedLoginResult authenticatedLogin = result.get();
+
+        ResponseCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                authenticatedLogin.refreshToken().token()
+        );
+
+        AuthenticatedResponse response = AuthenticatedResponse.of(
+                authenticatedLogin.accessToken(),
+                authenticatedLogin.user()
+        );
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.toString())
+                .body(response);
+    }
+
+    private Optional<String> refreshCookieValueFrom(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+
+        if (cookies == null) {
+            return Optional.empty();
+        }
+
+        return Arrays.stream(cookies)
+                .filter(cookie -> authCookieService.refreshCookieName().equals(cookie.getName()))
+                .map(Cookie::getValue)
+                .findFirst();
+    }
+
+    private ResponseEntity<Void> unauthorizedRefreshResponse() {
+        ResponseCookie clearCookie = authCookieService.clearRefreshTokenCookie();
+
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                .build();
+    }
+
 }

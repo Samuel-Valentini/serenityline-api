@@ -70,7 +70,7 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(authorizeHttpRequests -> authorizeHttpRequests
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/verify-email", "/api/auth/login", "/api/auth/restore-account", "/api/auth/resend-email-verification").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/verify-email", "/api/auth/login", "/api/auth/restore-account", "/api/auth/resend-email-verification", "/api/auth/refresh").permitAll()
                         .anyRequest().authenticated()
                 )
                 .build();

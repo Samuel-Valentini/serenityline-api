@@ -2,6 +2,7 @@ package me.serenityline.api.auth.controller;
 
 
 import com.jayway.jsonpath.JsonPath;
+import jakarta.servlet.http.Cookie;
 import me.serenityline.api.auth.entity.*;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
 import me.serenityline.api.auth.repository.EmailOutboxRepository;
@@ -28,6 +29,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -75,6 +77,19 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private JwtTokenService jwtTokenService;
+
+    private static String extractCookieValue(String setCookie, String cookieName) {
+        assertThat(setCookie).isNotBlank();
+
+        String prefix = cookieName + "=";
+
+        return Arrays.stream(setCookie.split(";"))
+                .map(String::trim)
+                .filter(part -> part.startsWith(prefix))
+                .map(part -> part.substring(prefix.length()))
+                .findFirst()
+                .orElseThrow();
+    }
 
     @Test
     void registerShouldCreateDisabledOwnerUserAndGroup() throws Exception {
@@ -1394,6 +1409,586 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("auth.emailVerification.userAlreadyVerified"));
     }
+
+    @Test
+    void refreshShouldRejectMissingCookie() throws Exception {
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+    }
+
+    @Test
+    void refreshShouldRotateRefreshTokenAndIssueNewAccessToken() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String firstPlainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken firstRefreshToken = refreshTokenRepository.findAll().getFirst();
+
+        MvcResult refreshResult = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")))
+                .andExpect(jsonPath("$.accessToken").exists())
+                .andExpect(jsonPath("$.accessTokenExpiresAt").exists())
+                .andExpect(jsonPath("$.user.userId").exists())
+                .andExpect(jsonPath("$.user.email").value("samuel@example.com"))
+                .andExpect(jsonPath("$.user.userRole").value("OWNER"))
+                .andExpect(jsonPath("$.user.userPlatformRole").value("USER"))
+                .andReturn();
+
+        String refreshSetCookie = refreshResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String secondPlainRefreshToken = extractCookieValue(refreshSetCookie, "serenityline_refresh");
+
+        assertThat(secondPlainRefreshToken).isNotBlank();
+        assertThat(secondPlainRefreshToken).isNotEqualTo(firstPlainRefreshToken);
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        String responseBody = refreshResult.getResponse().getContentAsString();
+        String accessToken = JsonPath.read(responseBody, "$.accessToken");
+
+        Optional<JwtTokenClaims> claims = jwtTokenService.parseAndValidate(accessToken);
+
+        assertThat(claims).isPresent();
+        assertThat(claims.get().userId()).isEqualTo(user.getUserId());
+        assertThat(claims.get().tokenVersion()).isEqualTo(user.getTokenVersion());
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        RefreshToken oldToken = refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getRefreshTokenId().equals(firstRefreshToken.getRefreshTokenId()))
+                .findFirst()
+                .orElseThrow();
+
+        RefreshToken newToken = refreshTokenRepository.findAll().stream()
+                .filter(token -> !token.getRefreshTokenId().equals(firstRefreshToken.getRefreshTokenId()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(oldToken.getRefreshTokenUsedAt()).isNotNull();
+        assertThat(oldToken.getRefreshTokenRevokedAt()).isNull();
+        assertThat(oldToken.getReplacedByRefreshToken()).isNotNull();
+        assertThat(oldToken.getReplacedByRefreshToken().getRefreshTokenId())
+                .isEqualTo(newToken.getRefreshTokenId());
+
+        assertThat(newToken.getParentRefreshToken()).isNotNull();
+        assertThat(newToken.getParentRefreshToken().getRefreshTokenId())
+                .isEqualTo(oldToken.getRefreshTokenId());
+
+        assertThat(newToken.getUser().getUserId()).isEqualTo(user.getUserId());
+        assertThat(newToken.getUserSession().getUserSessionId())
+                .isEqualTo(oldToken.getUserSession().getUserSessionId());
+
+        assertThat(newToken.getRefreshTokenHash()).isNotBlank();
+        assertThat(newToken.getRefreshTokenHash()).isNotEqualTo(oldToken.getRefreshTokenHash());
+        assertThat(newToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(newToken.getRefreshTokenRevokedAt()).isNull();
+        assertThat(newToken.getRefreshTokenExpiresAt()).isAfter(OffsetDateTime.now());
+
+        assertThat(refreshSetCookie).doesNotContain(newToken.getRefreshTokenHash());
+    }
+
+    @Test
+    void refreshShouldRejectUsedRefreshTokenAndMarkReuseDetected() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String firstPlainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        MvcResult firstRefreshResult = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String firstRefreshSetCookie = firstRefreshResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String secondPlainRefreshToken = extractCookieValue(firstRefreshSetCookie, "serenityline_refresh");
+
+        assertThat(secondPlainRefreshToken).isNotBlank();
+        assertThat(secondPlainRefreshToken).isNotEqualTo(firstPlainRefreshToken);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+
+        assertThat(session.getSessionRevokedAt()).isNotNull();
+        assertThat(session.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.TOKEN_REUSE_DETECTED);
+
+        RefreshToken reusedToken = refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getRefreshTokenUsedAt() != null)
+                .findFirst()
+                .orElseThrow();
+
+        RefreshToken childToken = refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getParentRefreshToken() != null)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(reusedToken.getRefreshTokenReuseDetectedAt()).isNotNull();
+        assertThat(reusedToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(reusedToken.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.REUSE_DETECTED);
+
+        assertThat(childToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(childToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectCurrentRefreshTokenAfterReuseDetectionRevokedSession() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String firstPlainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        MvcResult firstRefreshResult = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String firstRefreshSetCookie = firstRefreshResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String secondPlainRefreshToken = extractCookieValue(firstRefreshSetCookie, "serenityline_refresh");
+
+        assertThat(secondPlainRefreshToken).isNotBlank();
+        assertThat(secondPlainRefreshToken).isNotEqualTo(firstPlainRefreshToken);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", firstPlainRefreshToken)))
+                .andExpect(status().isUnauthorized());
+
+        UserSession sessionAfterReuse = userSessionRepository.findAll().getFirst();
+
+        assertThat(sessionAfterReuse.getSessionRevokedAt()).isNotNull();
+        assertThat(sessionAfterReuse.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.TOKEN_REUSE_DETECTED);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", secondPlainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(2);
+
+        RefreshToken childToken = refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getParentRefreshToken() != null)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(childToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(childToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectUnknownRefreshToken() throws Exception {
+        String unknownRefreshToken = "unknown-refresh-token";
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", unknownRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void refreshShouldRejectRevokedRefreshToken() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+        refreshToken.revoke(RefreshTokenRevokeReason.USER_LOGOUT);
+        refreshTokenRepository.save(refreshToken);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken rejectedToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(rejectedToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(rejectedToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(rejectedToken.getRefreshTokenRevokeReason())
+                .isEqualTo(RefreshTokenRevokeReason.USER_LOGOUT);
+    }
+
+    @Test
+    void refreshShouldRejectRevokedSession() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+        session.revoke(SessionRevokeReason.USER_LOGOUT);
+        userSessionRepository.save(session);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        UserSession rejectedSession = userSessionRepository.findAll().getFirst();
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(rejectedSession.getSessionRevokedAt()).isNotNull();
+        assertThat(rejectedSession.getSessionRevokeReason())
+                .isEqualTo(SessionRevokeReason.USER_LOGOUT);
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectExpiredRefreshToken() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        jdbcTemplate.update("""
+                update refresh_tokens
+                set refresh_token_created_at = now() - interval '2 hours',
+                    refresh_token_expires_at = now() - interval '1 hour'
+                where refresh_token_id = ?
+                """, refreshToken.getRefreshTokenId());
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken rejectedToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(rejectedToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(rejectedToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectExpiredSession() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        UserSession session = userSessionRepository.findAll().getFirst();
+
+        jdbcTemplate.update("""
+                update user_sessions
+                set session_created_at = now() - interval '2 hours',
+                    session_last_seen_at = now() - interval '2 hours',
+                    session_expires_at = now() - interval '1 hour'
+                where user_session_id = ?
+                """, session.getUserSessionId());
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectDisabledUser() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        user.setUserIsEnabled(false);
+        userRepository.save(user);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectSoftDeletedUser() throws Exception {
+        String emailVerificationToken = registerAndExtractVerificationToken();
+
+        verifyEmail(emailVerificationToken);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .header(HttpHeaders.USER_AGENT, "JUnit Browser")
+                        .content("""
+                                {
+                                  "email": "samuel@example.com",
+                                  "password": "VeryStrongPassword-2026-SerenityLine!",
+                                  "deviceLabel": "Samuel test device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String loginSetCookie = loginResult.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String plainRefreshToken = extractCookieValue(loginSetCookie, "serenityline_refresh");
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull("samuel@example.com")
+                .orElseThrow();
+
+        user.markAsSoftDeleted();
+        userRepository.save(user);
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, "en-US")
+                        .cookie(new Cookie("serenityline_refresh", plainRefreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("serenityline_refresh=")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("HttpOnly")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/api/auth")))
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Lax")));
+
+        assertThat(userSessionRepository.findAll()).hasSize(1);
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
 
     private String registerAndExtractVerificationToken() throws Exception {
         mockMvc.perform(post("/api/auth/register")

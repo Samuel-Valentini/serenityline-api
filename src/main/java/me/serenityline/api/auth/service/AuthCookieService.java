@@ -40,4 +40,8 @@ public class AuthCookieService {
                 .maxAge(0)
                 .build();
     }
+
+    public String refreshCookieName() {
+        return refreshTokenProperties.cookieName();
+    }
 }
