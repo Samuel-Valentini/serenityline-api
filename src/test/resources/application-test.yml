@@ -58,6 +58,13 @@ serenityline:
       fixed-delay-ms: ${AUTH_ACTION_TOKEN_CLEANUP_FIXED_DELAY_MS:3600000}
       retention: ${AUTH_ACTION_TOKEN_CLEANUP_RETENTION:30d}
       batch-size: ${AUTH_ACTION_TOKEN_CLEANUP_BATCH_SIZE:500}
+    session-cleanup:
+      enabled: ${AUTH_SESSION_CLEANUP_ENABLED:false}
+      fixed-delay-ms: ${AUTH_SESSION_CLEANUP_FIXED_DELAY_MS:3600000}
+      retention: ${AUTH_SESSION_CLEANUP_RETENTION:90d}
+      batch-size: ${AUTH_SESSION_CLEANUP_BATCH_SIZE:500}
+
+
   email:
     outbox-worker:
       enabled: ${EMAIL_OUTBOX_WORKER_ENABLED:false}

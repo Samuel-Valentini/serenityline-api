@@ -6,6 +6,7 @@ import me.serenityline.api.auth.entity.UserSession;
 import me.serenityline.api.user.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -66,5 +67,27 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     List<RefreshToken> findActiveByUserForUpdate(
             @Param("user") User user,
             @Param("now") OffsetDateTime now
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+            value = """
+                    delete from refresh_tokens
+                    where refresh_token_id in (
+                        select refresh_token_id
+                        from refresh_tokens
+                        where refresh_token_expires_at < :cutoff
+                           or refresh_token_used_at < :cutoff
+                           or refresh_token_revoked_at < :cutoff
+                           or refresh_token_reuse_detected_at < :cutoff
+                        order by refresh_token_created_at asc
+                        limit :limit
+                    )
+                    """,
+            nativeQuery = true
+    )
+    int deleteCleanupCandidates(
+            @Param("cutoff") OffsetDateTime cutoff,
+            @Param("limit") int limit
     );
 }

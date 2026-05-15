@@ -5,6 +5,7 @@ import me.serenityline.api.auth.entity.UserSession;
 import me.serenityline.api.user.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -26,5 +27,25 @@ public interface UserSessionRepository extends JpaRepository<UserSession, UUID> 
     List<UserSession> findActiveByUserForUpdate(
             @Param("user") User user,
             @Param("now") OffsetDateTime now
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+            value = """
+                    delete from user_sessions
+                    where user_session_id in (
+                        select user_session_id
+                        from user_sessions
+                        where session_expires_at < :cutoff
+                           or session_revoked_at < :cutoff
+                        order by session_created_at asc
+                        limit :limit
+                    )
+                    """,
+            nativeQuery = true
+    )
+    int deleteCleanupCandidates(
+            @Param("cutoff") OffsetDateTime cutoff,
+            @Param("limit") int limit
     );
 }
