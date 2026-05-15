@@ -10,6 +10,7 @@ import me.serenityline.api.security.crypto.EncryptedValue;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -30,6 +31,10 @@ import static org.assertj.core.api.Assertions.assertThat;
         }
 )
 @EnabledIfEnvironmentVariable(named = "RESEND_API_KEY", matches = ".+")
+@EnabledIfSystemProperty(
+        named = "serenityline.tests.real-email.enabled",
+        matches = "true"
+)
 class EmailOutboxProcessorResendIntegrationTest {
 
     private static final String TEST_RECIPIENT_EMAIL = "test@serenityline.me";
