@@ -5,11 +5,13 @@ import java.util.Objects;
 public record LoginResult(
         AuthenticatedLoginResult authenticatedLogin,
         RestoreAccountChallengeResponse restoreAccountChallenge,
-        EmailVerificationRequiredResponse emailVerificationRequiredResponse
+        EmailVerificationRequiredResponse emailVerificationRequiredResponse,
+        Login2faRequiredResponse login2faRequiredResponse
 ) {
     public static LoginResult authenticated(AuthenticatedLoginResult authenticatedLogin) {
         return new LoginResult(
                 Objects.requireNonNull(authenticatedLogin, "authenticatedLogin"),
+                null,
                 null,
                 null
         );
@@ -19,6 +21,7 @@ public record LoginResult(
         return new LoginResult(
                 null,
                 Objects.requireNonNull(restoreAccountChallenge, "restoreAccountChallenge"),
+                null,
                 null
         );
     }
@@ -29,7 +32,17 @@ public record LoginResult(
         return new LoginResult(
                 null,
                 null,
-                Objects.requireNonNull(emailVerificationRequiredResponse, "emailVerificationRequiredResponse")
+                Objects.requireNonNull(emailVerificationRequiredResponse, "emailVerificationRequiredResponse"),
+                null
+        );
+    }
+
+    public static LoginResult login2faRequired(Login2faRequiredResponse login2faRequiredResponse) {
+        return new LoginResult(
+                null,
+                null,
+                null,
+                Objects.requireNonNull(login2faRequiredResponse, "login2faRequiredResponse")
         );
     }
 
@@ -43,5 +56,9 @@ public record LoginResult(
 
     public boolean isEmailVerificationRequired() {
         return emailVerificationRequiredResponse != null;
+    }
+
+    public boolean isLogin2faRequired() {
+        return login2faRequiredResponse != null;
     }
 }

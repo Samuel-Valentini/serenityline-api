@@ -70,4 +70,15 @@ public interface AuthActionTokenRepository extends JpaRepository<AuthActionToken
     Optional<AuthActionToken> findByAuthActionTokenHashForUpdate(
             @Param("authActionTokenHash") String authActionTokenHash
     );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select token
+            from AuthActionToken token
+            join fetch token.user
+            where token.authActionTokenId = :authActionTokenId
+            """)
+    Optional<AuthActionToken> findByIdForUpdate(
+            @Param("authActionTokenId") UUID authActionTokenId
+    );
 }

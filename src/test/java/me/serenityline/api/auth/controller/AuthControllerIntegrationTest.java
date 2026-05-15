@@ -2677,7 +2677,6 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
     }
 
-
     private void registerValidUser(String email) throws Exception {
         performRegister(
                 IT_LOCALE,

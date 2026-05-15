@@ -38,6 +38,7 @@ public class LoginService {
     private final RefreshTokenService refreshTokenService;
     private final LoginAttemptService loginAttemptService;
     private final SensitiveHashService sensitiveHashService;
+    private final Login2faService login2faService;
 
     public LoginService(
             UserRepository userRepository,
@@ -50,7 +51,8 @@ public class LoginService {
             JwtTokenService jwtTokenService,
             RefreshTokenService refreshTokenService,
             LoginAttemptService loginAttemptService,
-            SensitiveHashService sensitiveHashService
+            SensitiveHashService sensitiveHashService,
+            Login2faService login2faService
     ) {
         validateRestoreAccountTokenTtl(restoreAccountTokenTtl);
 
@@ -65,6 +67,7 @@ public class LoginService {
         this.refreshTokenService = Objects.requireNonNull(refreshTokenService, "refreshTokenService");
         this.loginAttemptService = Objects.requireNonNull(loginAttemptService, "loginAttemptService");
         this.sensitiveHashService = Objects.requireNonNull(sensitiveHashService, "sensitiveHashService");
+        this.login2faService = Objects.requireNonNull(login2faService, "login2faService");
     }
 
     private static String normalizeEmail(String email) {
@@ -132,6 +135,12 @@ public class LoginService {
         if (!user.isUserIsEnabled()) {
             return LoginResult.emailVerificationRequired(
                     emailVerificationResendChallengeService.createChallenge(user)
+            );
+        }
+
+        if (user.isEmailTwoFactorEnabled()) {
+            return LoginResult.login2faRequired(
+                    login2faService.createChallenge(user)
             );
         }
 

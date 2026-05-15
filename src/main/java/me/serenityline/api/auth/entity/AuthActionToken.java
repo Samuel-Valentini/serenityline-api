@@ -381,4 +381,24 @@ public class AuthActionToken {
     public boolean hasReachedFailedAttemptLimit() {
         return this.authActionFailedAttemptCount >= this.authActionMaxAttempts;
     }
+
+    public void replacePendingHash(String authActionTokenHash) {
+        if (isUsed()) {
+            throw new IllegalStateException("authActionToken.alreadyUsed");
+        }
+
+        if (isRevoked()) {
+            throw new IllegalStateException("authActionToken.revoked");
+        }
+
+        if (this.authActionFailedAttemptCount > 0) {
+            throw new IllegalStateException("authActionToken.failedAttemptsAlreadyRecorded");
+        }
+
+        setAuthActionTokenHash(authActionTokenHash);
+
+        if (this.authActionCreatedAt != null) {
+            validateState();
+        }
+    }
 }

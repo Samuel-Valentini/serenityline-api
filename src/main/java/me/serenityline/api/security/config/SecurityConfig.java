@@ -88,7 +88,8 @@ public class SecurityConfig {
                                 "/api/auth/refresh",
                                 "/api/auth/logout",
                                 "/api/auth/forgot-password",
-                                "/api/auth/reset-password"
+                                "/api/auth/reset-password",
+                                "/api/auth/login/2fa/verify"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

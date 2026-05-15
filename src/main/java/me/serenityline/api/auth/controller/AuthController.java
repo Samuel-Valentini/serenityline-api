@@ -32,8 +32,9 @@ public class AuthController {
     private final RefreshTokenService refreshTokenService;
     private final LogoutService logoutService;
     private final PasswordResetService passwordResetService;
+    private final Login2faService login2faService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService, PasswordResetService passwordResetService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService, PasswordResetService passwordResetService, Login2faService login2faService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
@@ -43,6 +44,7 @@ public class AuthController {
         this.refreshTokenService = refreshTokenService;
         this.logoutService = logoutService;
         this.passwordResetService = passwordResetService;
+        this.login2faService = login2faService;
     }
 
     @PostMapping("/register")
@@ -88,6 +90,12 @@ public class AuthController {
                     .body(result.emailVerificationRequiredResponse());
         }
 
+        if (result.isLogin2faRequired()) {
+            return ResponseEntity
+                    .status(HttpStatus.ACCEPTED)
+                    .body(result.login2faRequiredResponse());
+        }
+
         ResponseCookie refreshCookie = authCookieService.createRefreshTokenCookie(
                 result.authenticatedLogin().refreshToken().token()
         );
@@ -95,6 +103,33 @@ public class AuthController {
         AuthenticatedResponse response = AuthenticatedResponse.of(
                 result.authenticatedLogin().accessToken(),
                 result.authenticatedLogin().user()
+        );
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.toString())
+                .body(response);
+    }
+
+    @PostMapping("/login/2fa/verify")
+    public ResponseEntity<AuthenticatedResponse> verifyLogin2fa(
+            @Valid @RequestBody VerifyLogin2faRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        LoginClientMetadata metadata = new LoginClientMetadata(
+                httpServletRequest.getRemoteAddr(),
+                httpServletRequest.getHeader(HttpHeaders.USER_AGENT),
+                request.deviceLabel()
+        );
+
+        AuthenticatedLoginResult result = login2faService.verify(request, metadata);
+
+        ResponseCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.refreshToken().token()
+        );
+
+        AuthenticatedResponse response = AuthenticatedResponse.of(
+                result.accessToken(),
+                result.user()
         );
 
         return ResponseEntity.ok()

@@ -50,6 +50,9 @@ serenityline:
       max-failed-by-email-ip: ${LOGIN_ATTEMPT_MAX_FAILED_BY_EMAIL_IP:5}
       max-failed-by-email: ${LOGIN_ATTEMPT_MAX_FAILED_BY_EMAIL:10}
       max-failed-by-ip: ${LOGIN_ATTEMPT_MAX_FAILED_BY_IP:50}
+    login-2fa:
+      code-ttl: ${LOGIN_2FA_CODE_TTL:10m}
+      max-attempts: ${LOGIN_2FA_MAX_ATTEMPTS:5}
   email:
     outbox-worker:
       enabled: ${EMAIL_OUTBOX_WORKER_ENABLED:false}
