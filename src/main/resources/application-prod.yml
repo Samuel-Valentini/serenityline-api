@@ -57,3 +57,14 @@ serenityline:
       max-failed-by-email-ip: ${LOGIN_ATTEMPT_MAX_FAILED_BY_EMAIL_IP:5}
       max-failed-by-email: ${LOGIN_ATTEMPT_MAX_FAILED_BY_EMAIL:10}
       max-failed-by-ip: ${LOGIN_ATTEMPT_MAX_FAILED_BY_IP:50}
+  email:
+    outbox-worker:
+      enabled: ${EMAIL_OUTBOX_WORKER_ENABLED:true}
+      batch-size: ${EMAIL_OUTBOX_WORKER_BATCH_SIZE:20}
+      fixed-delay-ms: ${EMAIL_OUTBOX_WORKER_FIXED_DELAY_MS:5000}
+      retry-delay: ${EMAIL_OUTBOX_WORKER_RETRY_DELAY:2m}
+    provider: ${EMAIL_PROVIDER}
+    from: ${EMAIL_FROM}
+    resend:
+      api-key: ${RESEND_API_KEY}
+
