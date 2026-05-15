@@ -21,6 +21,8 @@ public record AuthenticatedUser(
         String preferredLocale,
         String preferredTheme,
         boolean wantsInvoice,
+        boolean emailTwoFactorEnabled,
+        boolean paymentEmailRemindersEnabled,
         List<GrantedAuthority> authorities
 ) implements Principal {
 
@@ -56,6 +58,8 @@ public record AuthenticatedUser(
                 user.getPreferredLocale(),
                 user.getPreferredTheme().name(),
                 user.isWantsInvoice(),
+                user.isEmailTwoFactorEnabled(),
+                user.isPaymentEmailRemindersEnabled(),
                 authoritiesFrom(user)
         );
     }

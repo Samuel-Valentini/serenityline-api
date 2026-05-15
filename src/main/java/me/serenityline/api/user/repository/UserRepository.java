@@ -16,9 +16,6 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     Optional<User> findByEmailAndUserDeletedAtIsNull(String email);
 
-    /*TODO auth/account recovery:
-       Permettere a un utente soft-deleted di riaprire il proprio account entro la finestra di 30 giorni.*/
-
     Optional<User> findByEmailAndUserDeletedAtIsNotNull(String email);
 
     @Query("""

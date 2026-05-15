@@ -2,9 +2,9 @@ package me.serenityline.api.user.controller;
 
 import jakarta.validation.Valid;
 import me.serenityline.api.auth.service.AuthCookieService;
+import me.serenityline.api.auth.service.Email2faManagementService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
-import me.serenityline.api.user.dto.ChangePasswordRequest;
-import me.serenityline.api.user.dto.CurrentUserResponse;
+import me.serenityline.api.user.dto.*;
 import me.serenityline.api.user.service.AccountDeletionService;
 import me.serenityline.api.user.service.ChangePasswordService;
 import org.springframework.http.HttpHeaders;
@@ -21,15 +21,18 @@ public class MeController {
     private final AccountDeletionService accountDeletionService;
     private final AuthCookieService authCookieService;
     private final ChangePasswordService changePasswordService;
+    private final Email2faManagementService email2faManagementService;
 
     public MeController(
             AccountDeletionService accountDeletionService,
             AuthCookieService authCookieService,
-            ChangePasswordService changePasswordService
+            ChangePasswordService changePasswordService,
+            Email2faManagementService email2faManagementService
     ) {
         this.accountDeletionService = Objects.requireNonNull(accountDeletionService, "accountDeletionService");
         this.authCookieService = Objects.requireNonNull(authCookieService, "authCookieService");
         this.changePasswordService = Objects.requireNonNull(changePasswordService, "changePasswordService");
+        this.email2faManagementService = Objects.requireNonNull(email2faManagementService, "email2faManagementService");
     }
 
     @GetMapping("/api/me")
@@ -69,5 +72,63 @@ public class MeController {
                 .noContent()
                 .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
                 .build();
+    }
+
+    @PostMapping("/api/me/email-2fa/enable/request")
+    public ResponseEntity<Email2faChallengeResponse> requestEnableEmail2fa(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @Valid @RequestBody RequestEnableEmail2faRequest request
+    ) {
+        Email2faChallengeResponse response = email2faManagementService.requestEnable(
+                authenticatedUser.userId(),
+                request.currentPassword()
+        );
+
+        return ResponseEntity
+                .accepted()
+                .body(response);
+    }
+
+    @PostMapping("/api/me/email-2fa/enable/confirm")
+    public ResponseEntity<Void> confirmEnableEmail2fa(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @Valid @RequestBody ConfirmEnableEmail2faRequest request
+    ) {
+        email2faManagementService.confirmEnable(
+                authenticatedUser.userId(),
+                request.challengeId(),
+                request.code()
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/api/me/email-2fa/disable/request")
+    public ResponseEntity<Email2faChallengeResponse> requestDisableEmail2fa(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @Valid @RequestBody RequestDisableEmail2faRequest request
+    ) {
+        Email2faChallengeResponse response = email2faManagementService.requestDisable(
+                authenticatedUser.userId(),
+                request.currentPassword()
+        );
+
+        return ResponseEntity
+                .accepted()
+                .body(response);
+    }
+
+    @PostMapping("/api/me/email-2fa/disable/confirm")
+    public ResponseEntity<Void> confirmDisableEmail2fa(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @Valid @RequestBody ConfirmDisableEmail2faRequest request
+    ) {
+        email2faManagementService.confirmDisable(
+                authenticatedUser.userId(),
+                request.challengeId(),
+                request.code()
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

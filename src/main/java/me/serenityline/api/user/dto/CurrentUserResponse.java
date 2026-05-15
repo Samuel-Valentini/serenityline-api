@@ -14,7 +14,9 @@ public record CurrentUserResponse(
         String userPlatformRole,
         String preferredLocale,
         String preferredTheme,
-        boolean wantsInvoice
+        boolean wantsInvoice,
+        boolean emailTwoFactorEnabled,
+        boolean paymentEmailRemindersEnabled
 ) {
 
     public static CurrentUserResponse from(AuthenticatedUser user) {
@@ -32,7 +34,9 @@ public record CurrentUserResponse(
                 user.userPlatformRole(),
                 user.preferredLocale(),
                 user.preferredTheme(),
-                user.wantsInvoice()
+                user.wantsInvoice(),
+                user.emailTwoFactorEnabled(),
+                user.paymentEmailRemindersEnabled()
         );
     }
 }

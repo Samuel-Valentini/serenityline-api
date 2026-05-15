@@ -51,7 +51,7 @@ public class RegisterService {
         String normalizedEmail = normalizeEmail(request.email());
         String preferredLocale = resolvePreferredLocale(request.preferredLocale());
         boolean wantsInvoice = Boolean.TRUE.equals(request.wantsInvoice());
-        boolean paymentEmailRemaindersEnabled = Boolean.TRUE.equals(request.paymentEmailRemindersEnabled());
+        boolean paymentEmailRemindersEnabled = request.paymentEmailRemindersEnabled() == null || request.paymentEmailRemindersEnabled();
 
         ensureEmailAvailable(normalizedEmail);
 
@@ -78,7 +78,7 @@ public class RegisterService {
                 preferredLocale,
                 PreferredTheme.DEFAULT,
                 wantsInvoice,
-                paymentEmailRemaindersEnabled,
+                paymentEmailRemindersEnabled,
                 passwordHash,
                 false,
                 0L
