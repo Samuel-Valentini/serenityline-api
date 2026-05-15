@@ -195,6 +195,7 @@ class JwtTokenServiceTest {
                 "en-US",
                 PreferredTheme.DEFAULT,
                 false,
+                false,
                 "$2a$12$fakehashfakehashfakehashfakehashfakehashfakehashfakehash",
                 true,
                 0L

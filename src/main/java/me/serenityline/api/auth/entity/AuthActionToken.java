@@ -13,38 +13,41 @@ import java.util.UUID;
 @Table(name = "auth_action_tokens")
 public class AuthActionToken {
 
+    private static final int DEFAULT_MAX_ATTEMPTS = 5;
+    private static final int MIN_MAX_ATTEMPTS = 1;
+    private static final int MAX_MAX_ATTEMPTS = 20;
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "auth_action_token_id", nullable = false, updatable = false)
     private UUID authActionTokenId;
-
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
-    @NotNull(message = "authActionToken.user.required")
+    @NotNull(message = "{authActionToken.user.required}")
     private User user;
-
     @Column(name = "auth_action_token_hash", nullable = false, length = 255, unique = true)
-    @NotBlank(message = "authActionToken.hash.required")
-    @Size(max = 255, message = "authActionToken.hash.tooLong")
+    @NotBlank(message = "{authActionToken.hash.required}")
+    @Size(max = 255, message = "{authActionToken.hash.tooLong}")
     private String authActionTokenHash;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "auth_action_token_type", nullable = false, length = 50)
-    @NotNull(message = "authActionToken.type.required")
+    @NotNull(message = "{authActionToken.type.required}")
     private AuthActionTokenType authActionTokenType;
-
     @Column(name = "auth_action_expires_at", nullable = false)
-    @NotNull(message = "authActionToken.expiresAt.required")
+    @NotNull(message = "{authActionToken.expiresAt.required}")
     private OffsetDateTime authActionExpiresAt;
-
     @Column(name = "auth_action_used_at")
     private OffsetDateTime authActionUsedAt;
-
     @Column(name = "auth_action_revoked_at")
     private OffsetDateTime authActionRevokedAt;
-
     @Column(name = "auth_action_created_at", nullable = false, updatable = false)
     private OffsetDateTime authActionCreatedAt;
+    @Column(name = "auth_action_failed_attempt_count", nullable = false)
+    private int authActionFailedAttemptCount;
+    @Column(name = "auth_action_last_failed_at")
+    private OffsetDateTime authActionLastFailedAt;
+    @Column(name = "auth_action_max_attempts", nullable = false)
+    private int authActionMaxAttempts;
 
     protected AuthActionToken() {
     }
@@ -55,10 +58,28 @@ public class AuthActionToken {
             AuthActionTokenType authActionTokenType,
             OffsetDateTime authActionExpiresAt
     ) {
+        this(
+                user,
+                authActionTokenHash,
+                authActionTokenType,
+                authActionExpiresAt,
+                DEFAULT_MAX_ATTEMPTS
+        );
+    }
+
+    public AuthActionToken(
+            User user,
+            String authActionTokenHash,
+            AuthActionTokenType authActionTokenType,
+            OffsetDateTime authActionExpiresAt,
+            int authActionMaxAttempts
+    ) {
         setUser(user);
         setAuthActionTokenHash(authActionTokenHash);
         setAuthActionTokenType(authActionTokenType);
         setAuthActionExpiresAt(authActionExpiresAt);
+        setAuthActionMaxAttempts(authActionMaxAttempts);
+        this.authActionFailedAttemptCount = 0;
     }
 
     private static void validateUser(User user) {
@@ -106,10 +127,26 @@ public class AuthActionToken {
         }
     }
 
+    private static void validateFailedAttemptCount(int failedAttemptCount) {
+        if (failedAttemptCount < 0) {
+            throw new IllegalArgumentException("authActionToken.failedAttemptCount.negative");
+        }
+    }
+
+    private static void validateMaxAttempts(int maxAttempts) {
+        if (maxAttempts < MIN_MAX_ATTEMPTS || maxAttempts > MAX_MAX_ATTEMPTS) {
+            throw new IllegalArgumentException("authActionToken.maxAttempts.invalid");
+        }
+    }
+
     @PrePersist
     protected void onCreate() {
         if (this.authActionCreatedAt == null) {
             this.authActionCreatedAt = OffsetDateTime.now();
+        }
+
+        if (this.authActionMaxAttempts == 0) {
+            this.authActionMaxAttempts = DEFAULT_MAX_ATTEMPTS;
         }
 
         validateState();
@@ -188,6 +225,8 @@ public class AuthActionToken {
         validateHash(this.authActionTokenHash);
         validateType(this.authActionTokenType);
         validateExpiresAt(this.authActionExpiresAt);
+        validateFailedAttemptCount(this.authActionFailedAttemptCount);
+        validateMaxAttempts(this.authActionMaxAttempts);
 
         if (this.authActionCreatedAt == null) {
             throw new IllegalArgumentException("authActionToken.createdAt.required");
@@ -207,6 +246,39 @@ public class AuthActionToken {
 
         if (this.authActionUsedAt != null && this.authActionRevokedAt != null) {
             throw new IllegalArgumentException("authActionToken.usedAndRevoked");
+        }
+
+
+        if (this.authActionFailedAttemptCount > this.authActionMaxAttempts) {
+            throw new IllegalArgumentException("authActionToken.failedAttemptCount.exceedsMaxAttempts");
+        }
+
+        if (this.authActionFailedAttemptCount == 0 && this.authActionLastFailedAt != null) {
+            throw new IllegalArgumentException("authActionToken.lastFailedAt.withoutFailedAttempts");
+        }
+
+        if (this.authActionFailedAttemptCount > 0 && this.authActionLastFailedAt == null) {
+            throw new IllegalArgumentException("authActionToken.lastFailedAt.required");
+        }
+
+        if (this.authActionLastFailedAt != null && this.authActionLastFailedAt.isBefore(this.authActionCreatedAt)) {
+            throw new IllegalArgumentException("authActionToken.lastFailedAt.beforeCreatedAt");
+        }
+
+        if (
+                this.authActionUsedAt != null
+                        && this.authActionLastFailedAt != null
+                        && this.authActionUsedAt.isBefore(this.authActionLastFailedAt)
+        ) {
+            throw new IllegalArgumentException("authActionToken.usedAt.beforeLastFailedAt");
+        }
+
+        if (
+                this.authActionRevokedAt != null
+                        && this.authActionLastFailedAt != null
+                        && this.authActionRevokedAt.isBefore(this.authActionLastFailedAt)
+        ) {
+            throw new IllegalArgumentException("authActionToken.revokedAt.beforeLastFailedAt");
         }
     }
 
@@ -259,5 +331,54 @@ public class AuthActionToken {
 
     public OffsetDateTime getAuthActionCreatedAt() {
         return authActionCreatedAt;
+    }
+
+    public int getAuthActionFailedAttemptCount() {
+        return authActionFailedAttemptCount;
+    }
+
+    public OffsetDateTime getAuthActionLastFailedAt() {
+        return authActionLastFailedAt;
+    }
+
+    public int getAuthActionMaxAttempts() {
+        return authActionMaxAttempts;
+    }
+
+    private void setAuthActionMaxAttempts(int authActionMaxAttempts) {
+        validateMaxAttempts(authActionMaxAttempts);
+        this.authActionMaxAttempts = authActionMaxAttempts;
+    }
+
+    public void recordFailedAttempt() {
+        if (isUsed()) {
+            throw new IllegalStateException("authActionToken.alreadyUsed");
+        }
+
+        if (isRevoked()) {
+            throw new IllegalStateException("authActionToken.revoked");
+        }
+
+        if (isExpired()) {
+            throw new IllegalStateException("authActionToken.expired");
+        }
+
+        if (hasReachedFailedAttemptLimit()) {
+            throw new IllegalStateException("authActionToken.failedAttemptLimitReached");
+        }
+
+        this.authActionFailedAttemptCount++;
+        this.authActionLastFailedAt = OffsetDateTime.now();
+
+        if (hasReachedFailedAttemptLimit()) {
+            revoke();
+            return;
+        }
+
+        validateState();
+    }
+
+    public boolean hasReachedFailedAttemptLimit() {
+        return this.authActionFailedAttemptCount >= this.authActionMaxAttempts;
     }
 }

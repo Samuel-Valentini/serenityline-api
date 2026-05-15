@@ -65,6 +65,12 @@ public class User {
     @Column(name = "wants_invoice", nullable = false)
     private boolean wantsInvoice;
 
+    @Column(name = "email_2fa_enabled", nullable = false)
+    private boolean emailTwoFactorEnabled;
+
+    @Column(name = "payment_email_reminders_enabled", nullable = false)
+    private boolean paymentEmailRemindersEnabled;
+
     @NotBlank(message = "{user.passwordHash.required}")
     @Column(name = "user_password_hash", nullable = false, length = 255)
     private String userPasswordHash;
@@ -90,7 +96,7 @@ public class User {
     protected User() {
     }
 
-    public User(String userName, String email, UserGroup userGroup, UserRole userRole, UserPlatformRole userPlatformRole, String preferredLocale, PreferredTheme preferredTheme, boolean wantsInvoice, String userPasswordHash, boolean userIsEnabled, Long tokenVersion) {
+    public User(String userName, String email, UserGroup userGroup, UserRole userRole, UserPlatformRole userPlatformRole, String preferredLocale, PreferredTheme preferredTheme, boolean wantsInvoice, boolean paymentEmailRemindersEnabled, String userPasswordHash, boolean userIsEnabled, Long tokenVersion) {
         setUserName(userName);
         setEmail(email);
         setUserGroup(userGroup);
@@ -99,6 +105,8 @@ public class User {
         setPreferredLocale(preferredLocale);
         setPreferredTheme(preferredTheme);
         setWantsInvoice(wantsInvoice);
+        setEmailTwoFactorEnabled(false);
+        setPaymentEmailRemindersEnabled(paymentEmailRemindersEnabled);
         setUserPasswordHash(userPasswordHash);
         setUserIsEnabled(userIsEnabled);
         setTokenVersion(tokenVersion);
@@ -112,7 +120,7 @@ public class User {
             UserRole userRole,
             String userPasswordHash
     ) {
-        this(userName, email, userGroup, userRole, UserPlatformRole.USER, "it-IT", PreferredTheme.DEFAULT, false, userPasswordHash, false, 0L);
+        this(userName, email, userGroup, userRole, UserPlatformRole.USER, "it-IT", PreferredTheme.DEFAULT, false, true, userPasswordHash, false, 0L);
 
     }
 
@@ -486,5 +494,38 @@ public class User {
 
         incrementTokenVersion();
     }
+
+    public boolean isEmailTwoFactorEnabled() {
+        return emailTwoFactorEnabled;
+    }
+
+    private void setEmailTwoFactorEnabled(boolean emailTwoFactorEnabled) {
+        this.emailTwoFactorEnabled = emailTwoFactorEnabled;
+    }
+
+    public boolean isPaymentEmailRemindersEnabled() {
+        return paymentEmailRemindersEnabled;
+    }
+
+    private void setPaymentEmailRemindersEnabled(boolean paymentEmailRemindersEnabled) {
+        this.paymentEmailRemindersEnabled = paymentEmailRemindersEnabled;
+    }
+
+    public void enableEmailTwoFactorEnabled() {
+        setEmailTwoFactorEnabled(true);
+    }
+
+    public void disableEmailTwoFactorEnabled() {
+        setEmailTwoFactorEnabled(false);
+    }
+
+    public void enablePaymentEmailReminders() {
+        setPaymentEmailRemindersEnabled(true);
+    }
+
+    public void disablePaymentEmailReminders() {
+        setPaymentEmailRemindersEnabled(false);
+    }
+
 
 }

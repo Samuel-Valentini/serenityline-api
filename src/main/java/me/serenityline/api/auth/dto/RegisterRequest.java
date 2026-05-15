@@ -50,5 +50,7 @@ public record RegisterRequest(@NotBlank(message = "{user.userName.required}")
                               )
                               String preferredLocale,
 
-                              Boolean wantsInvoice) {
+                              Boolean wantsInvoice,
+
+                              Boolean paymentEmailRemindersEnabled) {
 }
