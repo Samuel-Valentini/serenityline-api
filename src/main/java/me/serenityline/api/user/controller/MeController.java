@@ -7,6 +7,7 @@ import me.serenityline.api.security.auth.AuthenticatedUser;
 import me.serenityline.api.user.dto.*;
 import me.serenityline.api.user.service.AccountDeletionService;
 import me.serenityline.api.user.service.ChangePasswordService;
+import me.serenityline.api.user.service.PaymentEmailRemindersService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -22,17 +23,20 @@ public class MeController {
     private final AuthCookieService authCookieService;
     private final ChangePasswordService changePasswordService;
     private final Email2faManagementService email2faManagementService;
+    private final PaymentEmailRemindersService paymentEmailRemindersService;
 
     public MeController(
             AccountDeletionService accountDeletionService,
             AuthCookieService authCookieService,
             ChangePasswordService changePasswordService,
-            Email2faManagementService email2faManagementService
+            Email2faManagementService email2faManagementService,
+            PaymentEmailRemindersService paymentEmailRemindersService
     ) {
         this.accountDeletionService = Objects.requireNonNull(accountDeletionService, "accountDeletionService");
         this.authCookieService = Objects.requireNonNull(authCookieService, "authCookieService");
         this.changePasswordService = Objects.requireNonNull(changePasswordService, "changePasswordService");
         this.email2faManagementService = Objects.requireNonNull(email2faManagementService, "email2faManagementService");
+        this.paymentEmailRemindersService = Objects.requireNonNull(paymentEmailRemindersService, "paymentEmailRemindersService");
     }
 
     @GetMapping("/api/me")
@@ -130,5 +134,18 @@ public class MeController {
         );
 
         return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/api/me/payment-email-reminders")
+    public ResponseEntity<PaymentEmailRemindersResponse> updatePaymentEmailReminders(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @Valid @RequestBody UpdatePaymentEmailRemindersRequest request
+    ) {
+        PaymentEmailRemindersResponse response = paymentEmailRemindersService.updatePaymentEmailReminders(
+                authenticatedUser.userId(),
+                request.enabled()
+        );
+
+        return ResponseEntity.ok(response);
     }
 }
