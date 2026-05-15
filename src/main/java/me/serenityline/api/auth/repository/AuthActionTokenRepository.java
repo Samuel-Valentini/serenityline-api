@@ -6,6 +6,7 @@ import me.serenityline.api.auth.entity.AuthActionTokenType;
 import me.serenityline.api.user.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -80,5 +81,26 @@ public interface AuthActionTokenRepository extends JpaRepository<AuthActionToken
             """)
     Optional<AuthActionToken> findByIdForUpdate(
             @Param("authActionTokenId") UUID authActionTokenId
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+            value = """
+                    delete from auth_action_tokens
+                    where auth_action_token_id in (
+                        select auth_action_token_id
+                        from auth_action_tokens
+                        where auth_action_expires_at < :cutoff
+                           or auth_action_used_at < :cutoff
+                           or auth_action_revoked_at < :cutoff
+                        order by auth_action_created_at asc
+                        limit :limit
+                    )
+                    """,
+            nativeQuery = true
+    )
+    int deleteCleanupCandidates(
+            @Param("cutoff") OffsetDateTime cutoff,
+            @Param("limit") int limit
     );
 }

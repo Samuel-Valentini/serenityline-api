@@ -53,6 +53,11 @@ serenityline:
     login-2fa:
       code-ttl: ${LOGIN_2FA_CODE_TTL:10m}
       max-attempts: ${LOGIN_2FA_MAX_ATTEMPTS:5}
+    action-token-cleanup:
+      enabled: ${AUTH_ACTION_TOKEN_CLEANUP_ENABLED:false}
+      fixed-delay-ms: ${AUTH_ACTION_TOKEN_CLEANUP_FIXED_DELAY_MS:3600000}
+      retention: ${AUTH_ACTION_TOKEN_CLEANUP_RETENTION:30d}
+      batch-size: ${AUTH_ACTION_TOKEN_CLEANUP_BATCH_SIZE:500}
   email:
     outbox-worker:
       enabled: ${EMAIL_OUTBOX_WORKER_ENABLED:false}
