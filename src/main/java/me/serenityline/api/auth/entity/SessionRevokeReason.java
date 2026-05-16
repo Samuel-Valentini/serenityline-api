@@ -5,5 +5,6 @@ public enum SessionRevokeReason {
     PASSWORD_CHANGED,
     TOKEN_REUSE_DETECTED,
     ADMIN_REVOKED,
-    ACCOUNT_DELETED
+    ACCOUNT_DELETED,
+    EMAIL_CHANGED
 }

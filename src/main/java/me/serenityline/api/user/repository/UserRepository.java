@@ -14,6 +14,8 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     boolean existsByEmail(String email);
 
+    boolean existsByEmailAndUserIdNot(String email, UUID userId);
+
     Optional<User> findByEmailAndUserDeletedAtIsNull(String email);
 
     Optional<User> findByEmailAndUserDeletedAtIsNotNull(String email);
@@ -45,4 +47,5 @@ public interface UserRepository extends JpaRepository<User, UUID> {
               and user.userIsEnabled = true
             """)
     Optional<User> findActiveUserByIdForUpdate(@Param("userId") UUID userId);
+
 }

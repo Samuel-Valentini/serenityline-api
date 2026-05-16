@@ -138,7 +138,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                  "/api/auth/logout",
                  "/api/auth/forgot-password",
                  "/api/auth/reset-password",
-                 "/api/auth/login/2fa/verify" -> true;
+                 "/api/auth/login/2fa/verify",
+                 "/api/auth/email-change/confirm" -> true;
             default -> false;
         };
     }

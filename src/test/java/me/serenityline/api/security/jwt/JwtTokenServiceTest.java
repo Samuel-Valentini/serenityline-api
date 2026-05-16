@@ -20,6 +20,16 @@ class JwtTokenServiceTest {
     private static final Instant NOW = Instant.parse("2026-05-13T10:00:00Z");
     private static final String SECRET = "test-jwt-secret-string-of-32-bytes-minimum";
 
+    private static String replaceFirstCharacter(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("test.value.required");
+        }
+
+        char replacement = value.charAt(0) == 'A' ? 'B' : 'A';
+
+        return replacement + value.substring(1);
+    }
+
     @Test
     void createAccessTokenShouldGenerateValidToken() {
         JwtTokenService jwtTokenService = jwtTokenServiceAt(NOW);
@@ -46,7 +56,11 @@ class JwtTokenServiceTest {
 
         JwtAccessToken accessToken = jwtTokenService.createAccessToken(user);
 
-        String tamperedToken = accessToken.token().substring(0, accessToken.token().length() - 1) + "x";
+        String[] tokenParts = accessToken.token().split("\\.", -1);
+
+        String tamperedPayload = replaceFirstCharacter(tokenParts[1]);
+
+        String tamperedToken = tokenParts[0] + "." + tamperedPayload + "." + tokenParts[2];
 
         assertThat(jwtTokenService.parseAndValidate(tamperedToken)).isEmpty();
     }

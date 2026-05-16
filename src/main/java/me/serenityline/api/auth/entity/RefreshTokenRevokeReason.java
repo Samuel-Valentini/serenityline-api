@@ -6,5 +6,6 @@ public enum RefreshTokenRevokeReason {
     REUSE_DETECTED,
     SESSION_REVOKED,
     ADMIN_REVOKED,
-    ACCOUNT_DELETED
+    ACCOUNT_DELETED,
+    EMAIL_CHANGED
 }

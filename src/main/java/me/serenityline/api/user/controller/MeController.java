@@ -7,6 +7,7 @@ import me.serenityline.api.security.auth.AuthenticatedUser;
 import me.serenityline.api.user.dto.*;
 import me.serenityline.api.user.service.AccountDeletionService;
 import me.serenityline.api.user.service.ChangePasswordService;
+import me.serenityline.api.user.service.EmailChangeService;
 import me.serenityline.api.user.service.PaymentEmailRemindersService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -24,19 +25,22 @@ public class MeController {
     private final ChangePasswordService changePasswordService;
     private final Email2faManagementService email2faManagementService;
     private final PaymentEmailRemindersService paymentEmailRemindersService;
+    private final EmailChangeService emailChangeService;
 
     public MeController(
             AccountDeletionService accountDeletionService,
             AuthCookieService authCookieService,
             ChangePasswordService changePasswordService,
             Email2faManagementService email2faManagementService,
-            PaymentEmailRemindersService paymentEmailRemindersService
+            PaymentEmailRemindersService paymentEmailRemindersService,
+            EmailChangeService emailChangeService
     ) {
         this.accountDeletionService = Objects.requireNonNull(accountDeletionService, "accountDeletionService");
         this.authCookieService = Objects.requireNonNull(authCookieService, "authCookieService");
         this.changePasswordService = Objects.requireNonNull(changePasswordService, "changePasswordService");
         this.email2faManagementService = Objects.requireNonNull(email2faManagementService, "email2faManagementService");
         this.paymentEmailRemindersService = Objects.requireNonNull(paymentEmailRemindersService, "paymentEmailRemindersService");
+        this.emailChangeService = Objects.requireNonNull(emailChangeService, "emailChangeService");
     }
 
     @GetMapping("/api/me")
@@ -75,6 +79,21 @@ public class MeController {
         return ResponseEntity
                 .noContent()
                 .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                .build();
+    }
+
+    @PostMapping("/api/me/email-change/request")
+    public ResponseEntity<Void> requestEmailChange(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @Valid @RequestBody RequestEmailChangeRequest request
+    ) {
+        emailChangeService.requestEmailChange(
+                authenticatedUser.userId(),
+                request
+        );
+
+        return ResponseEntity
+                .accepted()
                 .build();
     }
 

@@ -6,6 +6,8 @@ import jakarta.validation.Valid;
 import me.serenityline.api.auth.dto.*;
 import me.serenityline.api.auth.service.*;
 import me.serenityline.api.security.auth.AuthenticatedUser;
+import me.serenityline.api.user.dto.ConfirmEmailChangeRequest;
+import me.serenityline.api.user.service.EmailChangeService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -33,8 +35,9 @@ public class AuthController {
     private final LogoutService logoutService;
     private final PasswordResetService passwordResetService;
     private final Login2faService login2faService;
+    private final EmailChangeService emailChangeService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService, PasswordResetService passwordResetService, Login2faService login2faService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService, PasswordResetService passwordResetService, Login2faService login2faService, EmailChangeService emailChangeService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
@@ -45,6 +48,7 @@ public class AuthController {
         this.logoutService = logoutService;
         this.passwordResetService = passwordResetService;
         this.login2faService = login2faService;
+        this.emailChangeService = emailChangeService;
     }
 
     @PostMapping("/register")
@@ -258,6 +262,20 @@ public class AuthController {
         passwordResetService.resetPassword(request);
 
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/email-change/confirm")
+    public ResponseEntity<Void> confirmEmailChange(
+            @Valid @RequestBody ConfirmEmailChangeRequest request
+    ) {
+        emailChangeService.confirmEmailChange(request.token());
+
+        ResponseCookie clearCookie = authCookieService.clearRefreshTokenCookie();
+
+        return ResponseEntity
+                .noContent()
+                .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                .build();
     }
 
 }
