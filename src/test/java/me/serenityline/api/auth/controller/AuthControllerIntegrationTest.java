@@ -30,10 +30,7 @@ import org.springframework.test.web.servlet.ResultActions;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -2737,9 +2734,25 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         performDefaultRegister()
                 .andExpect(status().isCreated());
 
-        EmailOutbox emailOutbox = emailOutboxRepository.findAll().getFirst();
+        EmailOutbox emailOutbox = latestPendingEmailOutbox(
+                EmailOutboxType.EMAIL_VERIFICATION,
+                DEFAULT_EMAIL
+        );
 
         return extractTokenFromBody(decryptTextBody(emailOutbox));
+    }
+
+    private EmailOutbox latestPendingEmailOutbox(
+            EmailOutboxType emailType,
+            String recipientEmail
+    ) {
+        return emailOutboxRepository.findAll()
+                .stream()
+                .filter(email -> email.getEmailType() == emailType)
+                .filter(email -> recipientEmail.equals(email.getRecipientEmail()))
+                .filter(email -> email.getEmailStatus() == EmailOutboxStatus.PENDING)
+                .max(Comparator.comparing(EmailOutbox::getEmailCreatedAt))
+                .orElseThrow();
     }
 
     private void verifyEmail(String token) throws Exception {

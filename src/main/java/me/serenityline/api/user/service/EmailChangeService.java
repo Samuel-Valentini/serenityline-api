@@ -156,7 +156,7 @@ public class EmailChangeService {
 
         OffsetDateTime now = OffsetDateTime.now();
 
-        cancelPendingEmailChangeEmails(user);
+        cancelPendingEmailChangeConfirmationEmails(user);
         revokePendingEmailChangeTokens(user, now);
 
         String plainToken = secureTokenGenerator.generate();
@@ -174,14 +174,14 @@ public class EmailChangeService {
 
         authActionTokenRepository.save(actionToken);
 
-        EmailOutbox emailOutbox = createConfirmationEmailOutbox(
+        EmailOutbox confirmationEmailOutbox = createConfirmationEmailOutbox(
                 user,
                 newEmail,
                 plainToken,
                 now
         );
 
-        emailOutboxRepository.save(emailOutbox);
+        emailOutboxRepository.save(confirmationEmailOutbox);
     }
 
     @Transactional
@@ -210,9 +210,10 @@ public class EmailChangeService {
             throw invalidOrExpiredEmailChangeToken();
         }
 
+        String oldEmail = user.getEmail();
         String newEmail = requireEmailChangeTargetValue(actionToken);
 
-        if (newEmail.equals(user.getEmail())) {
+        if (newEmail.equals(oldEmail)) {
             throw new IllegalArgumentException("auth.emailChange.sameEmail");
         }
 
@@ -226,21 +227,42 @@ public class EmailChangeService {
             throw invalidOrExpiredEmailChangeToken();
         }
 
+        /*
+         * Manteniamo la riga in email_outbox:
+         * - se la confirmation email è ancora PENDING, diventa CANCELLED e il body resta disponibile per debug;
+         * - se è già SENT, non la tocchiamo: il worker può aver già rimosso il body se deleteBodyAfterSend=true.
+         */
+        cancelPendingEmailChangeConfirmationEmails(user);
+
         try {
             user.setEmail(newEmail);
             user.incrementTokenVersion();
-
-            authSessionRevocationService.revokeAllForUser(
-                    user,
-                    SessionRevokeReason.EMAIL_CHANGED,
-                    RefreshTokenRevokeReason.EMAIL_CHANGED
-            );
-
             userRepository.flush();
-
         } catch (DataIntegrityViolationException ex) {
             throw new IllegalArgumentException("auth.emailChange.emailAlreadyInUse", ex);
         }
+
+        authSessionRevocationService.revokeAllForUser(
+                user,
+                SessionRevokeReason.EMAIL_CHANGED,
+                RefreshTokenRevokeReason.EMAIL_CHANGED
+        );
+
+        OffsetDateTime notificationScheduledAt = OffsetDateTime.now();
+
+        emailOutboxRepository.save(createOldEmailNotificationEmailOutbox(
+                user,
+                oldEmail,
+                newEmail,
+                notificationScheduledAt
+        ));
+
+        emailOutboxRepository.save(createNewEmailNotificationEmailOutbox(
+                user,
+                oldEmail,
+                newEmail,
+                notificationScheduledAt
+        ));
     }
 
     private void validateCurrentPassword(String currentPassword, User user) {
@@ -251,6 +273,26 @@ public class EmailChangeService {
         if (!passwordEncoder.matches(currentPassword, user.getUserPasswordHash())) {
             throw new IllegalArgumentException("auth.emailChange.currentPassword.invalid");
         }
+    }
+
+    private void revokePendingEmailChangeTokens(User user, OffsetDateTime now) {
+        authActionTokenRepository
+                .findAllByUserAndAuthActionTokenTypeAndAuthActionUsedAtIsNullAndAuthActionRevokedAtIsNullAndAuthActionExpiresAtAfter(
+                        user,
+                        AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION,
+                        now
+                )
+                .forEach(AuthActionToken::revoke);
+    }
+
+    private void cancelPendingEmailChangeConfirmationEmails(User user) {
+        emailOutboxRepository
+                .findAllByUserAndEmailTypeAndEmailStatus(
+                        user,
+                        EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                        EmailOutboxStatus.PENDING
+                )
+                .forEach(EmailOutbox::cancel);
     }
 
     private EmailOutbox createConfirmationEmailOutbox(
@@ -269,6 +311,68 @@ public class EmailChangeService {
                 user,
                 newEmail,
                 EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                emailOutboxEncryptionService.getEncryptionKeyId(),
+                encryptedSubject.encrypted(),
+                encryptedSubject.iv(),
+                encryptedSubject.tag(),
+                null,
+                null,
+                null,
+                encryptedTextBody.encrypted(),
+                encryptedTextBody.iv(),
+                encryptedTextBody.tag(),
+                true,
+                scheduledAt
+        );
+    }
+
+    private EmailOutbox createOldEmailNotificationEmailOutbox(
+            User user,
+            String oldEmail,
+            String newEmail,
+            OffsetDateTime scheduledAt
+    ) {
+        String subject = buildOldEmailNotificationSubject(user);
+        String textBody = buildOldEmailNotificationTextBody(user, oldEmail, newEmail);
+
+        EncryptedValue encryptedSubject = emailOutboxEncryptionService.encrypt(subject);
+        EncryptedValue encryptedTextBody = emailOutboxEncryptionService.encrypt(textBody);
+
+        return new EmailOutbox(
+                user,
+                oldEmail,
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                emailOutboxEncryptionService.getEncryptionKeyId(),
+                encryptedSubject.encrypted(),
+                encryptedSubject.iv(),
+                encryptedSubject.tag(),
+                null,
+                null,
+                null,
+                encryptedTextBody.encrypted(),
+                encryptedTextBody.iv(),
+                encryptedTextBody.tag(),
+                true,
+                scheduledAt
+        );
+    }
+
+    private EmailOutbox createNewEmailNotificationEmailOutbox(
+            User user,
+            String oldEmail,
+            String newEmail,
+            OffsetDateTime scheduledAt
+    ) {
+        String subject = buildNewEmailNotificationSubject(user);
+        String textBody = buildNewEmailNotificationTextBody(user, oldEmail, newEmail);
+
+        EncryptedValue encryptedSubject = emailOutboxEncryptionService.encrypt(subject);
+        EncryptedValue encryptedTextBody = emailOutboxEncryptionService.encrypt(textBody);
+
+        return new EmailOutbox(
+                user,
+                newEmail,
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
                 emailOutboxEncryptionService.getEncryptionKeyId(),
                 encryptedSubject.encrypted(),
                 encryptedSubject.iv(),
@@ -318,24 +422,52 @@ public class EmailChangeService {
         return frontendBaseUrl + "/change-email/confirm";
     }
 
-    private void revokePendingEmailChangeTokens(User user, OffsetDateTime now) {
-        authActionTokenRepository
-                .findAllByUserAndAuthActionTokenTypeAndAuthActionUsedAtIsNullAndAuthActionRevokedAtIsNullAndAuthActionExpiresAtAfter(
-                        user,
-                        AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION,
-                        now
-                )
-                .forEach(AuthActionToken::revoke);
+    private String buildOldEmailNotificationSubject(User user) {
+        return messageSource.getMessage(
+                "auth.emailChange.notification.old.email.subject",
+                null,
+                resolveUserLocale(user)
+        );
     }
 
-    private void cancelPendingEmailChangeEmails(User user) {
-        emailOutboxRepository
-                .findAllByUserAndEmailTypeAndEmailStatus(
-                        user,
-                        EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
-                        EmailOutboxStatus.PENDING
-                )
-                .forEach(EmailOutbox::cancel);
+    private String buildOldEmailNotificationTextBody(
+            User user,
+            String oldEmail,
+            String newEmail
+    ) {
+        return messageSource.getMessage(
+                "auth.emailChange.notification.old.email.body.text",
+                new Object[]{
+                        user.getUserName(),
+                        oldEmail,
+                        newEmail
+                },
+                resolveUserLocale(user)
+        );
+    }
+
+    private String buildNewEmailNotificationSubject(User user) {
+        return messageSource.getMessage(
+                "auth.emailChange.notification.new.email.subject",
+                null,
+                resolveUserLocale(user)
+        );
+    }
+
+    private String buildNewEmailNotificationTextBody(
+            User user,
+            String oldEmail,
+            String newEmail
+    ) {
+        return messageSource.getMessage(
+                "auth.emailChange.notification.new.email.body.text",
+                new Object[]{
+                        user.getUserName(),
+                        oldEmail,
+                        newEmail
+                },
+                resolveUserLocale(user)
+        );
     }
 
     private Locale resolveUserLocale(User user) {

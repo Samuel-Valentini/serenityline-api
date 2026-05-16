@@ -81,6 +81,11 @@ class EmailChangeIntegrationTest {
     private static final int TOKEN_EXPIRED_MINUTES_AGO = 1;
 
     private static final Pattern TOKEN_FRAGMENT_PATTERN = Pattern.compile("#token=([A-Za-z0-9_-]+)");
+    private static final Pattern EMAIL_CHANGE_TOKEN_FRAGMENT_PATTERN =
+            Pattern.compile("#token=([^\\s]+)");
+
+    private static final Pattern EMAIL_CHANGE_TOKEN_TEXT_PATTERN =
+            Pattern.compile("(?i)(?:confirmation token|token di conferma):\\s*([^\\s]+)");
 
     @Autowired
     private MockMvc mockMvc;
@@ -136,6 +141,26 @@ class EmailChangeIntegrationTest {
                 .substring(0, UNIQUE_SUFFIX_LENGTH);
 
         return "ec-" + normalizedLabel + "-" + uniqueSuffix + "@" + USER_EMAIL_DOMAIN;
+    }
+
+    private static String extractTokenFromBody(String body) {
+        if (body == null || body.isBlank()) {
+            throw new AssertionError("Email body is empty");
+        }
+
+        Matcher fragmentMatcher = EMAIL_CHANGE_TOKEN_FRAGMENT_PATTERN.matcher(body);
+
+        if (fragmentMatcher.find()) {
+            return fragmentMatcher.group(1).trim();
+        }
+
+        Matcher textMatcher = EMAIL_CHANGE_TOKEN_TEXT_PATTERN.matcher(body);
+
+        if (textMatcher.find()) {
+            return textMatcher.group(1).trim();
+        }
+
+        throw new AssertionError("Email change token not found in email body:\n" + body);
     }
 
     @BeforeEach
@@ -678,6 +703,772 @@ class EmailChangeIntegrationTest {
                 .isTrue();
     }
 
+    @Test
+    void confirmEmailChangeShouldCreateNotificationEmailsToOldAndNewEmail() throws Exception {
+        String currentEmail = uniqueEmail("notification-current");
+        String newEmail = uniqueEmail("notification-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+        String requestBody = emailChangeRequestJson(newEmail, DEFAULT_PASSWORD);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isAccepted());
+
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isNoContent());
+
+        EmailOutbox oldEmailNotification = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                currentEmail
+        );
+
+        EmailOutbox newEmailNotification = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                newEmail
+        );
+
+        String oldEmailNotificationBody = decryptTextBody(oldEmailNotification);
+        String newEmailNotificationBody = decryptTextBody(newEmailNotification);
+
+        assertThat(oldEmailNotification.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(oldEmailNotification.getRecipientEmail())
+                .isEqualTo(currentEmail);
+
+        assertThat(oldEmailNotificationBody)
+                .contains(currentEmail)
+                .contains(newEmail)
+                .doesNotContain("#token=");
+
+        assertThat(newEmailNotification.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(newEmailNotification.getRecipientEmail())
+                .isEqualTo(newEmail);
+
+        assertThat(newEmailNotificationBody)
+                .contains(currentEmail)
+                .contains(newEmail)
+                .doesNotContain("#token=");
+    }
+
+    @Test
+    void requestEmailChangeShouldCreateConfirmationEmailButNoNotificationEmails() throws Exception {
+        String currentEmail = uniqueEmail("request-no-notification-current");
+        String newEmail = uniqueEmail("request-no-notification-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        List<EmailOutbox> confirmationEmails = emailOutboxes(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                newEmail
+        );
+
+        assertThat(confirmationEmails)
+                .hasSize(1);
+
+        EmailOutbox confirmationEmail = confirmationEmails.getFirst();
+        String confirmationBody = decryptTextBody(confirmationEmail);
+
+        assertThat(confirmationEmail.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(confirmationEmail.isDeleteBodyAfterSend())
+                .isTrue();
+
+        assertThat(confirmationEmail.getEmailBodyDeletedAt())
+                .isNull();
+
+        assertThat(confirmationBody)
+                .contains(currentEmail)
+                .contains(newEmail)
+                .contains("/change-email/confirm")
+                .contains("#token=");
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .isEmpty();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, newEmail))
+                .isEmpty();
+    }
+
+    @Test
+    void requestEmailChangeShouldCancelPreviousPendingConfirmationEmailAndPreserveBody() throws Exception {
+        String currentEmail = uniqueEmail("request-cancel-current");
+        String firstNewEmail = uniqueEmail("request-cancel-first-new");
+        String secondNewEmail = uniqueEmail("request-cancel-second-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(firstNewEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox firstConfirmationBeforeCancel = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                firstNewEmail
+        );
+
+        UUID firstConfirmationEmailId = firstConfirmationBeforeCancel.getEmailOutboxId();
+        String firstConfirmationBodyBeforeCancel = decryptTextBody(firstConfirmationBeforeCancel);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(secondNewEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox firstConfirmationAfterCancel = emailOutboxById(firstConfirmationEmailId);
+        EmailOutbox secondConfirmation = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                secondNewEmail
+        );
+
+        assertThat(firstConfirmationAfterCancel.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.CANCELLED);
+
+        assertThat(firstConfirmationAfterCancel.getEmailCancelledAt())
+                .isNotNull();
+
+        assertThat(firstConfirmationAfterCancel.getEmailBodyDeletedAt())
+                .isNull();
+
+        assertThat(decryptTextBody(firstConfirmationAfterCancel))
+                .isEqualTo(firstConfirmationBodyBeforeCancel);
+
+        assertThat(secondConfirmation.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(decryptTextBody(secondConfirmation))
+                .contains(currentEmail)
+                .contains(secondNewEmail)
+                .contains("#token=");
+    }
+
+    @Test
+    void requestEmailChangeShouldRevokePreviousPendingEmailChangeToken() throws Exception {
+        String currentEmail = uniqueEmail("request-revoke-token-current");
+        String firstNewEmail = uniqueEmail("request-revoke-token-first-new");
+        String secondNewEmail = uniqueEmail("request-revoke-token-second-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(firstNewEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        String firstConfirmationToken = extractLatestEmailChangeTokenFromOutbox(firstNewEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(secondNewEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(firstConfirmationToken)))
+                .andExpect(status().isBadRequest());
+
+        User userAfterOldConfirmAttempt = userById(user.getUserId());
+
+        assertThat(userAfterOldConfirmAttempt.getEmail())
+                .isEqualTo(currentEmail);
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .isEmpty();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, firstNewEmail))
+                .isEmpty();
+    }
+
+    @Test
+    void confirmEmailChangeShouldCancelPendingConfirmationEmailPreserveBodyAndCreateTwoNotifications() throws Exception {
+        String currentEmail = uniqueEmail("confirm-cancel-current");
+        String newEmail = uniqueEmail("confirm-cancel-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox confirmationBeforeConfirm = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                newEmail
+        );
+
+        UUID confirmationEmailId = confirmationBeforeConfirm.getEmailOutboxId();
+        String confirmationBodyBeforeConfirm = decryptTextBody(confirmationBeforeConfirm);
+        String confirmationToken = extractTokenFromBody(confirmationBodyBeforeConfirm);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isNoContent());
+
+        EmailOutbox confirmationAfterConfirm = emailOutboxById(confirmationEmailId);
+        List<EmailOutbox> oldEmailNotifications = emailOutboxes(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                currentEmail
+        );
+        List<EmailOutbox> newEmailNotifications = emailOutboxes(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                newEmail
+        );
+
+        assertThat(confirmationAfterConfirm.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.CANCELLED);
+
+        assertThat(confirmationAfterConfirm.getEmailCancelledAt())
+                .isNotNull();
+
+        assertThat(confirmationAfterConfirm.getEmailBodyDeletedAt())
+                .isNull();
+
+        assertThat(decryptTextBody(confirmationAfterConfirm))
+                .isEqualTo(confirmationBodyBeforeConfirm);
+
+        assertThat(oldEmailNotifications)
+                .hasSize(1);
+
+        assertThat(newEmailNotifications)
+                .hasSize(1);
+
+        assertThat(oldEmailNotifications.getFirst().getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(newEmailNotifications.getFirst().getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(oldEmailNotifications.getFirst().isDeleteBodyAfterSend())
+                .isTrue();
+
+        assertThat(newEmailNotifications.getFirst().isDeleteBodyAfterSend())
+                .isTrue();
+    }
+
+    @Test
+    void confirmEmailChangeNotificationEmailsShouldNotContainConfirmationToken() throws Exception {
+        String currentEmail = uniqueEmail("notification-token-current");
+        String newEmail = uniqueEmail("notification-token-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isNoContent());
+
+        EmailOutbox oldEmailNotification = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                currentEmail
+        );
+
+        EmailOutbox newEmailNotification = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                newEmail
+        );
+
+        String oldEmailNotificationBody = decryptTextBody(oldEmailNotification);
+        String newEmailNotificationBody = decryptTextBody(newEmailNotification);
+
+        assertThat(oldEmailNotificationBody)
+                .contains(currentEmail)
+                .contains(newEmail)
+                .doesNotContain("#token=")
+                .doesNotContain(confirmationToken);
+
+        assertThat(newEmailNotificationBody)
+                .contains(currentEmail)
+                .contains(newEmail)
+                .doesNotContain("#token=")
+                .doesNotContain(confirmationToken);
+    }
+
+    @Test
+    void confirmExpiredEmailChangeShouldNotCancelConfirmationEmailAndShouldNotCreateNotificationEmails() throws Exception {
+        String currentEmail = uniqueEmail("expired-notification-current");
+        String newEmail = uniqueEmail("expired-notification-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox confirmationBeforeConfirm = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                newEmail
+        );
+
+        UUID confirmationEmailId = confirmationBeforeConfirm.getEmailOutboxId();
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        expireLatestEmailChangeToken(newEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isBadRequest());
+
+        EmailOutbox confirmationAfterConfirmAttempt = emailOutboxById(confirmationEmailId);
+        User userAfterConfirmAttempt = userById(user.getUserId());
+
+        assertThat(userAfterConfirmAttempt.getEmail())
+                .isEqualTo(currentEmail);
+
+        assertThat(confirmationAfterConfirmAttempt.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(confirmationAfterConfirmAttempt.getEmailCancelledAt())
+                .isNull();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .isEmpty();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, newEmail))
+                .isEmpty();
+    }
+
+    @Test
+    void confirmEmailChangeTokenReuseShouldNotCreateDuplicateNotificationEmails() throws Exception {
+        String currentEmail = uniqueEmail("reuse-notification-current");
+        String newEmail = uniqueEmail("reuse-notification-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+        String confirmBody = emailChangeConfirmJson(confirmationToken);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmBody))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmBody))
+                .andExpect(status().isBadRequest());
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .hasSize(1);
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, newEmail))
+                .hasSize(1);
+    }
+
+    @Test
+    void confirmEmailChangeShouldNotCancelConfirmationOrCreateNotificationsIfTargetEmailWasTakenAfterRequest() throws Exception {
+        String currentEmail = uniqueEmail("taken-notification-current");
+        String newEmail = uniqueEmail("taken-notification-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox confirmationBeforeConfirm = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                newEmail
+        );
+
+        UUID confirmationEmailId = confirmationBeforeConfirm.getEmailOutboxId();
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        createVerifiedUser(newEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isBadRequest());
+
+        EmailOutbox confirmationAfterConfirmAttempt = emailOutboxById(confirmationEmailId);
+        User userAfterConfirmAttempt = userById(user.getUserId());
+
+        assertThat(userAfterConfirmAttempt.getEmail())
+                .isEqualTo(currentEmail);
+
+        assertThat(confirmationAfterConfirmAttempt.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(confirmationAfterConfirmAttempt.getEmailCancelledAt())
+                .isNull();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .isEmpty();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, newEmail))
+                .isEmpty();
+    }
+
+    @Test
+    void confirmEmailChangeShouldNotCancelConfirmationOrCreateNotificationsIfUserWasSoftDeletedAfterRequest() throws Exception {
+        String currentEmail = uniqueEmail("soft-deleted-notification-current");
+        String newEmail = uniqueEmail("soft-deleted-notification-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox confirmationBeforeConfirm = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                newEmail
+        );
+
+        UUID confirmationEmailId = confirmationBeforeConfirm.getEmailOutboxId();
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        markUserAsSoftDeleted(user.getUserId());
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isBadRequest());
+
+        EmailOutbox confirmationAfterConfirmAttempt = emailOutboxById(confirmationEmailId);
+        User userAfterConfirmAttempt = userById(user.getUserId());
+
+        assertThat(userAfterConfirmAttempt.getEmail())
+                .isEqualTo(currentEmail);
+
+        assertThat(confirmationAfterConfirmAttempt.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .isEmpty();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, newEmail))
+                .isEmpty();
+    }
+
+    @Test
+    void confirmEmailChangeShouldNotCancelConfirmationOrCreateNotificationsIfUserWasDisabledAfterRequest() throws Exception {
+        String currentEmail = uniqueEmail("disabled-notification-current");
+        String newEmail = uniqueEmail("disabled-notification-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox confirmationBeforeConfirm = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                newEmail
+        );
+
+        UUID confirmationEmailId = confirmationBeforeConfirm.getEmailOutboxId();
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        disableUser(user.getUserId());
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isBadRequest());
+
+        EmailOutbox confirmationAfterConfirmAttempt = emailOutboxById(confirmationEmailId);
+        User userAfterConfirmAttempt = userById(user.getUserId());
+
+        assertThat(userAfterConfirmAttempt.getEmail())
+                .isEqualTo(currentEmail);
+
+        assertThat(confirmationAfterConfirmAttempt.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .isEmpty();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, newEmail))
+                .isEmpty();
+    }
+
+    @Test
+    void confirmEmailChangeShouldKeepAlreadySentConfirmationEmailSentAndCreateNotifications() throws Exception {
+        String currentEmail = uniqueEmail("sent-confirm-current");
+        String newEmail = uniqueEmail("sent-confirm-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox confirmationBeforeSend = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                newEmail
+        );
+
+        UUID confirmationEmailId = confirmationBeforeSend.getEmailOutboxId();
+        String confirmationToken = extractTokenFromBody(decryptTextBody(confirmationBeforeSend));
+
+        markEmailOutboxAsSent(confirmationEmailId);
+
+        EmailOutbox confirmationAfterSend = emailOutboxById(confirmationEmailId);
+
+        assertThat(confirmationAfterSend.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.SENT);
+
+        assertThat(confirmationAfterSend.getEmailSentAt())
+                .isNotNull();
+
+        assertThat(confirmationAfterSend.getEmailBodyDeletedAt())
+                .isNotNull();
+
+        assertThat(confirmationAfterSend.getBodyTextEncrypted())
+                .isNull();
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isNoContent());
+
+        EmailOutbox confirmationAfterConfirm = emailOutboxById(confirmationEmailId);
+
+        assertThat(confirmationAfterConfirm.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.SENT);
+
+        assertThat(confirmationAfterConfirm.getEmailCancelledAt())
+                .isNull();
+
+        assertThat(confirmationAfterConfirm.getEmailBodyDeletedAt())
+                .isNotNull();
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))
+                .hasSize(1);
+
+        assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, newEmail))
+                .hasSize(1);
+    }
+
+    @Test
+    void requestEmailChangeShouldKeepAlreadySentConfirmationEmailSentButRevokePreviousToken() throws Exception {
+        String currentEmail = uniqueEmail("sent-request-current");
+        String firstNewEmail = uniqueEmail("sent-request-first-new");
+        String secondNewEmail = uniqueEmail("sent-request-second-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(firstNewEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox firstConfirmationBeforeSend = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                firstNewEmail
+        );
+
+        UUID firstConfirmationEmailId = firstConfirmationBeforeSend.getEmailOutboxId();
+        String firstConfirmationToken = extractTokenFromBody(decryptTextBody(firstConfirmationBeforeSend));
+
+        markEmailOutboxAsSent(firstConfirmationEmailId);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(secondNewEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        EmailOutbox firstConfirmationAfterSecondRequest = emailOutboxById(firstConfirmationEmailId);
+        EmailOutbox secondConfirmation = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_CONFIRMATION,
+                secondNewEmail
+        );
+
+        assertThat(firstConfirmationAfterSecondRequest.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.SENT);
+
+        assertThat(firstConfirmationAfterSecondRequest.getEmailCancelledAt())
+                .isNull();
+
+        assertThat(firstConfirmationAfterSecondRequest.getEmailBodyDeletedAt())
+                .isNotNull();
+
+        assertThat(secondConfirmation.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(firstConfirmationToken)))
+                .andExpect(status().isBadRequest());
+
+        User userAfterOldTokenConfirmAttempt = userById(user.getUserId());
+
+        assertThat(userAfterOldTokenConfirmAttempt.getEmail())
+                .isEqualTo(currentEmail);
+    }
+
+    @Test
+    void confirmEmailChangeShouldCreateDifferentNotificationBodiesForOldAndNewEmail() throws Exception {
+        String currentEmail = uniqueEmail("different-body-current");
+        String newEmail = uniqueEmail("different-body-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isNoContent());
+
+        EmailOutbox oldEmailNotification = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                currentEmail
+        );
+
+        EmailOutbox newEmailNotification = latestEmailOutbox(
+                EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
+                newEmail
+        );
+
+        String oldBody = decryptTextBody(oldEmailNotification);
+        String newBody = decryptTextBody(newEmailNotification);
+
+        assertThat(oldEmailNotification.getRecipientEmail())
+                .isEqualTo(currentEmail);
+
+        assertThat(newEmailNotification.getRecipientEmail())
+                .isEqualTo(newEmail);
+
+        assertThat(oldBody)
+                .contains(currentEmail)
+                .contains(newEmail);
+
+        assertThat(newBody)
+                .contains(currentEmail)
+                .contains(newEmail);
+
+        assertThat(oldBody)
+                .isNotEqualTo(newBody);
+    }
+
+    @Test
+    void confirmEmailChangeShouldMarkActionTokenAsUsed() throws Exception {
+        String currentEmail = uniqueEmail("token-used-current");
+        String newEmail = uniqueEmail("token-used-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isNoContent());
+
+        List<AuthActionToken> tokens = emailChangeTokensForTargetValue(newEmail);
+
+        assertThat(tokens)
+                .hasSize(1);
+
+        AuthActionToken token = tokens.getFirst();
+
+        assertThat(token.getAuthActionUsedAt())
+                .isNotNull();
+
+        assertThat(token.getAuthActionRevokedAt())
+                .isNull();
+    }
+
+    @Test
+    void failedConfirmEmailChangeShouldNotMarkActionTokenAsUsed() throws Exception {
+        String currentEmail = uniqueEmail("token-not-used-current");
+        String newEmail = uniqueEmail("token-not-used-new");
+        User user = createVerifiedUser(currentEmail);
+        String accessToken = accessTokenFor(user);
+
+        mockMvc.perform(post(EMAIL_CHANGE_REQUEST_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeRequestJson(newEmail, DEFAULT_PASSWORD)))
+                .andExpect(status().isAccepted());
+
+        String confirmationToken = extractLatestEmailChangeTokenFromOutbox(newEmail);
+
+        createVerifiedUser(newEmail);
+
+        mockMvc.perform(post(EMAIL_CHANGE_CONFIRM_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(emailChangeConfirmJson(confirmationToken)))
+                .andExpect(status().isBadRequest());
+
+        List<AuthActionToken> tokens = emailChangeTokensForTargetValue(newEmail);
+
+        assertThat(tokens)
+                .hasSize(1);
+
+        AuthActionToken token = tokens.getFirst();
+
+        assertThat(token.getAuthActionUsedAt())
+                .isNull();
+
+        assertThat(token.getAuthActionRevokedAt())
+                .isNull();
+    }
+
     private User createVerifiedUser(String email) {
         return transactionTemplate.execute(status -> {
             UserGroup userGroup = new UserGroup(USER_GROUP_NAME_PREFIX + UUID.randomUUID());
@@ -754,6 +1545,15 @@ class EmailChangeIntegrationTest {
         return matcher.group(1);
     }
 
+    private List<AuthActionToken> emailChangeTokensForTargetValue(String targetValue) {
+        return transactionTemplate.execute(status -> authActionTokenRepository.findAll()
+                .stream()
+                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION)
+                .filter(token -> targetValue.equals(token.getAuthActionTargetValue()))
+                .sorted(Comparator.comparing(AuthActionToken::getAuthActionCreatedAt))
+                .toList());
+    }
+
     private EmailOutbox latestEmailOutbox(
             EmailOutboxType emailType,
             String recipientEmail
@@ -764,14 +1564,6 @@ class EmailChangeIntegrationTest {
                 .filter(emailOutbox -> recipientEmail.equals(emailOutbox.getRecipientEmail()))
                 .max(Comparator.comparing(EmailOutbox::getEmailCreatedAt))
                 .orElseThrow());
-    }
-
-    private List<AuthActionToken> emailChangeTokensForTargetValue(String targetValue) {
-        return transactionTemplate.execute(status -> authActionTokenRepository.findAll()
-                .stream()
-                .filter(token -> token.getAuthActionTokenType() == AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION)
-                .filter(token -> targetValue.equals(token.getAuthActionTargetValue()))
-                .toList());
     }
 
     private void expireLatestEmailChangeToken(String targetValue) {
@@ -927,6 +1719,37 @@ class EmailChangeIntegrationTest {
 
             entityManager.flush();
             entityManager.clear();
+        });
+    }
+
+    private List<EmailOutbox> emailOutboxes(
+            EmailOutboxType emailType,
+            String recipientEmail
+    ) {
+        return transactionTemplate.execute(status -> emailOutboxRepository.findAll()
+                .stream()
+                .filter(emailOutbox -> emailOutbox.getEmailType() == emailType)
+                .filter(emailOutbox -> recipientEmail.equals(emailOutbox.getRecipientEmail()))
+                .sorted(Comparator.comparing(EmailOutbox::getEmailCreatedAt))
+                .toList());
+    }
+
+    private EmailOutbox emailOutboxById(UUID emailOutboxId) {
+        return transactionTemplate.execute(status -> emailOutboxRepository.findById(emailOutboxId)
+                .orElseThrow());
+    }
+
+    private void markEmailOutboxAsSent(UUID emailOutboxId) {
+        transactionTemplate.executeWithoutResult(status -> {
+            EmailOutbox emailOutbox = emailOutboxRepository.findById(emailOutboxId)
+                    .orElseThrow();
+
+            emailOutbox.markSent(
+                    "test-provider",
+                    "test-provider-message-id"
+            );
+
+            emailOutboxRepository.flush();
         });
     }
 
