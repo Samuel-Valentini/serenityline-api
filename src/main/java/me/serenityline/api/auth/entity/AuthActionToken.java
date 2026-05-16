@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Size;
 import me.serenityline.api.user.entity.User;
 
 import java.time.OffsetDateTime;
+import java.util.Locale;
 import java.util.UUID;
 
 @Entity
@@ -16,6 +17,14 @@ public class AuthActionToken {
     private static final int DEFAULT_MAX_ATTEMPTS = 5;
     private static final int MIN_MAX_ATTEMPTS = 1;
     private static final int MAX_MAX_ATTEMPTS = 20;
+    private static final int TARGET_VALUE_MAX_LENGTH = 500;
+    private static final int EMAIL_TARGET_VALUE_MAX_LENGTH = 320;  // RFC email practical max
+
+    static {
+        if (EMAIL_TARGET_VALUE_MAX_LENGTH > TARGET_VALUE_MAX_LENGTH) {
+            throw new IllegalStateException("authActionToken.emailTargetValueMaxLength.invalid");
+        }
+    }
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -48,6 +57,8 @@ public class AuthActionToken {
     private OffsetDateTime authActionLastFailedAt;
     @Column(name = "auth_action_max_attempts", nullable = false)
     private int authActionMaxAttempts;
+    @Column(name = "auth_action_target_value", length = TARGET_VALUE_MAX_LENGTH)
+    private String authActionTargetValue;
 
     protected AuthActionToken() {
     }
@@ -119,6 +130,49 @@ public class AuthActionToken {
         validateHash(normalizedHash);
 
         return normalizedHash;
+    }
+
+    private static String normalizeText(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String normalizedValue = value.trim();
+
+        if (normalizedValue.isEmpty()) {
+            return null;
+        }
+
+        return normalizedValue;
+    }
+
+    private static String normalizeEmailTargetValue(String value) {
+        String normalizedValue = normalizeText(value);
+
+        if (normalizedValue == null) {
+            throw new IllegalArgumentException("authActionToken.targetValue.required");
+        }
+
+        return normalizedValue.toLowerCase(Locale.ROOT);
+    }
+
+    private static String requireNotBlankAndMaxLength(
+            String value,
+            int maxLength,
+            String requiredMessageKey,
+            String tooLongMessageKey
+    ) {
+        String normalizedValue = normalizeText(value);
+
+        if (normalizedValue == null) {
+            throw new IllegalArgumentException(requiredMessageKey);
+        }
+
+        if (normalizedValue.length() > maxLength) {
+            throw new IllegalArgumentException(tooLongMessageKey);
+        }
+
+        return normalizedValue;
     }
 
     private static void validateExpectedType(AuthActionTokenType expectedType) {
@@ -273,12 +327,46 @@ public class AuthActionToken {
             throw new IllegalArgumentException("authActionToken.usedAt.beforeLastFailedAt");
         }
 
+        validateTargetValueConsistency();
+
         if (
                 this.authActionRevokedAt != null
                         && this.authActionLastFailedAt != null
                         && this.authActionRevokedAt.isBefore(this.authActionLastFailedAt)
         ) {
             throw new IllegalArgumentException("authActionToken.revokedAt.beforeLastFailedAt");
+        }
+    }
+
+    private void validateTargetValueConsistency() {
+        this.authActionTargetValue = normalizeText(this.authActionTargetValue);
+
+        if (this.authActionTargetValue == null) {
+            if (this.authActionTokenType == AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION) {
+                throw new IllegalArgumentException("authActionToken.targetValue.required");
+            }
+
+            return;
+        }
+
+        if (this.authActionTargetValue.length() > TARGET_VALUE_MAX_LENGTH) {
+            throw new IllegalArgumentException("authActionToken.targetValue.tooLong");
+        }
+
+        if (this.authActionTokenType != AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION) {
+            throw new IllegalArgumentException("authActionToken.targetValue.notAllowedForType");
+        }
+
+        if (this.authActionTargetValue.length() > EMAIL_TARGET_VALUE_MAX_LENGTH) {
+            throw new IllegalArgumentException("authActionToken.targetValue.tooLong");
+        }
+
+        if (!this.authActionTargetValue.equals(this.authActionTargetValue.toLowerCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("authActionToken.targetValue.emailNotNormalized");
+        }
+
+        if (!this.authActionTargetValue.equals(this.authActionTargetValue.trim())) {
+            throw new IllegalArgumentException("authActionToken.targetValue.emailNotNormalized");
         }
     }
 
@@ -350,6 +438,41 @@ public class AuthActionToken {
         this.authActionMaxAttempts = authActionMaxAttempts;
     }
 
+    public String getAuthActionTargetValue() {
+        return authActionTargetValue;
+    }
+
+    public void setEmailChangeTargetValue(String newEmail) {
+        if (this.authActionTokenType != AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION) {
+            throw new IllegalArgumentException("authActionToken.targetValue.notAllowedForType");
+        }
+
+        String normalizedEmail = normalizeEmailTargetValue(newEmail);
+
+        if (normalizedEmail.length() > EMAIL_TARGET_VALUE_MAX_LENGTH) {
+            throw new IllegalArgumentException("authActionToken.targetValue.tooLong");
+        }
+
+        this.authActionTargetValue = normalizedEmail;
+
+        if (this.authActionCreatedAt != null) {
+            validateState();
+        }
+    }
+
+    public String requireEmailChangeTargetValue() {
+        if (this.authActionTokenType != AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION) {
+            throw new IllegalArgumentException("authActionToken.targetValue.notAllowedForType");
+        }
+
+        return requireNotBlankAndMaxLength(
+                this.authActionTargetValue,
+                EMAIL_TARGET_VALUE_MAX_LENGTH,
+                "authActionToken.targetValue.required",
+                "authActionToken.targetValue.tooLong"
+        );
+    }
+
     public void recordFailedAttempt() {
         if (isUsed()) {
             throw new IllegalStateException("authActionToken.alreadyUsed");
@@ -401,4 +524,6 @@ public class AuthActionToken {
             validateState();
         }
     }
+
+
 }
