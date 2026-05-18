@@ -82,4 +82,9 @@ serenityline:
     from: ${EMAIL_FROM}
     resend:
       api-key: ${RESEND_API_KEY}
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 

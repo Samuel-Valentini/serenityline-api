@@ -117,15 +117,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return true;
         }
 
-        if (!HttpMethod.POST.name().equals(request.getMethod())) {
-            return false;
-        }
-
         String path = request.getRequestURI();
         String contextPath = request.getContextPath();
 
         if (contextPath != null && !contextPath.isBlank() && path.startsWith(contextPath)) {
             path = path.substring(contextPath.length());
+        }
+
+        if (isSwaggerPath(path)) {
+            return true;
+        }
+
+        if (!HttpMethod.POST.name().equals(request.getMethod())) {
+            return false;
         }
 
         return switch (path) {
@@ -142,5 +146,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                  "/api/auth/email-change/confirm" -> true;
             default -> false;
         };
+    }
+
+    private boolean isSwaggerPath(String path) {
+        return path.equals("/swagger-ui.html")
+                || path.startsWith("/swagger-ui/")
+                || path.equals("/v3/api-docs")
+                || path.startsWith("/v3/api-docs/");
     }
 }

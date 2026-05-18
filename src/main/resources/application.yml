@@ -30,4 +30,12 @@ serenityline:
   frontend:
     base-url: ${FRONTEND_BASE_URL}
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+
 
