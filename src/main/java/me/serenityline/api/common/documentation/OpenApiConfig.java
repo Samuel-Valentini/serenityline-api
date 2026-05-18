@@ -1,4 +1,4 @@
-package me.serenityline.api.config;
+package me.serenityline.api.common.documentation;
 
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;

@@ -1,11 +1,11 @@
 package me.serenityline.api.user.controller;
 
 import jakarta.persistence.EntityManager;
-import me.serenityline.api.auth.entity.EmailOutbox;
-import me.serenityline.api.auth.entity.EmailOutboxStatus;
-import me.serenityline.api.auth.entity.EmailOutboxType;
-import me.serenityline.api.auth.repository.EmailOutboxRepository;
 import me.serenityline.api.email.outbox.EmailOutboxProcessor;
+import me.serenityline.api.email.outbox.entity.EmailOutbox;
+import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
+import me.serenityline.api.email.outbox.entity.EmailOutboxType;
+import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
 import me.serenityline.api.email.service.EmailSender;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
 import me.serenityline.api.security.crypto.EncryptedValue;

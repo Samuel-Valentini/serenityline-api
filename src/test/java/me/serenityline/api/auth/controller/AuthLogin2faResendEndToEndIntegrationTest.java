@@ -1,12 +1,18 @@
 package me.serenityline.api.auth.controller;
 
 import com.jayway.jsonpath.JsonPath;
-import me.serenityline.api.auth.entity.*;
+import me.serenityline.api.auth.entity.AuthActionToken;
+import me.serenityline.api.auth.entity.AuthActionTokenType;
+import me.serenityline.api.auth.entity.RefreshToken;
+import me.serenityline.api.auth.entity.UserSession;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
-import me.serenityline.api.auth.repository.EmailOutboxRepository;
 import me.serenityline.api.auth.repository.RefreshTokenRepository;
 import me.serenityline.api.auth.repository.UserSessionRepository;
 import me.serenityline.api.email.outbox.EmailOutboxProcessor;
+import me.serenityline.api.email.outbox.entity.EmailOutbox;
+import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
+import me.serenityline.api.email.outbox.entity.EmailOutboxType;
+import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
 import me.serenityline.api.email.service.EmailSender;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
 import me.serenityline.api.security.crypto.EncryptedValue;

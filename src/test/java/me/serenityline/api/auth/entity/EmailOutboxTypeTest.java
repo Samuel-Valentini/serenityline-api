@@ -1,5 +1,6 @@
 package me.serenityline.api.auth.entity;
 
+import me.serenityline.api.email.outbox.entity.EmailOutboxType;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

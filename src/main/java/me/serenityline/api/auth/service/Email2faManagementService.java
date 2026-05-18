@@ -1,9 +1,13 @@
 package me.serenityline.api.auth.service;
 
-import me.serenityline.api.auth.entity.*;
+import me.serenityline.api.auth.entity.AuthActionToken;
+import me.serenityline.api.auth.entity.AuthActionTokenType;
 import me.serenityline.api.auth.exception.Email2faConfirmationInvalidOrExpiredException;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
-import me.serenityline.api.auth.repository.EmailOutboxRepository;
+import me.serenityline.api.email.outbox.entity.EmailOutbox;
+import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
+import me.serenityline.api.email.outbox.entity.EmailOutboxType;
+import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
 import me.serenityline.api.security.crypto.EncryptedValue;
 import me.serenityline.api.security.token.SecureTokenGenerator;

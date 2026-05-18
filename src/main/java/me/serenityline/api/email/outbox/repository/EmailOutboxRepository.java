@@ -1,8 +1,8 @@
-package me.serenityline.api.auth.repository;
+package me.serenityline.api.email.outbox.repository;
 
-import me.serenityline.api.auth.entity.EmailOutbox;
-import me.serenityline.api.auth.entity.EmailOutboxStatus;
-import me.serenityline.api.auth.entity.EmailOutboxType;
+import me.serenityline.api.email.outbox.entity.EmailOutbox;
+import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
+import me.serenityline.api.email.outbox.entity.EmailOutboxType;
 import me.serenityline.api.user.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;

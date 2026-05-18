@@ -1,9 +1,9 @@
 package me.serenityline.api.user.controller;
 
 import com.jayway.jsonpath.JsonPath;
-import me.serenityline.api.auth.entity.EmailOutbox;
-import me.serenityline.api.auth.entity.EmailOutboxType;
-import me.serenityline.api.auth.repository.EmailOutboxRepository;
+import me.serenityline.api.email.outbox.entity.EmailOutbox;
+import me.serenityline.api.email.outbox.entity.EmailOutboxType;
+import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
 import me.serenityline.api.security.crypto.EncryptedValue;
 import me.serenityline.api.support.IntegrationTestSupport;

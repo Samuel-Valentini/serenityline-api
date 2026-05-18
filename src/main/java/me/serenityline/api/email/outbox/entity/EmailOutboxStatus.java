@@ -1,4 +1,4 @@
-package me.serenityline.api.auth.entity;
+package me.serenityline.api.email.outbox.entity;
 
 public enum EmailOutboxStatus {
     PENDING,

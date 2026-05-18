@@ -1,9 +1,9 @@
 package me.serenityline.api.email.outbox;
 
-import me.serenityline.api.auth.entity.EmailOutbox;
-import me.serenityline.api.auth.entity.EmailOutboxStatus;
-import me.serenityline.api.auth.entity.EmailOutboxType;
-import me.serenityline.api.auth.repository.EmailOutboxRepository;
+import me.serenityline.api.email.outbox.entity.EmailOutbox;
+import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
+import me.serenityline.api.email.outbox.entity.EmailOutboxType;
+import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
 import me.serenityline.api.email.service.EmailSendException;
 import me.serenityline.api.email.service.EmailSender;
 import me.serenityline.api.email.service.OutboundEmail;

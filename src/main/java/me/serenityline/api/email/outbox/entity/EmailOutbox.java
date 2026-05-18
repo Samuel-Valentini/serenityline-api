@@ -1,4 +1,4 @@
-package me.serenityline.api.auth.entity;
+package me.serenityline.api.email.outbox.entity;
 
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Email;
