@@ -124,7 +124,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             path = path.substring(contextPath.length());
         }
 
-        if (isSwaggerPath(path)) {
+        if (isSwaggerPath(path) || isActuatorPublicPath(path)) {
             return true;
         }
 
@@ -153,5 +153,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 || path.startsWith("/swagger-ui/")
                 || path.equals("/v3/api-docs")
                 || path.startsWith("/v3/api-docs/");
+    }
+
+    private boolean isActuatorPublicPath(String path) {
+        return path.equals("/actuator/health")
+                || path.startsWith("/actuator/health/");
     }
 }

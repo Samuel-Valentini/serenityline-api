@@ -15,7 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-class OpenApiDocumentationIntegrationTest {
+class OpenApiDocumentationAndActuatorIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -52,5 +52,31 @@ class OpenApiDocumentationIntegrationTest {
     void swaggerUiIndexShouldBePublic() throws Exception {
         mockMvc.perform(get("/swagger-ui/index.html"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void actuatorHealthShouldBePublic() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").exists());
+    }
+
+    @Test
+    void actuatorHealthDetailsShouldNotBeExposed() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.components").doesNotExist());
+    }
+
+    @Test
+    void actuatorOtherEndpointsShouldBeBlocked() throws Exception {
+        mockMvc.perform(get("/actuator"))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void actuatorMetricsShouldNotBePublic() throws Exception {
+        mockMvc.perform(get("/actuator/metrics"))
+                .andExpect(status().is4xxClientError());
     }
 }

@@ -85,6 +85,12 @@ public class SecurityConfig {
                                 "/v3/api-docs/**"
                         ).permitAll()
                         .requestMatchers(
+                                HttpMethod.GET,
+                                "/actuator/health",
+                                "/actuator/health/**"
+                        ).permitAll()
+                        .requestMatchers("/actuator/**").denyAll()
+                        .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/auth/register",
                                 "/api/auth/verify-email",
@@ -98,6 +104,7 @@ public class SecurityConfig {
                                 "/api/auth/login/2fa/verify",
                                 "/api/auth/email-change/confirm"
                         ).permitAll()
+                        .requestMatchers("/actuator/**").denyAll()
                         .anyRequest().authenticated()
                 )
                 .build();
