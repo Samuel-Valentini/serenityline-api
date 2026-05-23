@@ -11,6 +11,10 @@ import me.serenityline.api.email.outbox.entity.EmailOutbox;
 import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
 import me.serenityline.api.email.outbox.entity.EmailOutboxType;
 import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
+import me.serenityline.api.finance.category.entity.Category;
+import me.serenityline.api.finance.category.repository.CategoryDetailsHistoryRepository;
+import me.serenityline.api.finance.category.repository.CategoryRepository;
+import me.serenityline.api.finance.category.repository.CategoryStatusHistoryRepository;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
 import me.serenityline.api.security.crypto.EncryptedValue;
 import me.serenityline.api.security.jwt.JwtTokenClaims;
@@ -96,6 +100,15 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private JwtTokenService jwtTokenService;
+
+    @Autowired
+    private CategoryRepository categoryRepository;
+
+    @Autowired
+    private CategoryDetailsHistoryRepository categoryDetailsHistoryRepository;
+
+    @Autowired
+    private CategoryStatusHistoryRepository categoryStatusHistoryRepository;
 
     private static String extractCookieValue(String setCookie, String cookieName) {
         assertThat(setCookie).isNotBlank();
@@ -2675,6 +2688,71 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         performLogin(DEFAULT_EMAIL, NEW_PASSWORD)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("auth.login.invalidCredentials"));
+    }
+
+    @Test
+    void registerShouldCreateDefaultCategoriesForNewOwnerGroup() throws Exception {
+        String email = uniqueEmail("categories");
+
+        performRegister(
+                IT_LOCALE,
+                DEFAULT_USER_NAME,
+                email,
+                IT_TEST_PASSWORD,
+                IT_LOCALE
+        )
+                .andExpect(status().isCreated());
+
+        User savedUser = userRepository.findByEmailAndUserDeletedAtIsNull(email)
+                .orElseThrow();
+
+        UUID userGroupId = savedUser.getUserGroup().getUserGroupId();
+
+        List<Category> categories =
+                categoryRepository.findAllByUserGroup_UserGroupIdOrderByCategoryCurrentNameAsc(userGroupId);
+
+        List<UUID> categoryIds = categories.stream()
+                .map(Category::getCategoryId)
+                .toList();
+
+        assertThat(categories).hasSize(20);
+
+        assertThat(categories)
+                .extracting(Category::getCategoryCurrentName)
+                .containsExactlyInAnyOrder(
+                        "Affitti",
+                        "Alimentari e altre spese domestiche",
+                        "Altre entrate",
+                        "Assicurazioni",
+                        "Auto",
+                        "Beneficenza",
+                        "Bollette e altri servizi ricorrenti di prima necessità",
+                        "Casa",
+                        "Famiglia",
+                        "Fondi per piccole spese",
+                        "Formazione e istruzione",
+                        "Investimenti",
+                        "Lavoro",
+                        "Mutui e prestiti",
+                        "Pensione integrativa",
+                        "Piccole spese personali",
+                        "Salute",
+                        "Tasse e prelievi diretti",
+                        "Tasse e prelievi indiretti",
+                        "Vacanze"
+                );
+
+        assertThat(categories)
+                .allSatisfy(category -> {
+                    assertThat(category.getUserGroupId()).isEqualTo(userGroupId);
+                    assertThat(category.getCategoryCreatedByUserId()).isEqualTo(savedUser.getUserId());
+                });
+
+        assertThat(categoryDetailsHistoryRepository.countByCategory_CategoryIdIn(categoryIds))
+                .isEqualTo(20);
+
+        assertThat(categoryStatusHistoryRepository.countByCategory_CategoryIdIn(categoryIds))
+                .isEqualTo(20);
     }
 
     private void registerValidUser(String email) throws Exception {

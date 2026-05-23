@@ -2,6 +2,7 @@ package me.serenityline.api.auth.service;
 
 import me.serenityline.api.auth.dto.RegisterRequest;
 import me.serenityline.api.auth.dto.RegisterResponse;
+import me.serenityline.api.finance.category.service.DefaultCategoryCreationService;
 import me.serenityline.api.user.entity.*;
 import me.serenityline.api.user.repository.UserGroupRepository;
 import me.serenityline.api.user.repository.UserRepository;
@@ -22,19 +23,21 @@ public class RegisterService {
     private final PasswordEncoder passwordEncoder;
     private final PasswordPolicyService passwordPolicyService;
     private final EmailVerificationService emailVerificationService;
+    private final DefaultCategoryCreationService defaultCategoryCreationService;
 
     public RegisterService(
             UserRepository userRepository,
             UserGroupRepository userGroupRepository,
             PasswordEncoder passwordEncoder,
             PasswordPolicyService passwordPolicyService,
-            EmailVerificationService emailVerificationService
+            EmailVerificationService emailVerificationService, DefaultCategoryCreationService defaultCategoryCreationService
     ) {
         this.userRepository = userRepository;
         this.userGroupRepository = userGroupRepository;
         this.passwordEncoder = passwordEncoder;
         this.passwordPolicyService = passwordPolicyService;
         this.emailVerificationService = emailVerificationService;
+        this.defaultCategoryCreationService = defaultCategoryCreationService;
     }
 
     @Transactional
@@ -87,6 +90,12 @@ public class RegisterService {
         userGroupRepository.save(userGroup);
 
         User savedUser = userRepository.save(userGroupOwner);
+
+        defaultCategoryCreationService.createDefaultCategoriesIfMissing(
+                savedUser.getUserGroup().getUserGroupId(),
+                savedUser.getUserId(),
+                Locale.forLanguageTag(preferredLocale)
+        );
 
         emailVerificationService.createEmailVerification(savedUser);
 
