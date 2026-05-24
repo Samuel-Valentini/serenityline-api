@@ -6,6 +6,7 @@ import me.serenityline.api.user.entity.UserGroup;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -84,6 +85,20 @@ public class Account {
                 openingBalanceDate,
                 userGroup
         );
+    }
+
+    public void update(
+            String accountName,
+            String accountDescription,
+            String issuingInstitution,
+            BigDecimal openingBalance,
+            LocalDate openingBalanceDate
+    ) {
+        this.accountName = Objects.requireNonNull(accountName, "accountName");
+        this.accountDescription = accountDescription;
+        this.issuingInstitution = issuingInstitution;
+        this.openingBalance = Objects.requireNonNull(openingBalance, "openingBalance");
+        this.openingBalanceDate = Objects.requireNonNull(openingBalanceDate, "openingBalanceDate");
     }
 
     @PrePersist

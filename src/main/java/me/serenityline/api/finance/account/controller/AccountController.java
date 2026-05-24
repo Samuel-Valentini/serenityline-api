@@ -3,9 +3,11 @@ package me.serenityline.api.finance.account.controller;
 import jakarta.validation.Valid;
 import me.serenityline.api.finance.account.dto.AccountResponse;
 import me.serenityline.api.finance.account.dto.CreateAccountRequest;
+import me.serenityline.api.finance.account.dto.UpdateAccountRequest;
 import me.serenityline.api.finance.account.entity.Account;
 import me.serenityline.api.finance.account.service.AccountCreationService;
 import me.serenityline.api.finance.account.service.AccountQueryService;
+import me.serenityline.api.finance.account.service.AccountUpdateService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,10 +24,12 @@ public class AccountController {
 
     private final AccountCreationService accountCreationService;
     private final AccountQueryService accountQueryService;
+    private final AccountUpdateService accountUpdateService;
 
-    public AccountController(AccountCreationService accountCreationService, AccountQueryService accountQueryService) {
+    public AccountController(AccountCreationService accountCreationService, AccountQueryService accountQueryService, AccountUpdateService accountUpdateService) {
         this.accountCreationService = Objects.requireNonNull(accountCreationService, "accountCreationService");
         this.accountQueryService = Objects.requireNonNull(accountQueryService, "accountQueryService");
+        this.accountUpdateService = Objects.requireNonNull(accountUpdateService, "accountUpdateService");
     }
 
     @PostMapping
@@ -61,6 +65,21 @@ public class AccountController {
         Account account = accountQueryService.findVisibleAccount(
                 authenticatedUser.userId(),
                 accountId
+        );
+
+        return AccountResponse.from(account);
+    }
+
+    @PatchMapping("/{accountId}")
+    public AccountResponse updateAccount(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID accountId,
+            @Valid @RequestBody UpdateAccountRequest request
+    ) {
+        Account account = accountUpdateService.updateAccount(
+                authenticatedUser.userId(),
+                accountId,
+                request.toCommand()
         );
 
         return AccountResponse.from(account);

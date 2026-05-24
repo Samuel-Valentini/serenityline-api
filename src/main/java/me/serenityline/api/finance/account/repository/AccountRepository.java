@@ -64,4 +64,23 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
             @Param("userGroupId") UUID userGroupId,
             @Param("userId") UUID userId
     );
+
+    @Query(
+            value = """
+                    select exists (
+                        select 1
+                        from accounts a
+                        where a.user_group_id = :userGroupId
+                          and a.account_id <> :accountId
+                          and lower(btrim(regexp_replace(a.account_name, '[[:space:]]+', ' ', 'g'))) = :normalizedAccountName
+                    )
+                    """,
+            nativeQuery = true
+    )
+    boolean existsByUserGroupIdAndNormalizedAccountNameExcludingAccountId(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("normalizedAccountName") String normalizedAccountName,
+            @Param("accountId") UUID accountId
+    );
+
 }

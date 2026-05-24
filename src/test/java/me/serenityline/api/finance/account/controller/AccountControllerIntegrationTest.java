@@ -24,8 +24,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class AccountControllerIntegrationTest extends IntegrationTestSupport {
@@ -284,6 +283,300 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "OWNER",
+                    "SUPER_COLLABORATOR"
+            }
+    )
+    void updateAccountShouldUpdateGroupAccountForOwnerAndSuperCollaborator(UserRole userRole) throws Exception {
+        User user = createVerifiedUser(userRole);
+        UserGroup userGroup = user.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto vecchio");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + account.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(user)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountName": "  Conto aggiornato  ",
+                                  "accountDescription": "  Descrizione aggiornata  ",
+                                  "issuingInstitution": "  Banca aggiornata  ",
+                                  "openingBalance": 1500.25,
+                                  "openingBalanceDate": "2026-02-15"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.accountName").value("Conto aggiornato"))
+                .andExpect(jsonPath("$.accountDescription").value("Descrizione aggiornata"))
+                .andExpect(jsonPath("$.issuingInstitution").value("Banca aggiornata"))
+                .andExpect(jsonPath("$.openingBalance").value(1500.25))
+                .andExpect(jsonPath("$.openingBalanceDate").value("2026-02-15"))
+                .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.userGroupId").value(userGroup.getUserGroupId().toString()));
+
+        Account reloadedAccount = accountRepository.findById(account.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountName()).isEqualTo("Conto aggiornato");
+        assertThat(reloadedAccount.getAccountDescription()).isEqualTo("Descrizione aggiornata");
+        assertThat(reloadedAccount.getIssuingInstitution()).isEqualTo("Banca aggiornata");
+        assertThat(reloadedAccount.getOpeningBalance()).isEqualByComparingTo("1500.25");
+        assertThat(reloadedAccount.getOpeningBalanceDate()).isEqualTo(LocalDate.of(2026, 2, 15));
+        assertThat(reloadedAccount.getCurrency()).isEqualTo("EUR");
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void updateAccountShouldUpdateLinkedAccountForCollaboratorAndViewerCollaborator(UserRole userRole) throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User linkedUser = createVerifiedUser(userGroup, userRole);
+
+        Account account = createAccount(userGroup, "Conto collegato");
+
+        grantAccess(account, linkedUser);
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + account.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(linkedUser)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountName": "Conto modificato da collegato",
+                                  "openingBalance": 300.00,
+                                  "openingBalanceDate": "2026-03-01"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.accountName").value("Conto modificato da collegato"))
+                .andExpect(jsonPath("$.openingBalance").value(300.00))
+                .andExpect(jsonPath("$.openingBalanceDate").value("2026-03-01"));
+
+        Account reloadedAccount = accountRepository.findById(account.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountName()).isEqualTo("Conto modificato da collegato");
+        assertThat(reloadedAccount.getOpeningBalance()).isEqualByComparingTo("300.00");
+        assertThat(reloadedAccount.getOpeningBalanceDate()).isEqualTo(LocalDate.of(2026, 3, 1));
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void updateAccountShouldReturnNotFoundForUnlinkedAccount(UserRole userRole) throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User unlinkedUser = createVerifiedUser(userGroup, userRole);
+
+        Account account = createAccount(userGroup, "Conto non collegato");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + account.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(unlinkedUser)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountName": "Tentativo modifica"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.message").value("Conto non trovato."))
+                .andExpect(jsonPath("$.path").value(ACCOUNT_PATH + "/" + account.getAccountId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        Account reloadedAccount = accountRepository.findById(account.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountName()).isEqualTo("Conto non collegato");
+    }
+
+    @Test
+    void updateAccountShouldReturnNotFoundForAccountFromAnotherUserGroup() throws Exception {
+        User currentUser = createVerifiedUser(UserRole.OWNER);
+
+        User otherUser = createVerifiedUser(UserRole.OWNER);
+        Account otherGroupAccount = createAccount(otherUser.getUserGroup(), "Conto altro gruppo");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + otherGroupAccount.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(currentUser)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountName": "Tentativo modifica"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.message").value("Conto non trovato."));
+
+        Account reloadedAccount = accountRepository.findById(otherGroupAccount.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountName()).isEqualTo("Conto altro gruppo");
+    }
+
+    @Test
+    void updateAccountShouldRejectDuplicateNormalizedAccountName() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        createAccount(userGroup, "Conto principale");
+        Account accountToUpdate = createAccount(userGroup, "Risparmi");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + accountToUpdate.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountName": "   conto     PRINCIPALE   "
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.account.nameAlreadyExists"))
+                .andExpect(jsonPath("$.message").value("Esiste già un conto con questo nome."));
+
+        Account reloadedAccount = accountRepository.findById(accountToUpdate.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountName()).isEqualTo("Risparmi");
+    }
+
+    @Test
+    void updateAccountShouldAllowSameNormalizedNameForSameAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + account.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountName": "   CONTO     PRINCIPALE   "
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountName").value("CONTO     PRINCIPALE"));
+
+        Account reloadedAccount = accountRepository.findById(account.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountName()).isEqualTo("CONTO     PRINCIPALE");
+    }
+
+    @Test
+    void updateAccountShouldRejectOpeningBalanceWithMoreThanTwoDecimals() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + account.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "openingBalance": 100.999
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"))
+                .andExpect(jsonPath("$.fieldErrors[*].code").value(hasItem("finance.account.openingBalance.invalidScale")));
+
+        Account reloadedAccount = accountRepository.findById(account.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getOpeningBalance()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    void updateAccountShouldClearOptionalTextFieldsWhenBlank() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + account.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountDescription": "   ",
+                                  "issuingInstitution": ""
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountDescription").doesNotExist())
+                .andExpect(jsonPath("$.issuingInstitution").doesNotExist());
+
+        Account reloadedAccount = accountRepository.findById(account.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountDescription()).isNull();
+        assertThat(reloadedAccount.getIssuingInstitution()).isNull();
+    }
+
+    @Test
+    void updateAccountShouldLeaveOmittedFieldsUnchanged() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+
+        mockMvc.perform(patch(ACCOUNT_PATH + "/" + account.getAccountId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "accountName": "Conto rinominato"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountName").value("Conto rinominato"))
+                .andExpect(jsonPath("$.accountDescription").value("Descrizione Conto principale"))
+                .andExpect(jsonPath("$.issuingInstitution").value("Banca test"))
+                .andExpect(jsonPath("$.openingBalance").value(100.00))
+                .andExpect(jsonPath("$.openingBalanceDate").value("2026-01-01"));
+
+        Account reloadedAccount = accountRepository.findById(account.getAccountId())
+                .orElseThrow();
+
+        assertThat(reloadedAccount.getAccountName()).isEqualTo("Conto rinominato");
+        assertThat(reloadedAccount.getAccountDescription()).isEqualTo("Descrizione Conto principale");
+        assertThat(reloadedAccount.getIssuingInstitution()).isEqualTo("Banca test");
+        assertThat(reloadedAccount.getOpeningBalance()).isEqualByComparingTo("100.00");
+        assertThat(reloadedAccount.getOpeningBalanceDate()).isEqualTo(LocalDate.of(2026, 1, 1));
     }
 
     private String accessTokenFor(User user) {
