@@ -182,6 +182,12 @@ CREATE INDEX idx_accounts_user_group_id
 CREATE INDEX idx_accounts_group_name
     ON accounts (user_group_id, account_name);
 
+CREATE UNIQUE INDEX uq_accounts_user_group_account_name_normalized
+    ON accounts (
+                 user_group_id,
+                 lower(btrim(regexp_replace(account_name, '[[:space:]]+', ' ', 'g')))
+        );
+
 CREATE TABLE accounts_users
 (
     account_user_id           UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
