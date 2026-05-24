@@ -5,25 +5,27 @@ import me.serenityline.api.finance.account.dto.AccountResponse;
 import me.serenityline.api.finance.account.dto.CreateAccountRequest;
 import me.serenityline.api.finance.account.entity.Account;
 import me.serenityline.api.finance.account.service.AccountCreationService;
+import me.serenityline.api.finance.account.service.AccountQueryService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/finance/accounts")
 public class AccountController {
 
     private final AccountCreationService accountCreationService;
+    private final AccountQueryService accountQueryService;
 
-    public AccountController(AccountCreationService accountCreationService) {
+    public AccountController(AccountCreationService accountCreationService, AccountQueryService accountQueryService) {
         this.accountCreationService = Objects.requireNonNull(accountCreationService, "accountCreationService");
+        this.accountQueryService = Objects.requireNonNull(accountQueryService, "accountQueryService");
     }
 
     @PostMapping
@@ -39,5 +41,28 @@ public class AccountController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(AccountResponse.from(account));
+    }
+
+    @GetMapping
+    public List<AccountResponse> getAccounts(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser
+    ) {
+        return accountQueryService.findVisibleAccounts(authenticatedUser.userId())
+                .stream()
+                .map(AccountResponse::from)
+                .toList();
+    }
+
+    @GetMapping("/{accountId}")
+    public AccountResponse getAccount(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID accountId
+    ) {
+        Account account = accountQueryService.findVisibleAccount(
+                authenticatedUser.userId(),
+                accountId
+        );
+
+        return AccountResponse.from(account);
     }
 }

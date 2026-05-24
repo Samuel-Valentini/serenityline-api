@@ -37,4 +37,31 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
             @Param("userGroupId") UUID userGroupId,
             @Param("normalizedAccountName") String normalizedAccountName
     );
+
+    @Query("""
+            select account
+            from Account account
+            join AccountUser accountUser on accountUser.account = account
+            where account.userGroup.userGroupId = :userGroupId
+              and accountUser.user.userId = :userId
+            order by lower(account.accountName), account.accountName
+            """)
+    List<Account> findAllVisibleToLinkedUser(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
+    );
+
+    @Query("""
+            select account
+            from Account account
+            join AccountUser accountUser on accountUser.account = account
+            where account.accountId = :accountId
+              and account.userGroup.userGroupId = :userGroupId
+              and accountUser.user.userId = :userId
+            """)
+    Optional<Account> findVisibleAccountForLinkedUser(
+            @Param("accountId") UUID accountId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
+    );
 }

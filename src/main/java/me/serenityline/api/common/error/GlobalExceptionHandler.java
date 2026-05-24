@@ -267,6 +267,34 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
     }
 
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleResourceNotFoundException(
+            ResourceNotFoundException exception,
+            HttpServletRequest request,
+            Locale locale
+    ) {
+        ResolvedError error = resolveSafeError(
+                exception.getMessage(),
+                "error.notFound",
+                locale
+        );
+
+        logClientError(
+                request,
+                error,
+                exception,
+                HttpStatus.NOT_FOUND
+        );
+
+        ApiErrorResponse response = ApiErrorResponse.of(
+                error.code(),
+                error.message(),
+                request.getRequestURI()
+        );
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleGenericException(
             Exception exception,

@@ -10,22 +10,27 @@ import me.serenityline.api.user.entity.*;
 import me.serenityline.api.user.repository.UserGroupRepository;
 import me.serenityline.api.user.repository.UserRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class AccountControllerIntegrationTest extends IntegrationTestSupport {
 
-    private static final String CREATE_ACCOUNT_PATH = "/api/finance/accounts";
+    private static final String ACCOUNT_PATH = "/api/finance/accounts";
     private static final String IT_LOCALE = "it-IT";
 
     @Autowired
@@ -52,7 +57,7 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void createAccountShouldRequireAuthentication() throws Exception {
-        mockMvc.perform(post(CREATE_ACCOUNT_PATH)
+        mockMvc.perform(post(ACCOUNT_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .content(validCreateAccountJson("Conto principale")))
@@ -67,7 +72,7 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
         User owner = createVerifiedUser(UserRole.OWNER);
         String accessToken = accessTokenFor(owner);
 
-        mockMvc.perform(post(CREATE_ACCOUNT_PATH)
+        mockMvc.perform(post(ACCOUNT_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
@@ -122,7 +127,7 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
         User owner = createVerifiedUser(UserRole.OWNER);
         String accessToken = accessTokenFor(owner);
 
-        mockMvc.perform(post(CREATE_ACCOUNT_PATH)
+        mockMvc.perform(post(ACCOUNT_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
@@ -136,7 +141,7 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("validation.failed"))
                 .andExpect(jsonPath("$.message").value("Validazione fallita."))
-                .andExpect(jsonPath("$.path").value(CREATE_ACCOUNT_PATH))
+                .andExpect(jsonPath("$.path").value(ACCOUNT_PATH))
                 .andExpect(jsonPath("$.fieldErrors").isArray())
                 .andExpect(jsonPath("$.fieldErrors[*].code", hasItems(
                         "finance.account.name.required",
@@ -158,14 +163,14 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
         User owner = createVerifiedUser(UserRole.OWNER);
         String accessToken = accessTokenFor(owner);
 
-        mockMvc.perform(post(CREATE_ACCOUNT_PATH)
+        mockMvc.perform(post(ACCOUNT_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .content(validCreateAccountJson("Conto principale")))
                 .andExpect(status().isCreated());
 
-        mockMvc.perform(post(CREATE_ACCOUNT_PATH)
+        mockMvc.perform(post(ACCOUNT_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
@@ -173,7 +178,7 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("finance.account.nameAlreadyExists"))
                 .andExpect(jsonPath("$.message").value("Esiste già un conto con questo nome."))
-                .andExpect(jsonPath("$.path").value(CREATE_ACCOUNT_PATH))
+                .andExpect(jsonPath("$.path").value(ACCOUNT_PATH))
                 .andExpect(jsonPath("$.fieldErrors").isArray())
                 .andExpect(jsonPath("$.fieldErrors").isEmpty());
 
@@ -187,7 +192,7 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
         User collaborator = createVerifiedUser(UserRole.COLLABORATOR);
         String accessToken = accessTokenFor(collaborator);
 
-        mockMvc.perform(post(CREATE_ACCOUNT_PATH)
+        mockMvc.perform(post(ACCOUNT_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
@@ -198,6 +203,87 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
 
         assertThat(accountRepository.findAll()).isEmpty();
         assertThat(accountUserRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void getAccountsShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(ACCOUNT_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "OWNER",
+                    "SUPER_COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void getAccountsShouldReturnAllGroupAccountsForRolesWithGroupVisibility(UserRole userRole) throws Exception {
+        User user = createVerifiedUser(userRole);
+        UserGroup userGroup = user.getUserGroup();
+
+        createAccount(userGroup, "Conto B");
+        createAccount(userGroup, "Conto A");
+
+        User otherUser = createVerifiedUser(UserRole.OWNER);
+        createAccount(otherUser.getUserGroup(), "Conto altro gruppo");
+
+        mockMvc.perform(get(ACCOUNT_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(user))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[*].accountName", containsInAnyOrder(
+                        "Conto A",
+                        "Conto B"
+                )))
+                .andExpect(jsonPath("$[*].userGroupId", everyItem(is(userGroup.getUserGroupId().toString()))));
+    }
+
+    @Test
+    void getAccountsShouldReturnOnlyLinkedAccountsForCollaborator() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User collaborator = createVerifiedUser(userGroup, UserRole.COLLABORATOR);
+
+        Account linkedAccount = createAccount(userGroup, "Conto collegato");
+        Account unlinkedAccount = createAccount(userGroup, "Conto non collegato");
+
+        grantAccess(linkedAccount, collaborator);
+
+        User otherUser = createVerifiedUser(UserRole.OWNER);
+        createAccount(otherUser.getUserGroup(), "Conto altro gruppo");
+
+        mockMvc.perform(get(ACCOUNT_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].accountId").value(linkedAccount.getAccountId().toString()))
+                .andExpect(jsonPath("$[0].accountName").value("Conto collegato"))
+                .andExpect(jsonPath("$[0].userGroupId").value(userGroup.getUserGroupId().toString()));
+
+        assertThat(unlinkedAccount.getUserGroupId()).isEqualTo(userGroup.getUserGroupId());
+    }
+
+    @Test
+    void getAccountsShouldReturnEmptyListForCollaboratorWithoutLinkedAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User collaborator = createVerifiedUser(userGroup, UserRole.COLLABORATOR);
+
+        createAccount(userGroup, "Conto non collegato");
+
+        mockMvc.perform(get(ACCOUNT_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
     }
 
     private String accessTokenFor(User user) {
@@ -241,5 +327,45 @@ class AccountControllerIntegrationTest extends IntegrationTestSupport {
         );
 
         return userRepository.saveAndFlush(user);
+    }
+
+    private User createVerifiedUser(UserGroup userGroup, UserRole userRole) {
+        UUID uniqueId = UUID.randomUUID();
+
+        User user = new User(
+                "User " + uniqueId,
+                "account-controller-%s@example.com".formatted(uniqueId.toString().replace("-", "")),
+                userGroup,
+                userRole,
+                UserPlatformRole.USER,
+                IT_LOCALE,
+                PreferredTheme.DEFAULT,
+                false,
+                true,
+                "encoded-password-" + uniqueId,
+                true,
+                0L
+        );
+
+        return userRepository.saveAndFlush(user);
+    }
+
+    private Account createAccount(UserGroup userGroup, String accountName) {
+        return accountRepository.saveAndFlush(Account.create(
+                accountName,
+                "Descrizione " + accountName,
+                "EUR",
+                "Banca test",
+                new BigDecimal("100.00"),
+                LocalDate.of(2026, 1, 1),
+                userGroup
+        ));
+    }
+
+    private void grantAccess(Account account, User user) {
+        accountUserRepository.saveAndFlush(AccountUser.grant(
+                account,
+                user
+        ));
     }
 }
