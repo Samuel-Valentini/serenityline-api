@@ -6,6 +6,7 @@ import me.serenityline.api.finance.creditcard.dto.CreditCardResponse;
 import me.serenityline.api.finance.creditcard.dto.UpdateCreditCardRequest;
 import me.serenityline.api.finance.creditcard.entity.CreditCard;
 import me.serenityline.api.finance.creditcard.service.CreditCardCreationService;
+import me.serenityline.api.finance.creditcard.service.CreditCardDeletionService;
 import me.serenityline.api.finance.creditcard.service.CreditCardQueryService;
 import me.serenityline.api.finance.creditcard.service.CreditCardUpdateService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
@@ -25,11 +26,13 @@ public class CreditCardController {
     private final CreditCardCreationService creditCardCreationService;
     private final CreditCardQueryService creditCardQueryService;
     private final CreditCardUpdateService creditCardUpdateService;
+    private final CreditCardDeletionService creditCardDeletionService;
 
-    public CreditCardController(CreditCardCreationService creditCardCreationService, CreditCardQueryService creditCardQueryService, CreditCardUpdateService creditCardUpdateService) {
+    public CreditCardController(CreditCardCreationService creditCardCreationService, CreditCardQueryService creditCardQueryService, CreditCardUpdateService creditCardUpdateService, CreditCardDeletionService creditCardDeletionService) {
         this.creditCardCreationService = Objects.requireNonNull(creditCardCreationService, "creditCardCreationService");
         this.creditCardQueryService = Objects.requireNonNull(creditCardQueryService, "creditCardQueryService");
         this.creditCardUpdateService = Objects.requireNonNull(creditCardUpdateService, "creditCardUpdateService");
+        this.creditCardDeletionService = Objects.requireNonNull(creditCardDeletionService, "creditCardDeletionService");
     }
 
     @PostMapping
@@ -83,5 +86,18 @@ public class CreditCardController {
         );
 
         return CreditCardResponse.from(creditCard);
+    }
+
+    @DeleteMapping("/{creditCardId}")
+    public ResponseEntity<Void> deleteCreditCard(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID creditCardId
+    ) {
+        creditCardDeletionService.deleteCreditCard(
+                authenticatedUser.userId(),
+                creditCardId
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

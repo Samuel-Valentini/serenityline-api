@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -29,8 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
 
@@ -57,6 +57,9 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private CreditCardRepository creditCardRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private static String bearer(String accessToken) {
         return "Bearer " + accessToken;
@@ -1236,9 +1239,175 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(reloadedCreditCard.getAccountId()).isEqualTo(account.getAccountId());
     }
 
+    @Test
+    void deleteCreditCardShouldReturnConflictWhenCreditCardIsAlreadyUsedByTransaction() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta usata");
+
+        createTransactionUsingCreditCard(
+                userGroup,
+                owner,
+                account,
+                creditCard
+        );
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.alreadyUsed"))
+                .andExpect(jsonPath("$.message").value("Questa carta di credito non può essere eliminata perché è già stata usata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        assertThat(creditCardRepository.findById(creditCard.getCreditCardId())).isPresent();
+    }
+
+    @Test
+    void deleteCreditCardShouldRequireAuthentication() throws Exception {
+        UUID creditCardId = UUID.randomUUID();
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + creditCardId)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "OWNER",
+                    "SUPER_COLLABORATOR"
+            }
+    )
+    void deleteCreditCardShouldDeleteGroupCreditCardForOwnerAndSuperCollaborator(UserRole userRole) throws Exception {
+        User user = createVerifiedUser(userRole);
+        UserGroup userGroup = user.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta da eliminare");
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(user))))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(creditCardRepository.findById(creditCard.getCreditCardId())).isEmpty();
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void deleteCreditCardShouldDeleteLinkedCreditCardForCollaboratorAndViewerCollaborator(UserRole userRole) throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User linkedUser = createVerifiedUser(userGroup, userRole);
+
+        Account account = createAccount(userGroup, "Conto collegato");
+        grantAccess(account, linkedUser);
+
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta collegata da eliminare");
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(linkedUser))))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(creditCardRepository.findById(creditCard.getCreditCardId())).isEmpty();
+    }
+
     private String accessTokenFor(User user) {
         return jwtTokenService.createAccessToken(user)
                 .token();
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void deleteCreditCardShouldReturnNotFoundForUnlinkedAccount(UserRole userRole) throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User unlinkedUser = createVerifiedUser(userGroup, userRole);
+
+        Account unlinkedAccount = createAccount(userGroup, "Conto non collegato");
+        CreditCard creditCard = createCreditCard(
+                userGroup,
+                unlinkedAccount,
+                "Carta non collegata"
+        );
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(unlinkedUser))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        assertThat(creditCardRepository.findById(creditCard.getCreditCardId())).isPresent();
+    }
+
+    @Test
+    void deleteCreditCardShouldReturnNotFoundForCreditCardFromAnotherUserGroup() throws Exception {
+        User currentOwner = createVerifiedUser(UserRole.OWNER);
+
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+        UserGroup otherUserGroup = otherOwner.getUserGroup();
+
+        Account otherAccount = createAccount(otherUserGroup, "Conto altro gruppo");
+        CreditCard otherGroupCreditCard = createCreditCard(
+                otherUserGroup,
+                otherAccount,
+                "Carta altro gruppo"
+        );
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + otherGroupCreditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(currentOwner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + otherGroupCreditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        assertThat(creditCardRepository.findById(otherGroupCreditCard.getCreditCardId())).isPresent();
+    }
+
+    @Test
+    void deleteCreditCardShouldReturnNotFoundForUnknownCreditCardId() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UUID unknownCreditCardId = UUID.randomUUID();
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + unknownCreditCardId)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + unknownCreditCardId))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
     }
 
     private String validCreateCreditCardJson(String creditCardName, UUID accountId) {
@@ -1310,5 +1479,64 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
                 account,
                 userGroup
         ));
+    }
+
+    private UUID createCategory(UserGroup userGroup, User createdByUser, String categoryName) {
+        UUID categoryId = UUID.randomUUID();
+
+        jdbcTemplate.update(
+                """
+                        insert into categories (
+                            category_id,
+                            user_group_id,
+                            category_created_by_user_id,
+                            category_current_name
+                        )
+                        values (?, ?, ?, ?)
+                        """,
+                categoryId,
+                userGroup.getUserGroupId(),
+                createdByUser.getUserId(),
+                categoryName
+        );
+
+        return categoryId;
+    }
+
+    private void createTransactionUsingCreditCard(
+            UserGroup userGroup,
+            User createdByUser,
+            Account account,
+            CreditCard creditCard
+    ) {
+        UUID categoryId = createCategory(
+                userGroup,
+                createdByUser,
+                "Categoria test " + UUID.randomUUID()
+        );
+
+        jdbcTemplate.update(
+                """
+                        insert into transactions (
+                            transaction_description,
+                            transaction_amount,
+                            category_id,
+                            transaction_charge_date,
+                            transaction_is_confirmed,
+                            account_id,
+                            credit_card_id,
+                            user_group_id
+                        )
+                        values (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                "Transazione collegata alla carta",
+                new BigDecimal("10.00"),
+                categoryId,
+                LocalDate.of(2026, 1, 10),
+                true,
+                account.getAccountId(),
+                creditCard.getCreditCardId(),
+                userGroup.getUserGroupId()
+        );
     }
 }
