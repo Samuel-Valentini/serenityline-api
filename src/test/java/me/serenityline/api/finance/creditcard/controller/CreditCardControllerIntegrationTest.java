@@ -27,7 +27,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -533,6 +534,216 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(creditCard.getCreditCardDescription()).isNull();
     }
 
+    @Test
+    void getCreditCardsShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(CREDIT_CARDS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "OWNER",
+                    "SUPER_COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void getCreditCardsShouldReturnAllGroupCreditCardsForRolesWithGroupVisibility(UserRole userRole) throws Exception {
+        User user = createVerifiedUser(userRole);
+        UserGroup userGroup = user.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+
+        createCreditCard(userGroup, account, "Carta B");
+        createCreditCard(userGroup, account, "Carta A");
+
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+        Account otherAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+        createCreditCard(otherOwner.getUserGroup(), otherAccount, "Carta altro gruppo");
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(user))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[*].creditCardName", containsInAnyOrder(
+                        "Carta A",
+                        "Carta B"
+                )))
+                .andExpect(jsonPath("$[*].userGroupId", everyItem(is(userGroup.getUserGroupId().toString()))))
+                .andExpect(jsonPath("$[*].accountId", everyItem(is(account.getAccountId().toString()))));
+    }
+
+    @Test
+    void getCreditCardsShouldReturnOnlyCardsLinkedToAccessibleAccountsForCollaborator() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User collaborator = createVerifiedUser(userGroup, UserRole.COLLABORATOR);
+
+        Account linkedAccount = createAccount(userGroup, "Conto collegato");
+        Account unlinkedAccount = createAccount(userGroup, "Conto non collegato");
+
+        grantAccess(linkedAccount, collaborator);
+
+        CreditCard linkedCreditCard = createCreditCard(userGroup, linkedAccount, "Carta collegata");
+        createCreditCard(userGroup, unlinkedAccount, "Carta non collegata");
+
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+        Account otherAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+        createCreditCard(otherOwner.getUserGroup(), otherAccount, "Carta altro gruppo");
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].creditCardId").value(linkedCreditCard.getCreditCardId().toString()))
+                .andExpect(jsonPath("$[0].creditCardName").value("Carta collegata"))
+                .andExpect(jsonPath("$[0].accountId").value(linkedAccount.getAccountId().toString()))
+                .andExpect(jsonPath("$[0].userGroupId").value(userGroup.getUserGroupId().toString()));
+    }
+
+    @Test
+    void getCreditCardsShouldReturnEmptyListForCollaboratorWithoutLinkedAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User collaborator = createVerifiedUser(userGroup, UserRole.COLLABORATOR);
+
+        Account account = createAccount(userGroup, "Conto non collegato");
+        createCreditCard(userGroup, account, "Carta non collegata");
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void getCreditCardShouldRequireAuthentication() throws Exception {
+        UUID creditCardId = UUID.randomUUID();
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH + "/" + creditCardId)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "OWNER",
+                    "SUPER_COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void getCreditCardShouldReturnGroupCreditCardForRolesWithGroupVisibility(UserRole userRole) throws Exception {
+        User user = createVerifiedUser(userRole);
+        UserGroup userGroup = user.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta visibile");
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(user))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardId").value(creditCard.getCreditCardId().toString()))
+                .andExpect(jsonPath("$.creditCardName").value("Carta visibile"))
+                .andExpect(jsonPath("$.creditCardDescription").value("Descrizione Carta visibile"))
+                .andExpect(jsonPath("$.creditCardChargeDay").value(15))
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.userGroupId").value(userGroup.getUserGroupId().toString()))
+                .andExpect(jsonPath("$.creditCardCreatedAt").isString())
+                .andExpect(jsonPath("$.creditCardUpdatedAt").isString());
+    }
+
+    @Test
+    void getCreditCardShouldReturnLinkedCreditCardForCollaborator() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User collaborator = createVerifiedUser(userGroup, UserRole.COLLABORATOR);
+
+        Account account = createAccount(userGroup, "Conto collegato");
+        grantAccess(account, collaborator);
+
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta collegata");
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardId").value(creditCard.getCreditCardId().toString()))
+                .andExpect(jsonPath("$.creditCardName").value("Carta collegata"))
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.userGroupId").value(userGroup.getUserGroupId().toString()));
+    }
+
+    @Test
+    void getCreditCardShouldReturnNotFoundForCollaboratorWhenLinkedAccountIsNotAccessible() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User collaborator = createVerifiedUser(userGroup, UserRole.COLLABORATOR);
+
+        Account unlinkedAccount = createAccount(userGroup, "Conto non collegato");
+        CreditCard creditCard = createCreditCard(userGroup, unlinkedAccount, "Carta non collegata");
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+    }
+
+    @Test
+    void getCreditCardShouldReturnNotFoundForCreditCardFromAnotherUserGroup() throws Exception {
+        User currentOwner = createVerifiedUser(UserRole.OWNER);
+
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+        Account otherAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+        CreditCard otherGroupCreditCard = createCreditCard(
+                otherOwner.getUserGroup(),
+                otherAccount,
+                "Carta altro gruppo"
+        );
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH + "/" + otherGroupCreditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(currentOwner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + otherGroupCreditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+    }
+
+    @Test
+    void getCreditCardShouldReturnNotFoundForUnknownCreditCardId() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UUID unknownCreditCardId = UUID.randomUUID();
+
+        mockMvc.perform(get(CREDIT_CARDS_PATH + "/" + unknownCreditCardId)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + unknownCreditCardId))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+    }
+
     private String accessTokenFor(User user) {
         return jwtTokenService.createAccessToken(user)
                 .token();
@@ -596,6 +807,16 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
         accountUserRepository.saveAndFlush(AccountUser.grant(
                 account,
                 user
+        ));
+    }
+
+    private CreditCard createCreditCard(UserGroup userGroup, Account account, String creditCardName) {
+        return creditCardRepository.saveAndFlush(CreditCard.create(
+                creditCardName,
+                "Descrizione " + creditCardName,
+                (short) 15,
+                account,
+                userGroup
         ));
     }
 }
