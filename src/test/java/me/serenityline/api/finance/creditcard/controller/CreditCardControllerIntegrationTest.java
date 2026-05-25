@@ -28,8 +28,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -742,6 +741,499 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + unknownCreditCardId))
                 .andExpect(jsonPath("$.fieldErrors").isArray())
                 .andExpect(jsonPath("$.fieldErrors").isEmpty());
+    }
+
+    @Test
+    void updateCreditCardShouldRequireAuthentication() throws Exception {
+        UUID creditCardId = UUID.randomUUID();
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCardId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .content("""
+                                {
+                                  "creditCardName": "Carta aggiornata"
+                                }
+                                """))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "OWNER",
+                    "SUPER_COLLABORATOR"
+            }
+    )
+    void updateCreditCardShouldUpdateGroupCreditCardForOwnerAndSuperCollaborator(UserRole userRole) throws Exception {
+        User user = createVerifiedUser(userRole);
+        UserGroup userGroup = user.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta vecchia");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(user)))
+                        .content("""
+                                {
+                                  "creditCardName": "  Carta aggiornata  ",
+                                  "creditCardDescription": "  Descrizione aggiornata  ",
+                                  "creditCardChargeDay": 20
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardId").value(creditCard.getCreditCardId().toString()))
+                .andExpect(jsonPath("$.creditCardName").value("Carta aggiornata"))
+                .andExpect(jsonPath("$.creditCardDescription").value("Descrizione aggiornata"))
+                .andExpect(jsonPath("$.creditCardChargeDay").value(20))
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.userGroupId").value(userGroup.getUserGroupId().toString()));
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta aggiornata");
+        assertThat(reloadedCreditCard.getCreditCardDescription()).isEqualTo("Descrizione aggiornata");
+        assertThat(reloadedCreditCard.getCreditCardChargeDay()).isEqualTo((short) 20);
+        assertThat(reloadedCreditCard.getAccountId()).isEqualTo(account.getAccountId());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void updateCreditCardShouldUpdateLinkedCreditCardForCollaboratorAndViewerCollaborator(UserRole userRole) throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User linkedUser = createVerifiedUser(userGroup, userRole);
+
+        Account account = createAccount(userGroup, "Conto collegato");
+        grantAccess(account, linkedUser);
+
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta collegata");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(linkedUser)))
+                        .content("""
+                                {
+                                  "creditCardName": "Carta modificata da collegato",
+                                  "creditCardChargeDay": 25
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardId").value(creditCard.getCreditCardId().toString()))
+                .andExpect(jsonPath("$.creditCardName").value("Carta modificata da collegato"))
+                .andExpect(jsonPath("$.creditCardChargeDay").value(25))
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.userGroupId").value(userGroup.getUserGroupId().toString()));
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta modificata da collegato");
+        assertThat(reloadedCreditCard.getCreditCardChargeDay()).isEqualTo((short) 25);
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = UserRole.class,
+            names = {
+                    "COLLABORATOR",
+                    "VIEWER_COLLABORATOR"
+            }
+    )
+    void updateCreditCardShouldReturnNotFoundForUnlinkedAccount(UserRole userRole) throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        User unlinkedUser = createVerifiedUser(userGroup, userRole);
+
+        Account unlinkedAccount = createAccount(userGroup, "Conto non collegato");
+        CreditCard creditCard = createCreditCard(userGroup, unlinkedAccount, "Carta non collegata");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(unlinkedUser)))
+                        .content("""
+                                {
+                                  "creditCardName": "Tentativo modifica"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta non collegata");
+    }
+
+    @Test
+    void updateCreditCardShouldReturnNotFoundForCreditCardFromAnotherUserGroup() throws Exception {
+        User currentOwner = createVerifiedUser(UserRole.OWNER);
+
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+        Account otherAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+        CreditCard otherGroupCreditCard = createCreditCard(
+                otherOwner.getUserGroup(),
+                otherAccount,
+                "Carta altro gruppo"
+        );
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + otherGroupCreditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(currentOwner)))
+                        .content("""
+                                {
+                                  "creditCardName": "Tentativo modifica"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + otherGroupCreditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(otherGroupCreditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta altro gruppo");
+    }
+
+    @Test
+    void updateCreditCardShouldReturnNotFoundForUnknownCreditCardId() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UUID unknownCreditCardId = UUID.randomUUID();
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + unknownCreditCardId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardName": "Carta aggiornata"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"))
+                .andExpect(jsonPath("$.message").value("Carta di credito non trovata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + unknownCreditCardId))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+    }
+
+    @Test
+    void updateCreditCardShouldRejectDuplicateNormalizedNameInSameUserGroup() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+
+        createCreditCard(userGroup, account, "Carta principale");
+        CreditCard creditCardToUpdate = createCreditCard(userGroup, account, "Carta secondaria");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCardToUpdate.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardName": "   carta     PRINCIPALE   "
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.nameAlreadyExists"))
+                .andExpect(jsonPath("$.message").value("Esiste già una carta di credito con questo nome."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCardToUpdate.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCardToUpdate.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta secondaria");
+    }
+
+    @Test
+    void updateCreditCardShouldAllowSameNormalizedNameForSameCreditCard() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta principale");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardName": "   CARTA     PRINCIPALE   "
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardName").value("CARTA     PRINCIPALE"));
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("CARTA     PRINCIPALE");
+    }
+
+    @Test
+    void updateCreditCardShouldRejectBlankName() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+        CreditCard creditCard = createCreditCard(owner.getUserGroup(), account, "Carta principale");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardName": "   "
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.name.required"))
+                .andExpect(jsonPath("$.message").value("Il nome della carta di credito è obbligatorio."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta principale");
+    }
+
+    @Test
+    void updateCreditCardShouldRejectValidationErrors() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+        CreditCard creditCard = createCreditCard(owner.getUserGroup(), account, "Carta principale");
+
+        String tooLongName = "a".repeat(256);
+        String tooLongDescription = "b".repeat(2001);
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardName": "%s",
+                                  "creditCardDescription": "%s",
+                                  "creditCardChargeDay": 32
+                                }
+                                """.formatted(tooLongName, tooLongDescription)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"))
+                .andExpect(jsonPath("$.message").value("Validazione fallita."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors[*].code", hasItems(
+                        "finance.creditCard.name.tooLong",
+                        "finance.creditCard.description.tooLong",
+                        "finance.creditCard.chargeDay.invalid"
+                )));
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta principale");
+        assertThat(reloadedCreditCard.getCreditCardDescription()).isEqualTo("Descrizione Carta principale");
+        assertThat(reloadedCreditCard.getCreditCardChargeDay()).isEqualTo((short) 15);
+    }
+
+    @Test
+    void updateCreditCardShouldClearDescriptionWhenBlank() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+        CreditCard creditCard = createCreditCard(owner.getUserGroup(), account, "Carta principale");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardDescription": "   "
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardDescription()).isNull();
+    }
+
+    @Test
+    void updateCreditCardShouldLeaveOmittedFieldsUnchanged() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta principale");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardName": "Carta rinominata"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardName").value("Carta rinominata"))
+                .andExpect(jsonPath("$.creditCardDescription").value("Descrizione Carta principale"))
+                .andExpect(jsonPath("$.creditCardChargeDay").value(15))
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.userGroupId").value(userGroup.getUserGroupId().toString()));
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta rinominata");
+        assertThat(reloadedCreditCard.getCreditCardDescription()).isEqualTo("Descrizione Carta principale");
+        assertThat(reloadedCreditCard.getCreditCardChargeDay()).isEqualTo((short) 15);
+        assertThat(reloadedCreditCard.getAccountId()).isEqualTo(account.getAccountId());
+    }
+
+    @Test
+    void updateCreditCardShouldAcceptBoundaryChargeDays() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+        CreditCard creditCard = createCreditCard(owner.getUserGroup(), account, "Carta principale");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardChargeDay": 1
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardChargeDay").value(1));
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                  "creditCardChargeDay": 31
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardChargeDay").value(31));
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardChargeDay()).isEqualTo((short) 31);
+    }
+
+    @Test
+    void creditCardEntityShouldRejectInvalidChargeDayOnUpdateWhenServiceIsBypassed() {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+        CreditCard creditCard = createCreditCard(owner.getUserGroup(), account, "Carta principale");
+
+        assertThatThrownBy(() -> creditCard.update(
+                "Carta principale",
+                null,
+                (short) 0
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.creditCard.chargeDay.invalid");
+
+        assertThatThrownBy(() -> creditCard.update(
+                "Carta principale",
+                null,
+                (short) 32
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.creditCard.chargeDay.invalid");
+    }
+
+    @Test
+    void databaseUniqueIndexShouldRejectDuplicateNormalizedCreditCardNameOnUpdateEvenIfServiceCheckIsBypassed() {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+
+        createCreditCard(userGroup, account, "Carta principale");
+
+        CreditCard creditCardToUpdate = createCreditCard(
+                userGroup,
+                account,
+                "Carta secondaria"
+        );
+
+        creditCardToUpdate.update(
+                "   carta     PRINCIPALE   ",
+                creditCardToUpdate.getCreditCardDescription(),
+                creditCardToUpdate.getCreditCardChargeDay()
+        );
+
+        assertThatThrownBy(() -> creditCardRepository.saveAndFlush(creditCardToUpdate))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void updateCreditCardShouldAcceptEmptyPatchAndLeaveEverythingUnchanged() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto principale");
+        CreditCard creditCard = createCreditCard(userGroup, account, "Carta principale");
+
+        mockMvc.perform(patch(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .content("""
+                                {
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardName").value("Carta principale"))
+                .andExpect(jsonPath("$.creditCardDescription").value("Descrizione Carta principale"))
+                .andExpect(jsonPath("$.creditCardChargeDay").value(15))
+                .andExpect(jsonPath("$.accountId").value(account.getAccountId().toString()))
+                .andExpect(jsonPath("$.userGroupId").value(userGroup.getUserGroupId().toString()));
+
+        CreditCard reloadedCreditCard = creditCardRepository.findById(creditCard.getCreditCardId())
+                .orElseThrow();
+
+        assertThat(reloadedCreditCard.getCreditCardName()).isEqualTo("Carta principale");
+        assertThat(reloadedCreditCard.getCreditCardDescription()).isEqualTo("Descrizione Carta principale");
+        assertThat(reloadedCreditCard.getCreditCardChargeDay()).isEqualTo((short) 15);
+        assertThat(reloadedCreditCard.getAccountId()).isEqualTo(account.getAccountId());
     }
 
     private String accessTokenFor(User user) {

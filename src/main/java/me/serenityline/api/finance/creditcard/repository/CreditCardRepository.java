@@ -64,4 +64,22 @@ public interface CreditCardRepository extends JpaRepository<CreditCard, UUID> {
             @Param("userGroupId") UUID userGroupId,
             @Param("normalizedCreditCardName") String normalizedCreditCardName
     );
+
+    @Query(
+            value = """
+                    select exists (
+                        select 1
+                        from credit_cards cc
+                        where cc.user_group_id = :userGroupId
+                          and cc.credit_card_id <> :creditCardId
+                          and lower(btrim(regexp_replace(cc.credit_card_name, '[[:space:]]+', ' ', 'g'))) = :normalizedCreditCardName
+                    )
+                    """,
+            nativeQuery = true
+    )
+    boolean existsByUserGroupIdAndNormalizedCreditCardNameExcludingCreditCardId(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("normalizedCreditCardName") String normalizedCreditCardName,
+            @Param("creditCardId") UUID creditCardId
+    );
 }

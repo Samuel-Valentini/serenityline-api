@@ -97,6 +97,16 @@ public class CreditCard {
         this.creditCardUpdatedAt = OffsetDateTime.now();
     }
 
+    public void update(
+            String creditCardName,
+            String creditCardDescription,
+            short creditCardChargeDay
+    ) {
+        this.creditCardName = Objects.requireNonNull(creditCardName, "creditCardName");
+        this.creditCardDescription = creditCardDescription;
+        this.creditCardChargeDay = validateChargeDay(creditCardChargeDay);
+    }
+
     public UUID getCreditCardId() {
         return creditCardId;
     }
@@ -136,4 +146,6 @@ public class CreditCard {
     public OffsetDateTime getCreditCardUpdatedAt() {
         return creditCardUpdatedAt;
     }
+
+
 }
