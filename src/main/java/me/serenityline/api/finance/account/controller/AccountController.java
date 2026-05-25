@@ -5,6 +5,7 @@ import me.serenityline.api.finance.account.dto.AccountResponse;
 import me.serenityline.api.finance.account.dto.CreateAccountRequest;
 import me.serenityline.api.finance.account.dto.UpdateAccountRequest;
 import me.serenityline.api.finance.account.entity.Account;
+import me.serenityline.api.finance.account.service.AccountAccessService;
 import me.serenityline.api.finance.account.service.AccountCreationService;
 import me.serenityline.api.finance.account.service.AccountQueryService;
 import me.serenityline.api.finance.account.service.AccountUpdateService;
@@ -25,11 +26,13 @@ public class AccountController {
     private final AccountCreationService accountCreationService;
     private final AccountQueryService accountQueryService;
     private final AccountUpdateService accountUpdateService;
+    private final AccountAccessService accountAccessService;
 
-    public AccountController(AccountCreationService accountCreationService, AccountQueryService accountQueryService, AccountUpdateService accountUpdateService) {
+    public AccountController(AccountCreationService accountCreationService, AccountQueryService accountQueryService, AccountUpdateService accountUpdateService, AccountAccessService accountAccessService) {
         this.accountCreationService = Objects.requireNonNull(accountCreationService, "accountCreationService");
         this.accountQueryService = Objects.requireNonNull(accountQueryService, "accountQueryService");
         this.accountUpdateService = Objects.requireNonNull(accountUpdateService, "accountUpdateService");
+        this.accountAccessService = Objects.requireNonNull(accountAccessService, "accountAccessService");
     }
 
     @PostMapping
@@ -83,5 +86,35 @@ public class AccountController {
         );
 
         return AccountResponse.from(account);
+    }
+
+    @PostMapping("/{accountId}/users/{targetUserId}")
+    public ResponseEntity<Void> grantAccountAccess(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID accountId,
+            @PathVariable UUID targetUserId
+    ) {
+        accountAccessService.grantAccountAccess(
+                authenticatedUser.userId(),
+                accountId,
+                targetUserId
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{accountId}/users/{targetUserId}")
+    public ResponseEntity<Void> revokeAccountAccess(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID accountId,
+            @PathVariable UUID targetUserId
+    ) {
+        accountAccessService.revokeAccountAccess(
+                authenticatedUser.userId(),
+                accountId,
+                targetUserId
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

@@ -4,6 +4,7 @@ import me.serenityline.api.finance.account.entity.AccountUser;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface AccountUserRepository extends JpaRepository<AccountUser, UUID> {
@@ -20,4 +21,9 @@ public interface AccountUserRepository extends JpaRepository<AccountUser, UUID> 
     List<AccountUser> findAllByAccount_AccountId(UUID accountId);
 
     List<AccountUser> findAllByUser_UserId(UUID userId);
+
+    Optional<AccountUser> findByAccount_AccountIdAndUser_UserId(
+            UUID accountId,
+            UUID userId
+    );
 }
