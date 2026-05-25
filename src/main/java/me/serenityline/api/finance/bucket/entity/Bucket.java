@@ -72,6 +72,28 @@ public class Bucket {
         this.bucketUpdatedAt = OffsetDateTime.now();
     }
 
+    public void updateBucketName(String bucketName) {
+        if (bucketName == null || bucketName.isBlank()) {
+            throw new IllegalArgumentException("finance.bucket.name.required");
+        }
+
+        this.bucketName = bucketName;
+        touch();
+    }
+
+    public void updateBucketDescription(String bucketDescription) {
+        if (bucketDescription != null && bucketDescription.isBlank()) {
+            throw new IllegalArgumentException("finance.bucket.description.blank");
+        }
+
+        this.bucketDescription = bucketDescription;
+        touch();
+    }
+
+    private void touch() {
+        this.bucketUpdatedAt = OffsetDateTime.now();
+    }
+
     public UUID getBucketId() {
         return bucketId;
     }

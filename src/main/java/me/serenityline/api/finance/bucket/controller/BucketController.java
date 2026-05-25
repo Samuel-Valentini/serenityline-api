@@ -3,9 +3,11 @@ package me.serenityline.api.finance.bucket.controller;
 import jakarta.validation.Valid;
 import me.serenityline.api.finance.bucket.dto.BucketResponse;
 import me.serenityline.api.finance.bucket.dto.CreateBucketRequest;
+import me.serenityline.api.finance.bucket.dto.UpdateBucketRequest;
 import me.serenityline.api.finance.bucket.service.BucketCreationResult;
 import me.serenityline.api.finance.bucket.service.BucketCreationService;
 import me.serenityline.api.finance.bucket.service.BucketQueryService;
+import me.serenityline.api.finance.bucket.service.BucketUpdateService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,13 +24,15 @@ public class BucketController {
 
     private final BucketCreationService bucketCreationService;
     private final BucketQueryService bucketQueryService;
+    private final BucketUpdateService bucketUpdateService;
 
     public BucketController(
             BucketCreationService bucketCreationService,
-            BucketQueryService bucketQueryService
+            BucketQueryService bucketQueryService, BucketUpdateService bucketUpdateService
     ) {
         this.bucketCreationService = Objects.requireNonNull(bucketCreationService, "bucketCreationService");
         this.bucketQueryService = Objects.requireNonNull(bucketQueryService, "bucketQueryService");
+        this.bucketUpdateService = Objects.requireNonNull(bucketUpdateService, "bucketUpdateService");
     }
 
     @PostMapping
@@ -68,6 +72,23 @@ public class BucketController {
                         bucketQueryService.findVisibleBucket(
                                 authenticatedUser.userId(),
                                 bucketId
+                        )
+                )
+        );
+    }
+
+    @PatchMapping("/{bucketId}")
+    public ResponseEntity<BucketResponse> updateBucket(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID bucketId,
+            @Valid @RequestBody UpdateBucketRequest request
+    ) {
+        return ResponseEntity.ok(
+                BucketResponse.from(
+                        bucketUpdateService.updateBucket(
+                                authenticatedUser.userId(),
+                                bucketId,
+                                request.toCommand()
                         )
                 )
         );

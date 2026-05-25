@@ -28,8 +28,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -1196,6 +1195,468 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.accountIds.length()").value(2))
                 .andExpect(jsonPath("$.accountIds[0]").value(firstAccount.getAccountId().toString()))
                 .andExpect(jsonPath("$.accountIds[1]").value(secondAccount.getAccountId().toString()));
+    }
+
+    @Test
+    void updateBucketShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Nuovo nome"
+                                }
+                                """))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldUpdateBucketNameAndDescription() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Vecchio portafoglio");
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  Nuovo portafoglio  ",
+                                  "bucketDescription": "  Nuova descrizione  "
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketName").value("Nuovo portafoglio"))
+                .andExpect(jsonPath("$.bucketDescription").value("Nuova descrizione"))
+                .andExpect(jsonPath("$.accountIds").isArray())
+                .andExpect(jsonPath("$.accountIds").isEmpty())
+                .andExpect(jsonPath("$.userGroupId").value(owner.getUserGroup().getUserGroupId().toString()));
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("Nuovo portafoglio");
+        assertThat(updatedBucket.getBucketDescription()).isEqualTo("Nuova descrizione");
+    }
+
+    @Test
+    void ownerShouldUpdateOnlyDescriptionWhenNameIsMissing() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = bucketRepository.saveAndFlush(Bucket.create(
+                "Portafoglio invariato",
+                "Vecchia descrizione",
+                owner.getUserGroup()
+        ));
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketDescription": "Descrizione aggiornata"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio invariato"))
+                .andExpect(jsonPath("$.bucketDescription").value("Descrizione aggiornata"));
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("Portafoglio invariato");
+        assertThat(updatedBucket.getBucketDescription()).isEqualTo("Descrizione aggiornata");
+    }
+
+    @Test
+    void ownerShouldUpdateOnlyNameWhenDescriptionIsMissing() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = bucketRepository.saveAndFlush(Bucket.create(
+                "Vecchio nome",
+                "Descrizione invariata",
+                owner.getUserGroup()
+        ));
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Nuovo nome"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("Nuovo nome"))
+                .andExpect(jsonPath("$.bucketDescription").value("Descrizione invariata"));
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("Nuovo nome");
+        assertThat(updatedBucket.getBucketDescription()).isEqualTo("Descrizione invariata");
+    }
+
+    @Test
+    void updateBucketShouldClearDescriptionWhenBlankDescriptionIsProvided() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = bucketRepository.saveAndFlush(Bucket.create(
+                "Portafoglio",
+                "Descrizione da cancellare",
+                owner.getUserGroup()
+        ));
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketDescription": "     "
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio"))
+                .andExpect(jsonPath("$.bucketDescription").doesNotExist());
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketDescription()).isNull();
+    }
+
+    @Test
+    void updateBucketShouldDoNothingWhenBodyHasNoUpdatableFields() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = bucketRepository.saveAndFlush(Bucket.create(
+                "Portafoglio invariato",
+                "Descrizione invariata",
+                owner.getUserGroup()
+        ));
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio invariato"))
+                .andExpect(jsonPath("$.bucketDescription").value("Descrizione invariata"));
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("Portafoglio invariato");
+        assertThat(updatedBucket.getBucketDescription()).isEqualTo("Descrizione invariata");
+    }
+
+    @Test
+    void superCollaboratorShouldUpdateAnyActiveGroupBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User superCollaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.SUPER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio owner");
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio aggiornato da super"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio aggiornato da super"));
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("Portafoglio aggiornato da super");
+    }
+
+    @Test
+    void viewerCollaboratorShouldUpdateBucketLinkedToAccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account anotherAccount = createAccount(owner.getUserGroup(), "Altro conto");
+
+        grantAccountAccess(accessibleAccount, viewer);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio viewer");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, anotherAccount);
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio aggiornato da viewer"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio aggiornato da viewer"))
+                .andExpect(jsonPath("$.accountIds.length()").value(2))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()))
+                .andExpect(jsonPath("$.accountIds[1]").value(anotherAccount.getAccountId().toString()));
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("Portafoglio aggiornato da viewer");
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenBucketIsNotLinkedToAccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Nome non applicato"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH + "/" + bucket.getBucketId()));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketName()).isEqualTo("Portafoglio scollegato");
+    }
+
+    @Test
+    void collaboratorShouldUpdateBucketLinkedToAccessibleAccountAndReceiveOnlyAccessibleAccountIds() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio collaborator");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, inaccessibleAccount);
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio aggiornato da collaborator",
+                                  "bucketDescription": "Descrizione collaborator"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio aggiornato da collaborator"))
+                .andExpect(jsonPath("$.bucketDescription").value("Descrizione collaborator"))
+                .andExpect(jsonPath("$.accountIds.length()").value(1))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()));
+
+        Bucket updatedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("Portafoglio aggiornato da collaborator");
+        assertThat(updatedBucket.getBucketDescription()).isEqualTo("Descrizione collaborator");
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenUpdatingUnlinkedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Nome non applicato"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH + "/" + bucket.getBucketId()));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketName()).isEqualTo("Portafoglio scollegato");
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenUpdatingBucketLinkedOnlyToInaccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio nascosto");
+
+        linkBucketToAccount(bucket, inaccessibleAccount);
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Nome non applicato"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH + "/" + bucket.getBucketId()));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketName()).isEqualTo("Portafoglio nascosto");
+    }
+
+    @Test
+    void updateBucketShouldAllowNameUsedOnlyByClosedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "Fondo vacanze");
+        closeBucket(closedBucket);
+
+        Bucket bucketToUpdate = createBucket(owner.getUserGroup(), "Portafoglio da rinominare");
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucketToUpdate.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  fondo    VACANZE  "
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("fondo    VACANZE"));
+
+        Bucket updatedBucket = bucketRepository.findById(bucketToUpdate.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("fondo    VACANZE");
+    }
+
+    @Test
+    void updateBucketShouldAllowSameNormalizedNameInDifferentUserGroups() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        createBucket(otherOwner.getUserGroup(), "Fondo vacanze");
+
+        Bucket bucketToUpdate = createBucket(owner.getUserGroup(), "Portafoglio da rinominare");
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucketToUpdate.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  fondo    VACANZE  "
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketName").value("fondo    VACANZE"));
+
+        Bucket updatedBucket = bucketRepository.findById(bucketToUpdate.getBucketId()).orElseThrow();
+
+        assertThat(updatedBucket.getBucketName()).isEqualTo("fondo    VACANZE");
+    }
+
+    @Test
+    void updateBucketShouldNotPartiallyUpdateDescriptionWhenNameIsDuplicate() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        createBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        Bucket bucketToUpdate = bucketRepository.saveAndFlush(Bucket.create(
+                "Portafoglio da rinominare",
+                "Descrizione originale",
+                owner.getUserGroup()
+        ));
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + bucketToUpdate.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Fondo vacanze",
+                                  "bucketDescription": "Descrizione che non deve essere salvata"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.nameAlreadyExists"));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucketToUpdate.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketName()).isEqualTo("Portafoglio da rinominare");
+        assertThat(unchangedBucket.getBucketDescription()).isEqualTo("Descrizione originale");
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundBeforeDuplicateNameCheckWhenBucketIsNotVisible() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        createBucket(owner.getUserGroup(), "Nome sensibile");
+
+        Bucket hiddenBucket = createBucket(owner.getUserGroup(), "Portafoglio nascosto");
+
+        mockMvc.perform(patch(BUCKETS_PATH + "/" + hiddenBucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Nome sensibile"
+                                }
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH + "/" + hiddenBucket.getBucketId()));
+
+        Bucket unchangedBucket = bucketRepository.findById(hiddenBucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketName()).isEqualTo("Portafoglio nascosto");
     }
 
     private User createVerifiedUser(UserRole userRole) {
