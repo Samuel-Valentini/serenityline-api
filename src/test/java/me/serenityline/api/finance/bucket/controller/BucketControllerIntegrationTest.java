@@ -2534,6 +2534,678 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()));
     }
 
+    @Test
+    void closeBucketShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(post(BUCKETS_PATH + "/" + UUID.randomUUID() + "/close"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldCloseActiveBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio da chiudere");
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio da chiudere"))
+                .andExpect(jsonPath("$.bucketClosedAt").exists())
+                .andExpect(jsonPath("$.accountIds").isArray())
+                .andExpect(jsonPath("$.accountIds").isEmpty());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void superCollaboratorShouldCloseActiveGroupBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User superCollaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.SUPER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio super");
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void viewerCollaboratorShouldCloseBucketLinkedToAccessibleAccountAndReceiveAllAccountIds() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account anotherAccount = createAccount(owner.getUserGroup(), "Altro conto");
+
+        grantAccountAccess(accessibleAccount, viewer);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio viewer");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, anotherAccount);
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists())
+                .andExpect(jsonPath("$.accountIds.length()").value(2))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()))
+                .andExpect(jsonPath("$.accountIds[1]").value(anotherAccount.getAccountId().toString()));
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenClosingUnlinkedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void collaboratorShouldCloseBucketLinkedToAccessibleAccountAndReceiveOnlyAccessibleAccountIds() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio collaborator");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, inaccessibleAccount);
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists())
+                .andExpect(jsonPath("$.accountIds.length()").value(1))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()));
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenClosingUnlinkedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenClosingBucketLinkedOnlyToInaccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio nascosto");
+
+        linkBucketToAccount(bucket, inaccessibleAccount);
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void closeBucketShouldReturnNotFoundForAnotherUserGroupBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket otherGroupBucket = createBucket(otherOwner.getUserGroup(), "Portafoglio altro gruppo");
+
+        mockMvc.perform(post(bucketClosePath(otherGroupBucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(otherGroupBucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(otherGroupBucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void closeBucketShouldReturnNotFoundForAlreadyClosedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio già chiuso");
+
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+    }
+
+    @Test
+    void closeBucketShouldReturnNotFoundForMissingBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UUID missingBucketId = UUID.randomUUID();
+
+        String path = bucketClosePath(missingBucketId);
+
+        mockMvc.perform(post(path)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(path));
+    }
+
+    @Test
+    void reopenBucketShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(post(BUCKETS_PATH + "/" + UUID.randomUUID() + "/reopen"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldReopenClosedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio da riaprire");
+
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio da riaprire"))
+                .andExpect(jsonPath("$.bucketClosedAt").doesNotExist())
+                .andExpect(jsonPath("$.accountIds").isArray())
+                .andExpect(jsonPath("$.accountIds").isEmpty());
+
+        Bucket reopenedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(reopenedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void superCollaboratorShouldReopenClosedGroupBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User superCollaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.SUPER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio super");
+
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").doesNotExist());
+
+        Bucket reopenedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(reopenedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReopenClosedBucketLinkedToAccessibleAccountAndReceiveAllAccountIds() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account anotherAccount = createAccount(owner.getUserGroup(), "Altro conto");
+
+        grantAccountAccess(accessibleAccount, viewer);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio viewer");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, anotherAccount);
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").doesNotExist())
+                .andExpect(jsonPath("$.accountIds.length()").value(2))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()))
+                .andExpect(jsonPath("$.accountIds[1]").value(anotherAccount.getAccountId().toString()));
+
+        Bucket reopenedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(reopenedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenReopeningClosedUnlinkedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void collaboratorShouldReopenClosedBucketLinkedToAccessibleAccountAndReceiveOnlyAccessibleAccountIds() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio collaborator");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, inaccessibleAccount);
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").doesNotExist())
+                .andExpect(jsonPath("$.accountIds.length()").value(1))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()));
+
+        Bucket reopenedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(reopenedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenReopeningClosedUnlinkedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenReopeningBucketLinkedOnlyToInaccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio nascosto");
+
+        linkBucketToAccount(bucket, inaccessibleAccount);
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void reopenBucketShouldReturnNotFoundForActiveBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio attivo");
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void reopenBucketShouldReturnNotFoundForAnotherUserGroupBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket otherGroupBucket = createBucket(otherOwner.getUserGroup(), "Portafoglio altro gruppo");
+
+        closeBucket(otherGroupBucket);
+
+        mockMvc.perform(post(bucketReopenPath(otherGroupBucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(otherGroupBucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(otherGroupBucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void reopenBucketShouldReturnNotFoundForMissingBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UUID missingBucketId = UUID.randomUUID();
+
+        String path = bucketReopenPath(missingBucketId);
+
+        mockMvc.perform(post(path)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(path));
+    }
+
+    @Test
+    void ownerShouldReceiveExplicitDuplicateNameErrorWhenReopeningBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "  fondo    VACANZE  ");
+
+        closeBucket(closedBucket);
+
+        createBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        mockMvc.perform(post(bucketReopenPath(closedBucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.nameAlreadyExists"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(closedBucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(closedBucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveExplicitDuplicateNameErrorWhenReopeningBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+
+        grantAccountAccess(accessibleAccount, viewer);
+
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "  fondo    VACANZE  ");
+
+        linkBucketToAccount(closedBucket, accessibleAccount);
+        closeBucket(closedBucket);
+
+        createBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        mockMvc.perform(post(bucketReopenPath(closedBucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.nameAlreadyExists"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(closedBucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(closedBucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void collaboratorShouldNotLearnDuplicateNameExistenceWhenReopeningBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "  vacanza    SEGRETA  ");
+
+        linkBucketToAccount(closedBucket, accessibleAccount);
+        closeBucket(closedBucket);
+
+        createBucket(owner.getUserGroup(), "Vacanza segreta");
+
+        mockMvc.perform(post(bucketReopenPath(closedBucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.nameNotAllowed"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(closedBucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(closedBucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void reopenBucketShouldAllowSameNormalizedNameInDifferentUserGroups() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        createBucket(otherOwner.getUserGroup(), "Fondo vacanze");
+
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "  fondo    VACANZE  ");
+
+        closeBucket(closedBucket);
+
+        mockMvc.perform(post(bucketReopenPath(closedBucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(closedBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").doesNotExist());
+
+        Bucket reopenedBucket = bucketRepository.findById(closedBucket.getBucketId()).orElseThrow();
+
+        assertThat(reopenedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenClosingBucketLinkedOnlyToInaccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio non operativo");
+
+        linkBucketToAccount(bucket, inaccessibleAccount);
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenReopeningBucketLinkedOnlyToInaccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio non operativo");
+
+        linkBucketToAccount(bucket, inaccessibleAccount);
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketReopenPath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundBeforeDuplicateNameCheckWhenReopeningHiddenBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        Bucket hiddenBucket = createBucket(owner.getUserGroup(), "Vacanza segreta");
+
+        linkBucketToAccount(hiddenBucket, inaccessibleAccount);
+        closeBucket(hiddenBucket);
+
+        createBucket(owner.getUserGroup(), "  vacanza    SEGRETA  ");
+
+        mockMvc.perform(post(bucketReopenPath(hiddenBucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketReopenPath(hiddenBucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(hiddenBucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
+    }
+
     private User createVerifiedUser(UserRole userRole) {
         return transactionTemplate.execute(status -> {
             UserGroup userGroup = new UserGroup("Test group " + UUID.randomUUID());
@@ -2709,5 +3381,27 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 + bucket.getBucketId()
                 + "/accounts/"
                 + account.getAccountId();
+    }
+
+    private String bucketClosePath(Bucket bucket) {
+        return bucketClosePath(bucket.getBucketId());
+    }
+
+    private String bucketClosePath(UUID bucketId) {
+        return BUCKETS_PATH
+                + "/"
+                + bucketId
+                + "/close";
+    }
+
+    private String bucketReopenPath(Bucket bucket) {
+        return bucketReopenPath(bucket.getBucketId());
+    }
+
+    private String bucketReopenPath(UUID bucketId) {
+        return BUCKETS_PATH
+                + "/"
+                + bucketId
+                + "/reopen";
     }
 }

@@ -202,5 +202,35 @@ public interface BucketRepository extends JpaRepository<Bucket, UUID> {
             @Param("userId") UUID userId
     );
 
+    Optional<Bucket> findByBucketIdAndUserGroup_UserGroupIdAndBucketClosedAtIsNotNull(
+            UUID bucketId,
+            UUID userGroupId
+    );
+
+    @Query(
+            value = """
+                    select bucket.*
+                    from buckets bucket
+                    where bucket.bucket_id = :bucketId
+                      and bucket.user_group_id = :userGroupId
+                      and bucket.bucket_closed_at is not null
+                      and exists (
+                          select 1
+                          from buckets_accounts bucket_account
+                          join accounts_users account_user
+                            on account_user.account_id = bucket_account.account_id
+                           and account_user.user_group_id = bucket_account.user_group_id
+                          where bucket_account.bucket_id = bucket.bucket_id
+                            and bucket_account.user_group_id = bucket.user_group_id
+                            and account_user.user_id = :userId
+                      )
+                    """,
+            nativeQuery = true
+    )
+    Optional<Bucket> findClosedLinkedToAccessibleAccount(
+            @Param("bucketId") UUID bucketId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
+    );
 
 }

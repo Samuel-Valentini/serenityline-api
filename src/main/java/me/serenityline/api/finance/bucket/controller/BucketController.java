@@ -23,15 +23,17 @@ public class BucketController {
     private final BucketQueryService bucketQueryService;
     private final BucketUpdateService bucketUpdateService;
     private final BucketAccountLinkService bucketAccountLinkService;
+    private final BucketLifecycleService bucketLifecycleService;
 
     public BucketController(
             BucketCreationService bucketCreationService,
-            BucketQueryService bucketQueryService, BucketUpdateService bucketUpdateService, BucketAccountLinkService bucketAccountLinkService
+            BucketQueryService bucketQueryService, BucketUpdateService bucketUpdateService, BucketAccountLinkService bucketAccountLinkService, BucketLifecycleService bucketLifecycleService
     ) {
         this.bucketCreationService = Objects.requireNonNull(bucketCreationService, "bucketCreationService");
         this.bucketQueryService = Objects.requireNonNull(bucketQueryService, "bucketQueryService");
         this.bucketUpdateService = Objects.requireNonNull(bucketUpdateService, "bucketUpdateService");
         this.bucketAccountLinkService = Objects.requireNonNull(bucketAccountLinkService, "bucketAccountLinkService");
+        this.bucketLifecycleService = Objects.requireNonNull(bucketLifecycleService, "bucketLifecycleService");
     }
 
     @PostMapping
@@ -127,5 +129,35 @@ public class BucketController {
         );
 
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{bucketId}/close")
+    public ResponseEntity<BucketResponse> closeBucket(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID bucketId
+    ) {
+        return ResponseEntity.ok(
+                BucketResponse.from(
+                        bucketLifecycleService.closeBucket(
+                                authenticatedUser.userId(),
+                                bucketId
+                        )
+                )
+        );
+    }
+
+    @PostMapping("/{bucketId}/reopen")
+    public ResponseEntity<BucketResponse> reopenBucket(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID bucketId
+    ) {
+        return ResponseEntity.ok(
+                BucketResponse.from(
+                        bucketLifecycleService.reopenBucket(
+                                authenticatedUser.userId(),
+                                bucketId
+                        )
+                )
+        );
     }
 }

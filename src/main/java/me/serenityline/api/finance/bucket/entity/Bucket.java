@@ -94,6 +94,16 @@ public class Bucket {
         this.bucketUpdatedAt = OffsetDateTime.now();
     }
 
+    public void close() {
+        this.bucketClosedAt = OffsetDateTime.now();
+        touch();
+    }
+
+    public void reopen() {
+        this.bucketClosedAt = null;
+        touch();
+    }
+
     public UUID getBucketId() {
         return bucketId;
     }
