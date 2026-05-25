@@ -4,10 +4,7 @@ import jakarta.validation.Valid;
 import me.serenityline.api.finance.bucket.dto.BucketResponse;
 import me.serenityline.api.finance.bucket.dto.CreateBucketRequest;
 import me.serenityline.api.finance.bucket.dto.UpdateBucketRequest;
-import me.serenityline.api.finance.bucket.service.BucketCreationResult;
-import me.serenityline.api.finance.bucket.service.BucketCreationService;
-import me.serenityline.api.finance.bucket.service.BucketQueryService;
-import me.serenityline.api.finance.bucket.service.BucketUpdateService;
+import me.serenityline.api.finance.bucket.service.*;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,14 +22,16 @@ public class BucketController {
     private final BucketCreationService bucketCreationService;
     private final BucketQueryService bucketQueryService;
     private final BucketUpdateService bucketUpdateService;
+    private final BucketAccountLinkService bucketAccountLinkService;
 
     public BucketController(
             BucketCreationService bucketCreationService,
-            BucketQueryService bucketQueryService, BucketUpdateService bucketUpdateService
+            BucketQueryService bucketQueryService, BucketUpdateService bucketUpdateService, BucketAccountLinkService bucketAccountLinkService
     ) {
         this.bucketCreationService = Objects.requireNonNull(bucketCreationService, "bucketCreationService");
         this.bucketQueryService = Objects.requireNonNull(bucketQueryService, "bucketQueryService");
         this.bucketUpdateService = Objects.requireNonNull(bucketUpdateService, "bucketUpdateService");
+        this.bucketAccountLinkService = Objects.requireNonNull(bucketAccountLinkService, "bucketAccountLinkService");
     }
 
     @PostMapping
@@ -92,5 +91,35 @@ public class BucketController {
                         )
                 )
         );
+    }
+
+    @PostMapping("/{bucketId}/accounts/{accountId}")
+    public ResponseEntity<Void> linkAccount(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID bucketId,
+            @PathVariable UUID accountId
+    ) {
+        bucketAccountLinkService.linkAccount(
+                authenticatedUser.userId(),
+                bucketId,
+                accountId
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{bucketId}/accounts/{accountId}")
+    public ResponseEntity<Void> unlinkAccount(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID bucketId,
+            @PathVariable UUID accountId
+    ) {
+        bucketAccountLinkService.unlinkAccount(
+                authenticatedUser.userId(),
+                bucketId,
+                accountId
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

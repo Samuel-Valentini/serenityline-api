@@ -2,6 +2,7 @@ package me.serenityline.api.finance.bucket.repository;
 
 import me.serenityline.api.finance.bucket.entity.BucketAccount;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -45,5 +46,62 @@ public interface BucketAccountRepository extends JpaRepository<BucketAccount, UU
             @Param("bucketId") UUID bucketId,
             @Param("userGroupId") UUID userGroupId,
             @Param("userId") UUID userId
+    );
+
+    @Query(
+            value = """
+                    select exists (
+                        select 1
+                        from buckets_accounts bucket_account
+                        where bucket_account.bucket_id = :bucketId
+                          and bucket_account.account_id = :accountId
+                          and bucket_account.user_group_id = :userGroupId
+                    )
+                    """,
+            nativeQuery = true
+    )
+    boolean existsByBucketIdAndAccountIdAndUserGroupId(
+            @Param("bucketId") UUID bucketId,
+            @Param("accountId") UUID accountId,
+            @Param("userGroupId") UUID userGroupId
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+            value = """
+                    insert into buckets_accounts (
+                        bucket_id,
+                        account_id,
+                        user_group_id
+                    )
+                    values (
+                        :bucketId,
+                        :accountId,
+                        :userGroupId
+                    )
+                    on conflict (bucket_id, account_id) do nothing
+                    """,
+            nativeQuery = true
+    )
+    int insertIfMissing(
+            @Param("bucketId") UUID bucketId,
+            @Param("accountId") UUID accountId,
+            @Param("userGroupId") UUID userGroupId
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+            value = """
+                    delete from buckets_accounts
+                    where bucket_id = :bucketId
+                      and account_id = :accountId
+                      and user_group_id = :userGroupId
+                    """,
+            nativeQuery = true
+    )
+    int deleteByBucketIdAndAccountIdAndUserGroupId(
+            @Param("bucketId") UUID bucketId,
+            @Param("accountId") UUID accountId,
+            @Param("userGroupId") UUID userGroupId
     );
 }

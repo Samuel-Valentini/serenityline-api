@@ -1659,6 +1659,650 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(unchangedBucket.getBucketName()).isEqualTo("Portafoglio nascosto");
     }
 
+    @Test
+    void linkBucketAccountShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(post(BUCKETS_PATH + "/" + UUID.randomUUID() + "/accounts/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void unlinkBucketAccountShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(delete(BUCKETS_PATH + "/" + UUID.randomUUID() + "/accounts/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldLinkAnyGroupAccountToBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        mockMvc.perform(post(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void superCollaboratorShouldLinkAnyGroupAccountToBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User superCollaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.SUPER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        mockMvc.perform(post(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void viewerCollaboratorShouldLinkAccessibleAccountToAnyVisibleGroupBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+        Account account = createAccount(owner.getUserGroup(), "Conto accessibile");
+
+        grantAccountAccess(account, viewer);
+
+        mockMvc.perform(post(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void viewerCollaboratorShouldNotLinkInaccessibleAccountToBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        mockMvc.perform(post(bucketAccountPath(bucket, inaccessibleAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, inaccessibleAccount)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                inaccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void collaboratorShouldLinkAccessibleAccountToVisibleBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account firstAccessibleAccount = createAccount(owner.getUserGroup(), "Primo conto accessibile");
+        Account secondAccessibleAccount = createAccount(owner.getUserGroup(), "Secondo conto accessibile");
+
+        grantAccountAccess(firstAccessibleAccount, collaborator);
+        grantAccountAccess(secondAccessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio visibile");
+
+        linkBucketToAccount(bucket, firstAccessibleAccount);
+
+        mockMvc.perform(post(bucketAccountPath(bucket, secondAccessibleAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                secondAccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldNotLinkAccountToUnlinkedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+        Account account = createAccount(owner.getUserGroup(), "Conto accessibile");
+
+        grantAccountAccess(account, collaborator);
+
+        mockMvc.perform(post(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, account)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void collaboratorShouldNotLinkInaccessibleAccountToVisibleBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio visibile");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+
+        mockMvc.perform(post(bucketAccountPath(bucket, inaccessibleAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, inaccessibleAccount)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                inaccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void linkBucketAccountShouldBeNoOpWhenLinkAlreadyExists() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        linkBucketToAccount(bucket, account);
+
+        mockMvc.perform(post(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucket.getBucketId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void linkBucketAccountShouldReturnNotFoundWhenBucketBelongsToAnotherUserGroup() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket otherGroupBucket = createBucket(otherOwner.getUserGroup(), "Portafoglio altro gruppo");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        mockMvc.perform(post(bucketAccountPath(otherGroupBucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(otherGroupBucket, account)));
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(otherGroupBucket.getBucketId()))
+                .isZero();
+    }
+
+    @Test
+    void linkBucketAccountShouldReturnNotFoundWhenAccountBelongsToAnotherUserGroup() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account otherGroupAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+
+        mockMvc.perform(post(bucketAccountPath(bucket, otherGroupAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, otherGroupAccount)));
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucket.getBucketId()))
+                .isZero();
+    }
+
+    @Test
+    void linkBucketAccountShouldReturnNotFoundWhenBucketIsClosed() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio chiuso");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        closeBucket(bucket);
+
+        mockMvc.perform(post(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, account)));
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucket.getBucketId()))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldUnlinkExistingBucketAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        linkBucketToAccount(bucket, account);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void unlinkBucketAccountShouldBeNoOpWhenLinkDoesNotExist() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucket.getBucketId()))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldUnlinkAccessibleAccountFromBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account account = createAccount(owner.getUserGroup(), "Conto accessibile");
+
+        grantAccountAccess(account, viewer);
+        linkBucketToAccount(bucket, account);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void viewerCollaboratorShouldNotUnlinkInaccessibleAccountFromBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        linkBucketToAccount(bucket, inaccessibleAccount);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, inaccessibleAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, inaccessibleAccount)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                inaccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldUnlinkAccessibleAccountFromVisibleBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account account = createAccount(owner.getUserGroup(), "Conto accessibile");
+
+        grantAccountAccess(account, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio visibile");
+
+        linkBucketToAccount(bucket, account);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void collaboratorShouldNotUnlinkInaccessibleAccountFromMixedVisibleBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio misto");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, inaccessibleAccount);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, inaccessibleAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, inaccessibleAccount)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                accessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                inaccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldNotUnlinkAccountFromUnlinkedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio scollegato");
+        Account account = createAccount(owner.getUserGroup(), "Conto accessibile");
+
+        grantAccountAccess(account, collaborator);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, account)));
+    }
+
+    @Test
+    void unlinkBucketAccountShouldReturnNotFoundWhenBucketBelongsToAnotherUserGroup() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket otherGroupBucket = createBucket(otherOwner.getUserGroup(), "Portafoglio altro gruppo");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        mockMvc.perform(delete(bucketAccountPath(otherGroupBucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(otherGroupBucket, account)));
+    }
+
+    @Test
+    void unlinkBucketAccountShouldReturnNotFoundWhenAccountBelongsToAnotherUserGroup() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        Account otherGroupAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, otherGroupAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, otherGroupAccount)));
+    }
+
+    @Test
+    void unlinkBucketAccountShouldReturnNotFoundWhenBucketIsClosed() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio chiuso");
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        linkBucketToAccount(bucket, account);
+        closeBucket(bucket);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, account)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void linkBucketAccountShouldReturnNotFoundWhenBucketDoesNotExist() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+        UUID missingBucketId = UUID.randomUUID();
+
+        String path = BUCKETS_PATH + "/" + missingBucketId + "/accounts/" + account.getAccountId();
+
+        mockMvc.perform(post(path)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(path));
+    }
+
+    @Test
+    void linkBucketAccountShouldReturnNotFoundWhenAccountDoesNotExist() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        UUID missingAccountId = UUID.randomUUID();
+
+        String path = BUCKETS_PATH + "/" + bucket.getBucketId() + "/accounts/" + missingAccountId;
+
+        mockMvc.perform(post(path)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(path));
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucket.getBucketId()))
+                .isZero();
+    }
+
+    @Test
+    void unlinkBucketAccountShouldReturnNotFoundWhenAccountDoesNotExist() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio");
+        UUID missingAccountId = UUID.randomUUID();
+
+        String path = BUCKETS_PATH + "/" + bucket.getBucketId() + "/accounts/" + missingAccountId;
+
+        mockMvc.perform(delete(path)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(path));
+    }
+
+    @Test
+    void collaboratorShouldReceiveBucketNotFoundBeforeAccountCheckWhenLinkingToHiddenBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Bucket hiddenBucket = createBucket(owner.getUserGroup(), "Portafoglio nascosto");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        String path = bucketAccountPath(hiddenBucket, inaccessibleAccount);
+
+        mockMvc.perform(post(path)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(path));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                hiddenBucket.getBucketId(),
+                inaccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void collaboratorShouldReceiveBucketNotFoundBeforeAccountCheckWhenUnlinkingFromHiddenBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Bucket hiddenBucket = createBucket(owner.getUserGroup(), "Portafoglio nascosto");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        linkBucketToAccount(hiddenBucket, inaccessibleAccount);
+
+        String path = bucketAccountPath(hiddenBucket, inaccessibleAccount);
+
+        mockMvc.perform(delete(path)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
+                .andExpect(jsonPath("$.path").value(path));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                hiddenBucket.getBucketId(),
+                inaccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldNoOpWhenUnlinkingAccessibleAccountNotLinkedToVisibleBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account linkedAccessibleAccount = createAccount(owner.getUserGroup(), "Conto collegato");
+        Account notLinkedAccessibleAccount = createAccount(owner.getUserGroup(), "Conto non collegato");
+
+        grantAccountAccess(linkedAccessibleAccount, collaborator);
+        grantAccountAccess(notLinkedAccessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio visibile");
+
+        linkBucketToAccount(bucket, linkedAccessibleAccount);
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, notLinkedAccessibleAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                linkedAccessibleAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucket.getBucketId()))
+                .isEqualTo(1);
+    }
+
     private User createVerifiedUser(UserRole userRole) {
         return transactionTemplate.execute(status -> {
             UserGroup userGroup = new UserGroup("Test group " + UUID.randomUUID());
@@ -1826,5 +2470,13 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                         """,
                 bucket.getBucketId()
         );
+    }
+
+    private String bucketAccountPath(Bucket bucket, Account account) {
+        return BUCKETS_PATH
+                + "/"
+                + bucket.getBucketId()
+                + "/accounts/"
+                + account.getAccountId();
     }
 }
