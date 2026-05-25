@@ -312,7 +312,10 @@ CREATE INDEX idx_buckets_active_group
     WHERE bucket_closed_at IS NULL;
 
 CREATE UNIQUE INDEX uq_buckets_active_name_group
-    ON buckets (user_group_id, lower(btrim(bucket_name)))
+    ON buckets (
+                user_group_id,
+                lower(btrim(regexp_replace(bucket_name, '[[:space:]]+', ' ', 'g')))
+        )
     WHERE bucket_closed_at IS NULL;
 
 CREATE TABLE buckets_accounts

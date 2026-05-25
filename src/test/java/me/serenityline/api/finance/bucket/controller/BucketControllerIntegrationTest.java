@@ -1,0 +1,1005 @@
+package me.serenityline.api.finance.bucket.controller;
+
+import com.jayway.jsonpath.JsonPath;
+import jakarta.persistence.EntityManager;
+import me.serenityline.api.finance.account.entity.Account;
+import me.serenityline.api.finance.account.repository.AccountRepository;
+import me.serenityline.api.finance.bucket.entity.Bucket;
+import me.serenityline.api.finance.bucket.entity.BucketAccount;
+import me.serenityline.api.finance.bucket.repository.BucketAccountRepository;
+import me.serenityline.api.finance.bucket.repository.BucketRepository;
+import me.serenityline.api.security.jwt.JwtTokenService;
+import me.serenityline.api.support.IntegrationTestSupport;
+import me.serenityline.api.user.entity.*;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+class BucketControllerIntegrationTest extends IntegrationTestSupport {
+
+    private static final String BUCKETS_PATH = "/api/finance/buckets";
+    private static final String IT_LOCALE = "it-IT";
+    private static final String DEFAULT_PASSWORD = "VeryStrongPassword-2026-SerenityLine!";
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private BucketRepository bucketRepository;
+
+    @Autowired
+    private BucketAccountRepository bucketAccountRepository;
+
+    @Autowired
+    private AccountRepository accountRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private JwtTokenService jwtTokenService;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+
+    @Autowired
+    private EntityManager entityManager;
+
+    @Test
+    void createBucketShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio vacanze"
+                                }
+                                """))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldCreateBucketWithoutLinkedAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Vestito elegante",
+                                  "bucketDescription": "Risparmio per acquistare un vestito elegante"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("Vestito elegante"))
+                .andExpect(jsonPath("$.bucketDescription").value("Risparmio per acquistare un vestito elegante"))
+                .andExpect(jsonPath("$.accountIds").isArray())
+                .andExpect(jsonPath("$.accountIds").isEmpty())
+                .andExpect(jsonPath("$.userGroupId").value(owner.getUserGroup().getUserGroupId().toString()))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        Bucket bucket = bucketRepository.findById(bucketId).orElseThrow();
+
+        assertThat(bucket.getBucketName()).isEqualTo("Vestito elegante");
+        assertThat(bucket.getBucketDescription()).isEqualTo("Risparmio per acquistare un vestito elegante");
+        assertThat(bucket.getBucketClosedAt()).isNull();
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isZero();
+    }
+
+    @Test
+    void superCollaboratorShouldCreateBucketWithoutLinkedAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User superCollaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.SUPER_COLLABORATOR
+        );
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Fondo tasse"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("Fondo tasse"))
+                .andExpect(jsonPath("$.accountIds").isArray())
+                .andExpect(jsonPath("$.accountIds").isEmpty())
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketRepository.findById(bucketId)).isPresent();
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldCreateBucketWithoutLinkedAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio generico"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio generico"))
+                .andExpect(jsonPath("$.accountIds").isArray())
+                .andExpect(jsonPath("$.accountIds").isEmpty())
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketRepository.findById(bucketId)).isPresent();
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isZero();
+    }
+
+    @Test
+    void collaboratorShouldNotCreateBucketWithoutLinkedAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio collaborator"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.accountRequiredForCollaborator"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void collaboratorShouldCreateBucketWithAccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        grantAccountAccess(account, collaborator);
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Vestito elegante",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(account.getAccountId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("Vestito elegante"))
+                .andExpect(jsonPath("$.accountIds[0]").value(account.getAccountId().toString()))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketRepository.findById(bucketId)).isPresent();
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isEqualTo(1);
+    }
+
+    @Test
+    void viewerCollaboratorShouldCreateBucketWithAccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        grantAccountAccess(account, viewer);
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio casa",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(account.getAccountId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio casa"))
+                .andExpect(jsonPath("$.accountIds[0]").value(account.getAccountId().toString()))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketRepository.findById(bucketId)).isPresent();
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isEqualTo(1);
+    }
+
+    @Test
+    void collaboratorShouldReturnNotFoundWhenAccountIsNotAccessible() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account account = createAccount(owner.getUserGroup(), "Conto non assegnato");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio non accessibile",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(account.getAccountId())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReturnNotFoundWhenAccountIsNotOperable() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        Account account = createAccount(owner.getUserGroup(), "Conto non operativo");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio viewer",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(account.getAccountId())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldCreateBucketWithAnyGroupAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        Account account = createAccount(owner.getUserGroup(), "Conto gruppo");
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio vacanze",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(account.getAccountId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accountIds[0]").value(account.getAccountId().toString()))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketRepository.findById(bucketId)).isPresent();
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isEqualTo(1);
+    }
+
+    @Test
+    void superCollaboratorShouldCreateBucketWithAnyGroupAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User superCollaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.SUPER_COLLABORATOR
+        );
+
+        Account account = createAccount(owner.getUserGroup(), "Conto gruppo");
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio emergenze",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(account.getAccountId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accountIds[0]").value(account.getAccountId().toString()))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketRepository.findById(bucketId)).isPresent();
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isEqualTo(1);
+    }
+
+    @Test
+    void createBucketShouldReturnNotFoundWhenAccountBelongsToAnotherUserGroup() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Account otherGroupAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio vietato",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(otherGroupAccount.getAccountId())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void createBucketShouldRejectDuplicateNormalizedNameForOwner() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        createBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  fondo    VACANZE  "
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.nameAlreadyExists"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void createBucketShouldHideDuplicateNameExistenceFromCollaborator() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account collaboratorAccount = createAccount(owner.getUserGroup(), "Conto collaborator");
+
+        grantAccountAccess(collaboratorAccount, collaborator);
+
+        createBucket(owner.getUserGroup(), "Vacanza segreta");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  vacanza    SEGRETA  ",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(collaboratorAccount.getAccountId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.nameNotAllowed"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void createBucketShouldValidateAccountAccessBeforeDuplicateNameForCollaborator() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account notAccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        createBucket(owner.getUserGroup(), "Nome sensibile");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Nome sensibile",
+                                  "accountIds": ["%s"]
+                                }
+                                """.formatted(notAccessibleAccount.getAccountId())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+    }
+
+    @Test
+    void createBucketShouldAllowSameNormalizedNameInDifferentUserGroups() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        createBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(otherOwner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  fondo    VACANZE  "
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("fondo    VACANZE"));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isEqualTo(1);
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(otherOwner.getUserGroup().getUserGroupId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void createBucketShouldTrimNameAndDescriptionButPreserveInternalWhitespaceAndCase() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  Fondo    VACANZE  ",
+                                  "bucketDescription": "  Descrizione    con spazi  "
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("Fondo    VACANZE"))
+                .andExpect(jsonPath("$.bucketDescription").value("Descrizione    con spazi"))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        Bucket bucket = bucketRepository.findById(bucketId).orElseThrow();
+
+        assertThat(bucket.getBucketName()).isEqualTo("Fondo    VACANZE");
+        assertThat(bucket.getBucketDescription()).isEqualTo("Descrizione    con spazi");
+    }
+
+    @Test
+    void createBucketShouldStoreBlankDescriptionAsNull() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio senza descrizione",
+                                  "bucketDescription": "     "
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        Bucket bucket = bucketRepository.findById(bucketId).orElseThrow();
+
+        assertThat(bucket.getBucketDescription()).isNull();
+    }
+
+    @Test
+    void createBucketShouldIgnoreDuplicateAccountIds() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account account = createAccount(owner.getUserGroup(), "Conto principale");
+
+        grantAccountAccess(account, collaborator);
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio duplicati",
+                                  "accountIds": ["%s", "%s"]
+                                }
+                                """.formatted(account.getAccountId(), account.getAccountId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accountIds.length()").value(1))
+                .andExpect(jsonPath("$.accountIds[0]").value(account.getAccountId().toString()))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isEqualTo(1);
+    }
+
+    @Test
+    void createBucketShouldRejectNullAccountId() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio account nullo",
+                                  "accountIds": [null]
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.accountId.required"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void createBucketShouldRejectBlankName() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "    "
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.name.required"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void createBucketShouldRejectTooLongName() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        String tooLongName = "a".repeat(256);
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "%s"
+                                }
+                                """.formatted(tooLongName)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"))
+                .andExpect(jsonPath("$.fieldErrors[0].code").value("finance.bucket.name.tooLong"));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void createBucketShouldRejectTooLongDescription() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        String tooLongDescription = "a".repeat(2001);
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio descrizione lunga",
+                                  "bucketDescription": "%s"
+                                }
+                                """.formatted(tooLongDescription)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"))
+                .andExpect(jsonPath("$.fieldErrors[0].code").value("finance.bucket.description.tooLong"));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void bucketAccountShouldRejectDifferentUserGroups() {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User otherOwner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio gruppo uno");
+        Account otherGroupAccount = createAccount(otherOwner.getUserGroup(), "Conto altro gruppo");
+
+        assertThatThrownBy(() -> BucketAccount.link(
+                bucket,
+                otherGroupAccount,
+                owner.getUserGroup()
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.bucket.userGroupMismatch");
+    }
+
+    @Test
+    void databaseShouldRejectDuplicateNormalizedActiveBucketName() {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        insertBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        assertThatThrownBy(() -> insertBucket(owner.getUserGroup(), "  fondo    VACANZE  "))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void collaboratorShouldNotCreateBucketWithEmptyAccountIds() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio collaborator",
+                                  "accountIds": []
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.accountRequiredForCollaborator"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void createBucketShouldRejectMissingName() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketDescription": "Descrizione senza nome"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.name.required"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void createBucketShouldAllowSameNormalizedNameAsClosedBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        jdbcTemplate.update(
+                """
+                        update buckets
+                        set bucket_closed_at = now()
+                        where bucket_id = ?
+                        """,
+                closedBucket.getBucketId()
+        );
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  fondo    VACANZE  "
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bucketName").value("fondo    VACANZE"));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isEqualTo(2);
+    }
+
+    @Test
+    void ownerShouldCreateBucketWithMultipleDistinctAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account firstAccount = createAccount(owner.getUserGroup(), "Conto principale");
+        Account secondAccount = createAccount(owner.getUserGroup(), "Conto secondario");
+
+        MvcResult result = mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio multi conto",
+                                  "accountIds": ["%s", "%s"]
+                                }
+                                """.formatted(firstAccount.getAccountId(), secondAccount.getAccountId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accountIds.length()").value(2))
+                .andReturn();
+
+        UUID bucketId = bucketIdFrom(result);
+
+        assertThat(bucketAccountRepository.countByBucket_BucketId(bucketId)).isEqualTo(2);
+    }
+
+    @Test
+    void collaboratorShouldNotCreateBucketWhenAnyLinkedAccountIsNotAccessible() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account notAccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "Portafoglio parziale",
+                                  "accountIds": ["%s", "%s"]
+                                }
+                                """.formatted(accessibleAccount.getAccountId(), notAccessibleAccount.getAccountId())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveExplicitDuplicateNameError() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User viewer = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.VIEWER_COLLABORATOR
+        );
+
+        createBucket(owner.getUserGroup(), "Fondo vacanze");
+
+        mockMvc.perform(post(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "bucketName": "  fondo    VACANZE  "
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.nameAlreadyExists"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+
+        assertThat(bucketRepository.countByUserGroup_UserGroupId(owner.getUserGroup().getUserGroupId()))
+                .isEqualTo(1);
+    }
+
+    private User createVerifiedUser(UserRole userRole) {
+        return transactionTemplate.execute(status -> {
+            UserGroup userGroup = new UserGroup("Test group " + UUID.randomUUID());
+
+            User user = new User(
+                    "Test user " + UUID.randomUUID(),
+                    uniqueEmail("user"),
+                    userGroup,
+                    userRole,
+                    UserPlatformRole.USER,
+                    IT_LOCALE,
+                    PreferredTheme.DEFAULT,
+                    false,
+                    true,
+                    passwordEncoder.encode(DEFAULT_PASSWORD),
+                    true,
+                    0L
+            );
+
+            entityManager.persist(userGroup);
+            entityManager.persist(user);
+            entityManager.flush();
+
+            return user;
+        });
+    }
+
+    private User createVerifiedUserInGroup(UserGroup userGroup, UserRole userRole) {
+        return transactionTemplate.execute(status -> {
+            UserGroup managedUserGroup = entityManager.getReference(
+                    UserGroup.class,
+                    userGroup.getUserGroupId()
+            );
+
+            User user = new User(
+                    "Test user " + UUID.randomUUID(),
+                    uniqueEmail("user"),
+                    managedUserGroup,
+                    userRole,
+                    UserPlatformRole.USER,
+                    IT_LOCALE,
+                    PreferredTheme.DEFAULT,
+                    false,
+                    true,
+                    passwordEncoder.encode(DEFAULT_PASSWORD),
+                    true,
+                    0L
+            );
+
+            entityManager.persist(user);
+            entityManager.flush();
+
+            return user;
+        });
+    }
+
+    private Account createAccount(UserGroup userGroup, String accountName) {
+        UUID accountId = UUID.randomUUID();
+
+        jdbcTemplate.update(
+                """
+                        insert into accounts (
+                            account_id,
+                            account_name,
+                            currency,
+                            opening_balance,
+                            opening_balance_date,
+                            user_group_id
+                        )
+                        values (?, ?, ?, ?, ?, ?)
+                        """,
+                accountId,
+                accountName,
+                "EUR",
+                new BigDecimal("0.00"),
+                LocalDate.of(2026, 1, 1),
+                userGroup.getUserGroupId()
+        );
+
+        return accountRepository.findById(accountId).orElseThrow();
+    }
+
+    private void grantAccountAccess(Account account, User user) {
+        jdbcTemplate.update(
+                """
+                        insert into accounts_users (
+                            account_id,
+                            user_id,
+                            user_group_id
+                        )
+                        values (?, ?, ?)
+                        """,
+                account.getAccountId(),
+                user.getUserId(),
+                user.getUserGroup().getUserGroupId()
+        );
+    }
+
+    private Bucket createBucket(UserGroup userGroup, String bucketName) {
+        return bucketRepository.saveAndFlush(Bucket.create(
+                bucketName,
+                null,
+                userGroup
+        ));
+    }
+
+    private void insertBucket(UserGroup userGroup, String bucketName) {
+        jdbcTemplate.update(
+                """
+                        insert into buckets (
+                            bucket_name,
+                            user_group_id
+                        )
+                        values (?, ?)
+                        """,
+                bucketName,
+                userGroup.getUserGroupId()
+        );
+    }
+
+    private String accessTokenFor(User user) {
+        return jwtTokenService.createAccessToken(user)
+                .token();
+    }
+
+    private String bearer(String accessToken) {
+        return "Bearer " + accessToken;
+    }
+
+    private UUID bucketIdFrom(MvcResult result) throws Exception {
+        String bucketId = JsonPath.read(
+                result.getResponse().getContentAsString(),
+                "$.bucketId"
+        );
+
+        return UUID.fromString(bucketId);
+    }
+
+    private String uniqueEmail(String prefix) {
+        return prefix + "-" + UUID.randomUUID() + "@example.com";
+    }
+}
