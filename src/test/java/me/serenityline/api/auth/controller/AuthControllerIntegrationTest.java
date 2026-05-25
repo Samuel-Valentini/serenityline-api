@@ -2715,7 +2715,7 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .map(Category::getCategoryId)
                 .toList();
 
-        assertThat(categories).hasSize(20);
+        assertThat(categories).hasSize(21);
 
         assertThat(categories)
                 .extracting(Category::getCategoryCurrentName)
@@ -2739,7 +2739,8 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                         "Salute",
                         "Tasse e prelievi diretti",
                         "Tasse e prelievi indiretti",
-                        "Vacanze"
+                        "Vacanze",
+                        "Rettifiche"
                 );
 
         assertThat(categories)
@@ -2749,10 +2750,10 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 });
 
         assertThat(categoryDetailsHistoryRepository.countByCategory_CategoryIdIn(categoryIds))
-                .isEqualTo(20);
+                .isEqualTo(21);
 
         assertThat(categoryStatusHistoryRepository.countByCategory_CategoryIdIn(categoryIds))
-                .isEqualTo(20);
+                .isEqualTo(21);
     }
 
     private void registerValidUser(String email) throws Exception {
