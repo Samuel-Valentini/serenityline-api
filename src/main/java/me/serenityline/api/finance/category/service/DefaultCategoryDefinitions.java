@@ -24,7 +24,8 @@ public final class DefaultCategoryDefinitions {
             definition("health"),
             definition("direct-taxes"),
             definition("indirect-taxes"),
-            definition("holidays")
+            definition("holidays"),
+            definition("adjustments")
     );
 
     private DefaultCategoryDefinitions() {

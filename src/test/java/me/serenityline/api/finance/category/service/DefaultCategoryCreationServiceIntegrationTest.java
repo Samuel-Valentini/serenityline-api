@@ -52,7 +52,7 @@ class DefaultCategoryCreationServiceIntegrationTest extends IntegrationTestSuppo
                 .map(Category::getCategoryId)
                 .toList();
 
-        assertThat(categories).hasSize(20);
+        assertThat(categories).hasSize(21);
 
         assertThat(categories)
                 .extracting(Category::getCategoryCurrentName)
@@ -76,7 +76,8 @@ class DefaultCategoryCreationServiceIntegrationTest extends IntegrationTestSuppo
                         "Salute",
                         "Tasse e prelievi diretti",
                         "Tasse e prelievi indiretti",
-                        "Vacanze"
+                        "Vacanze",
+                        "Rettifiche"
                 );
 
         assertThat(categories)
@@ -89,7 +90,7 @@ class DefaultCategoryCreationServiceIntegrationTest extends IntegrationTestSuppo
         List<CategoryDetailsHistory> details =
                 categoryDetailsHistoryRepository.findAllByCategory_CategoryIdIn(categoryIds);
 
-        assertThat(details).hasSize(20);
+        assertThat(details).hasSize(21);
 
         assertThat(details)
                 .allSatisfy(detail -> {
@@ -115,7 +116,7 @@ class DefaultCategoryCreationServiceIntegrationTest extends IntegrationTestSuppo
         List<CategoryStatusHistory> statuses =
                 categoryStatusHistoryRepository.findAllByCategory_CategoryIdIn(categoryIds);
 
-        assertThat(statuses).hasSize(20);
+        assertThat(statuses).hasSize(21);
 
         assertThat(statuses)
                 .allSatisfy(status -> {
@@ -148,9 +149,9 @@ class DefaultCategoryCreationServiceIntegrationTest extends IntegrationTestSuppo
                 .map(Category::getCategoryId)
                 .toList();
 
-        assertThat(categories).hasSize(20);
-        assertThat(categoryDetailsHistoryRepository.countByCategory_CategoryIdIn(categoryIds)).isEqualTo(20);
-        assertThat(categoryStatusHistoryRepository.countByCategory_CategoryIdIn(categoryIds)).isEqualTo(20);
+        assertThat(categories).hasSize(21);
+        assertThat(categoryDetailsHistoryRepository.countByCategory_CategoryIdIn(categoryIds)).isEqualTo(21);
+        assertThat(categoryStatusHistoryRepository.countByCategory_CategoryIdIn(categoryIds)).isEqualTo(21);
     }
 
     @Test
@@ -167,7 +168,7 @@ class DefaultCategoryCreationServiceIntegrationTest extends IntegrationTestSuppo
         List<Category> categories =
                 categoryRepository.findAllByUserGroup_UserGroupIdOrderByCategoryCurrentNameAsc(userGroupId);
 
-        assertThat(categories).hasSize(20);
+        assertThat(categories).hasSize(21);
 
         assertThat(categories)
                 .extracting(Category::getCategoryCurrentName)
@@ -205,8 +206,8 @@ class DefaultCategoryCreationServiceIntegrationTest extends IntegrationTestSuppo
         List<Category> secondGroupCategories =
                 categoryRepository.findAllByUserGroup_UserGroupIdOrderByCategoryCurrentNameAsc(secondUserGroupId);
 
-        assertThat(firstGroupCategories).hasSize(20);
-        assertThat(secondGroupCategories).hasSize(20);
+        assertThat(firstGroupCategories).hasSize(21);
+        assertThat(secondGroupCategories).hasSize(21);
 
         assertThat(firstGroupCategories)
                 .allSatisfy(category -> {
