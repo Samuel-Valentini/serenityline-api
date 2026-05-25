@@ -32,15 +32,28 @@ public class BucketQueryService {
     }
 
     @Transactional(readOnly = true)
-    public List<BucketDetails> findVisibleBuckets(UUID currentUserId) {
+    public List<BucketDetails> findVisibleBuckets(
+            UUID currentUserId,
+            BucketStatusFilter statusFilter
+    ) {
         Objects.requireNonNull(currentUserId, "currentUserId");
+        Objects.requireNonNull(statusFilter, "statusFilter");
 
         User currentUser = findCurrentUser(currentUserId);
         UUID userGroupId = currentUser.getUserGroup().getUserGroupId();
 
         List<Bucket> buckets = canReadAllGroupBuckets(currentUser)
-                ? bucketRepository.findAllActiveByUserGroupId(userGroupId)
-                : bucketRepository.findAllActiveVisibleForCollaborator(userGroupId, currentUser.getUserId());
+                ? bucketRepository.findAllByUserGroupIdAndStatus(
+                userGroupId,
+                statusFilter.includeActive(),
+                statusFilter.includeClosed()
+        )
+                : bucketRepository.findAllVisibleForCollaboratorByStatus(
+                userGroupId,
+                currentUser.getUserId(),
+                statusFilter.includeActive(),
+                statusFilter.includeClosed()
+        );
 
         return buckets.stream()
                 .map(bucket -> toBucketDetails(currentUser, bucket))
@@ -56,11 +69,11 @@ public class BucketQueryService {
         UUID userGroupId = currentUser.getUserGroup().getUserGroupId();
 
         Bucket bucket = canReadAllGroupBuckets(currentUser)
-                ? bucketRepository.findByBucketIdAndUserGroup_UserGroupIdAndBucketClosedAtIsNull(
+                ? bucketRepository.findByBucketIdAndUserGroup_UserGroupId(
                 bucketId,
                 userGroupId
         ).orElseThrow(() -> new ResourceNotFoundException("finance.bucket.notFound"))
-                : bucketRepository.findActiveVisibleForCollaborator(
+                : bucketRepository.findVisibleForCollaborator(
                 bucketId,
                 userGroupId,
                 currentUser.getUserId()

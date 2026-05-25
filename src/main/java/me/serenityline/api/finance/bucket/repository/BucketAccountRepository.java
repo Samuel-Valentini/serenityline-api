@@ -79,7 +79,7 @@ public interface BucketAccountRepository extends JpaRepository<BucketAccount, UU
                         :accountId,
                         :userGroupId
                     )
-                    on conflict (bucket_id, account_id) do nothing
+                    on conflict (bucket_id, account_id, user_group_id) do nothing
                     """,
             nativeQuery = true
     )

@@ -307,9 +307,13 @@ CREATE TABLE buckets
 CREATE INDEX idx_buckets_user_group_id
     ON buckets (user_group_id);
 
-CREATE INDEX idx_buckets_active_group
-    ON buckets (user_group_id, bucket_name)
+CREATE INDEX idx_buckets_active_group_name
+    ON buckets (user_group_id, lower(bucket_name), bucket_name)
     WHERE bucket_closed_at IS NULL;
+
+CREATE INDEX idx_buckets_closed_group_name
+    ON buckets (user_group_id, lower(bucket_name), bucket_name)
+    WHERE bucket_closed_at IS NOT NULL;
 
 CREATE UNIQUE INDEX uq_buckets_active_name_group
     ON buckets (
@@ -336,15 +340,19 @@ CREATE TABLE buckets_accounts
             REFERENCES accounts (account_id, user_group_id)
             ON DELETE CASCADE,
 
-    CONSTRAINT uq_buckets_accounts_bucket_account
-        UNIQUE (bucket_id, account_id)
-);
+    CONSTRAINT uq_buckets_accounts_bucket_account_group
+        UNIQUE (bucket_id, account_id, user_group_id)
 
-CREATE INDEX idx_buckets_accounts_account_id
-    ON buckets_accounts (account_id);
+);
 
 CREATE INDEX idx_buckets_accounts_user_group_id
     ON buckets_accounts (user_group_id);
+
+CREATE INDEX idx_buckets_accounts_bucket_group
+    ON buckets_accounts (bucket_id, user_group_id);
+
+CREATE INDEX idx_buckets_accounts_account_group
+    ON buckets_accounts (account_id, user_group_id);
 
 CREATE TABLE simulation_groups
 (

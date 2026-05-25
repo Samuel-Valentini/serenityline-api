@@ -122,4 +122,85 @@ public interface BucketRepository extends JpaRepository<Bucket, UUID> {
             @Param("userGroupId") UUID userGroupId,
             @Param("userId") UUID userId
     );
+
+    Optional<Bucket> findByBucketIdAndUserGroup_UserGroupId(
+            UUID bucketId,
+            UUID userGroupId
+    );
+
+    @Query(
+            value = """
+                    select bucket.*
+                    from buckets bucket
+                    where bucket.user_group_id = :userGroupId
+                      and (
+                          (:includeActive = true and bucket.bucket_closed_at is null)
+                          or (:includeClosed = true and bucket.bucket_closed_at is not null)
+                      )
+                    order by lower(bucket.bucket_name), bucket.bucket_name
+                    """,
+            nativeQuery = true
+    )
+    List<Bucket> findAllByUserGroupIdAndStatus(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("includeActive") boolean includeActive,
+            @Param("includeClosed") boolean includeClosed
+    );
+
+    @Query(
+            value = """
+                    select bucket.*
+                    from buckets bucket
+                    where bucket.user_group_id = :userGroupId
+                      and (
+                          (:includeActive = true and bucket.bucket_closed_at is null)
+                          or (:includeClosed = true and bucket.bucket_closed_at is not null)
+                      )
+                      and exists (
+                          select 1
+                          from buckets_accounts bucket_account
+                          join accounts_users account_user
+                            on account_user.account_id = bucket_account.account_id
+                           and account_user.user_group_id = bucket_account.user_group_id
+                          where bucket_account.bucket_id = bucket.bucket_id
+                            and bucket_account.user_group_id = bucket.user_group_id
+                            and account_user.user_id = :userId
+                      )
+                    order by lower(bucket.bucket_name), bucket.bucket_name
+                    """,
+            nativeQuery = true
+    )
+    List<Bucket> findAllVisibleForCollaboratorByStatus(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("includeActive") boolean includeActive,
+            @Param("includeClosed") boolean includeClosed
+    );
+
+    @Query(
+            value = """
+                    select bucket.*
+                    from buckets bucket
+                    where bucket.bucket_id = :bucketId
+                      and bucket.user_group_id = :userGroupId
+                      and exists (
+                          select 1
+                          from buckets_accounts bucket_account
+                          join accounts_users account_user
+                            on account_user.account_id = bucket_account.account_id
+                           and account_user.user_group_id = bucket_account.user_group_id
+                          where bucket_account.bucket_id = bucket.bucket_id
+                            and bucket_account.user_group_id = bucket.user_group_id
+                            and account_user.user_id = :userId
+                      )
+                    """,
+            nativeQuery = true
+    )
+    Optional<Bucket> findVisibleForCollaborator(
+            @Param("bucketId") UUID bucketId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
+    );
+
+
 }

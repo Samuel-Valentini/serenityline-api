@@ -51,9 +51,15 @@ public class BucketController {
 
     @GetMapping
     public ResponseEntity<List<BucketResponse>> findBuckets(
-            @AuthenticationPrincipal AuthenticatedUser authenticatedUser
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @RequestParam(name = "status", required = false) String status
     ) {
-        List<BucketResponse> response = bucketQueryService.findVisibleBuckets(authenticatedUser.userId())
+        BucketStatusFilter statusFilter = BucketStatusFilter.from(status);
+
+        List<BucketResponse> response = bucketQueryService.findVisibleBuckets(
+                        authenticatedUser.userId(),
+                        statusFilter
+                )
                 .stream()
                 .map(BucketResponse::from)
                 .toList();

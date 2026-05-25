@@ -1090,7 +1090,7 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void findBucketShouldReturnNotFoundForClosedBucket() throws Exception {
+    void findBucketShouldReturnClosedBucketDetail() throws Exception {
         User owner = createVerifiedUser(UserRole.OWNER);
 
         Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio chiuso");
@@ -1100,9 +1100,10 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         mockMvc.perform(get(BUCKETS_PATH + "/" + bucket.getBucketId())
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"))
-                .andExpect(jsonPath("$.path").value(BUCKETS_PATH + "/" + bucket.getBucketId()));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio chiuso"))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
     }
 
     @Test
@@ -2301,6 +2302,236 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
 
         assertThat(bucketAccountRepository.countByBucket_BucketId(bucket.getBucketId()))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void findBucketsShouldReturnOnlyClosedBucketsWhenStatusClosedForOwner() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket activeBucket = createBucket(owner.getUserGroup(), "A portafoglio attivo");
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "B portafoglio chiuso");
+
+        closeBucket(closedBucket);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .param("status", "CLOSED")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].bucketId").value(closedBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[0].bucketName").value("B portafoglio chiuso"))
+                .andExpect(jsonPath("$[0].bucketClosedAt").exists());
+
+        assertThat(activeBucket.getBucketId()).isNotEqualTo(closedBucket.getBucketId());
+    }
+
+    @Test
+    void findBucketsShouldReturnActiveAndClosedBucketsWhenStatusAllForOwner() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket activeBucket = createBucket(owner.getUserGroup(), "A portafoglio attivo");
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "B portafoglio chiuso");
+
+        closeBucket(closedBucket);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .param("status", "ALL")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].bucketId").value(activeBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[0].bucketName").value("A portafoglio attivo"))
+                .andExpect(jsonPath("$[0].bucketClosedAt").doesNotExist())
+                .andExpect(jsonPath("$[1].bucketId").value(closedBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[1].bucketName").value("B portafoglio chiuso"))
+                .andExpect(jsonPath("$[1].bucketClosedAt").exists());
+    }
+
+    @Test
+    void findBucketsShouldUseActiveStatusByDefault() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket activeBucket = createBucket(owner.getUserGroup(), "A portafoglio attivo");
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "B portafoglio chiuso");
+
+        closeBucket(closedBucket);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].bucketId").value(activeBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[0].bucketName").value("A portafoglio attivo"))
+                .andExpect(jsonPath("$[0].bucketClosedAt").doesNotExist());
+    }
+
+    @Test
+    void findBucketsShouldAcceptCaseInsensitiveStatusFilter() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "Portafoglio chiuso");
+
+        closeBucket(closedBucket);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .param("status", "closed")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].bucketId").value(closedBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[0].bucketClosedAt").exists());
+    }
+
+    @Test
+    void findBucketsShouldRejectInvalidStatusFilter() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .param("status", "ARCHIVED")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.bucket.status.invalid"))
+                .andExpect(jsonPath("$.path").value(BUCKETS_PATH));
+    }
+
+    @Test
+    void collaboratorShouldFindOnlyVisibleClosedBucketsWhenStatusClosed() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket activeVisibleBucket = createBucket(owner.getUserGroup(), "A portafoglio attivo visibile");
+        Bucket closedVisibleBucket = createBucket(owner.getUserGroup(), "B portafoglio chiuso visibile");
+        Bucket closedHiddenBucket = createBucket(owner.getUserGroup(), "C portafoglio chiuso nascosto");
+        Bucket closedUnlinkedBucket = createBucket(owner.getUserGroup(), "D portafoglio chiuso scollegato");
+
+        linkBucketToAccount(activeVisibleBucket, accessibleAccount);
+        linkBucketToAccount(closedVisibleBucket, accessibleAccount);
+        linkBucketToAccount(closedHiddenBucket, inaccessibleAccount);
+
+        closeBucket(closedVisibleBucket);
+        closeBucket(closedHiddenBucket);
+        closeBucket(closedUnlinkedBucket);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .param("status", "CLOSED")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].bucketId").value(closedVisibleBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[0].bucketName").value("B portafoglio chiuso visibile"))
+                .andExpect(jsonPath("$[0].bucketClosedAt").exists())
+                .andExpect(jsonPath("$[0].accountIds.length()").value(1))
+                .andExpect(jsonPath("$[0].accountIds[0]").value(accessibleAccount.getAccountId().toString()));
+    }
+
+    @Test
+    void collaboratorShouldFindOnlyVisibleActiveAndClosedBucketsWhenStatusAll() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket activeVisibleBucket = createBucket(owner.getUserGroup(), "A portafoglio attivo visibile");
+        Bucket closedVisibleBucket = createBucket(owner.getUserGroup(), "B portafoglio chiuso visibile");
+        Bucket activeHiddenBucket = createBucket(owner.getUserGroup(), "C portafoglio attivo nascosto");
+        Bucket closedHiddenBucket = createBucket(owner.getUserGroup(), "D portafoglio chiuso nascosto");
+        Bucket unlinkedBucket = createBucket(owner.getUserGroup(), "E portafoglio scollegato");
+
+        linkBucketToAccount(activeVisibleBucket, accessibleAccount);
+        linkBucketToAccount(closedVisibleBucket, accessibleAccount);
+        linkBucketToAccount(activeHiddenBucket, inaccessibleAccount);
+        linkBucketToAccount(closedHiddenBucket, inaccessibleAccount);
+
+        closeBucket(closedVisibleBucket);
+        closeBucket(closedHiddenBucket);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .param("status", "ALL")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].bucketId").value(activeVisibleBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[0].bucketName").value("A portafoglio attivo visibile"))
+                .andExpect(jsonPath("$[0].bucketClosedAt").doesNotExist())
+                .andExpect(jsonPath("$[0].accountIds.length()").value(1))
+                .andExpect(jsonPath("$[0].accountIds[0]").value(accessibleAccount.getAccountId().toString()))
+                .andExpect(jsonPath("$[1].bucketId").value(closedVisibleBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[1].bucketName").value("B portafoglio chiuso visibile"))
+                .andExpect(jsonPath("$[1].bucketClosedAt").exists())
+                .andExpect(jsonPath("$[1].accountIds.length()").value(1))
+                .andExpect(jsonPath("$[1].accountIds[0]").value(accessibleAccount.getAccountId().toString()));
+
+        assertThat(unlinkedBucket.getBucketId()).isNotNull();
+    }
+
+    @Test
+    void findBucketsShouldUseActiveStatusWhenStatusIsBlank() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Bucket activeBucket = createBucket(owner.getUserGroup(), "A portafoglio attivo");
+        Bucket closedBucket = createBucket(owner.getUserGroup(), "B portafoglio chiuso");
+
+        closeBucket(closedBucket);
+
+        mockMvc.perform(get(BUCKETS_PATH)
+                        .param("status", "   ")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].bucketId").value(activeBucket.getBucketId().toString()))
+                .andExpect(jsonPath("$[0].bucketClosedAt").doesNotExist());
+    }
+
+    @Test
+    void collaboratorShouldFindClosedBucketDetailWhenLinkedToAccessibleAccount() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        User collaborator = createVerifiedUserInGroup(
+                owner.getUserGroup(),
+                UserRole.COLLABORATOR
+        );
+
+        Account accessibleAccount = createAccount(owner.getUserGroup(), "Conto accessibile");
+        Account inaccessibleAccount = createAccount(owner.getUserGroup(), "Conto non accessibile");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio chiuso visibile");
+
+        linkBucketToAccount(bucket, accessibleAccount);
+        linkBucketToAccount(bucket, inaccessibleAccount);
+        closeBucket(bucket);
+
+        mockMvc.perform(get(BUCKETS_PATH + "/" + bucket.getBucketId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketName").value("Portafoglio chiuso visibile"))
+                .andExpect(jsonPath("$.bucketClosedAt").exists())
+                .andExpect(jsonPath("$.accountIds.length()").value(1))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.getAccountId().toString()));
     }
 
     private User createVerifiedUser(UserRole userRole) {
