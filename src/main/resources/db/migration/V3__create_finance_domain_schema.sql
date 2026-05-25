@@ -257,11 +257,20 @@ CREATE TABLE credit_cards
         CHECK (credit_card_updated_at >= credit_card_created_at)
 );
 
+CREATE UNIQUE INDEX uq_credit_cards_user_group_name_normalized
+    ON credit_cards (
+                     user_group_id,
+                     lower(btrim(regexp_replace(credit_card_name, '[[:space:]]+', ' ', 'g')))
+        );
+
 CREATE INDEX idx_credit_cards_account_group
     ON credit_cards (account_id, user_group_id);
 
 CREATE INDEX idx_credit_cards_user_group_id
     ON credit_cards (user_group_id);
+
+CREATE INDEX idx_credit_cards_account_id
+    ON credit_cards (account_id);
 
 CREATE TABLE buckets
 (
