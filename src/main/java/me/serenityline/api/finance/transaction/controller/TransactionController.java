@@ -3,14 +3,18 @@ package me.serenityline.api.finance.transaction.controller;
 import jakarta.validation.Valid;
 import me.serenityline.api.finance.transaction.dto.TransactionCreateRequest;
 import me.serenityline.api.finance.transaction.dto.TransactionResponse;
+import me.serenityline.api.finance.transaction.dto.TransactionSearchRequest;
 import me.serenityline.api.finance.transaction.service.TransactionCreationService;
 import me.serenityline.api.finance.transaction.service.TransactionReadService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -52,6 +56,27 @@ public class TransactionController {
         TransactionResponse response = transactionReadService.getTransaction(
                 authenticatedUser.userId(),
                 transactionId
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping
+    public ResponseEntity<List<TransactionResponse>> listTransactions(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) UUID accountId,
+            @RequestParam(required = false) UUID simulationGroupId
+    ) {
+        List<TransactionResponse> response = transactionReadService.listTransactions(
+                authenticatedUser.userId(),
+                new TransactionSearchRequest(
+                        from,
+                        to,
+                        accountId,
+                        simulationGroupId
+                )
         );
 
         return ResponseEntity.ok(response);

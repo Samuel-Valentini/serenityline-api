@@ -1487,6 +1487,635 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionReminderDaysBefore").value(7));
     }
 
+    @Test
+    void listTransactionsShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void listTransactionsShouldRequireFromDate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.fromRequired"));
+    }
+
+    @Test
+    void listTransactionsShouldRequireToDate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.toRequired"));
+    }
+
+    @Test
+    void listTransactionsShouldRejectInvalidDateRange() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-07-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.invalidDateRange"));
+    }
+
+    @Test
+    void listTransactionsShouldRejectDateRangeGreaterThanFiveYears() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-01-01")
+                        .param("to", "2032-01-01"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.dateRangeTooLarge"));
+    }
+
+    @Test
+    void ownerShouldListOwnGroupTransactionsInDateRangeOrderedByChargeDate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto list owner range");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list owner range"
+        );
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto list other range");
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria list other range"
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Fuori range prima", "-10.00", LocalDate.of(2026, 5, 31))
+        );
+
+        UUID toDateTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Movimento finale", "-30.00", LocalDate.of(2026, 6, 30))
+        );
+
+        UUID middleTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Movimento centrale", "-20.00", LocalDate.of(2026, 6, 15))
+        );
+
+        UUID fromDateTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Movimento iniziale", "-15.00", LocalDate.of(2026, 6, 1))
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Fuori range dopo", "-40.00", LocalDate.of(2026, 7, 1))
+        );
+
+        createTransactionViaApi(
+                otherOwner,
+                transactionRequest(otherAccount, otherCategoryId, "Altro gruppo", "-99.00", LocalDate.of(2026, 6, 15))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].transactionId").value(fromDateTransactionId.toString()))
+                .andExpect(jsonPath("$[0].transactionChargeDate").value("2026-06-01"))
+                .andExpect(jsonPath("$[1].transactionId").value(middleTransactionId.toString()))
+                .andExpect(jsonPath("$[1].transactionChargeDate").value("2026-06-15"))
+                .andExpect(jsonPath("$[2].transactionId").value(toDateTransactionId.toString()))
+                .andExpect(jsonPath("$[2].transactionChargeDate").value("2026-06-30"));
+    }
+
+    @Test
+    void ownerShouldListTransactionsFilteredByAccountId() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef firstAccount = createAccount(owner.userGroupId(), "Conto list account first");
+        AccountRef secondAccount = createAccount(owner.userGroupId(), "Conto list account second");
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list account"
+        );
+
+        UUID firstTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(firstAccount, categoryId, "Primo conto uno", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(secondAccount, categoryId, "Secondo conto", "-20.00", LocalDate.of(2026, 6, 11))
+        );
+
+        UUID secondTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(firstAccount, categoryId, "Primo conto due", "-30.00", LocalDate.of(2026, 6, 12))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountId", firstAccount.accountId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].transactionId").value(firstTransactionId.toString()))
+                .andExpect(jsonPath("$[0].accountId").value(firstAccount.accountId().toString()))
+                .andExpect(jsonPath("$[1].transactionId").value(secondTransactionId.toString()))
+                .andExpect(jsonPath("$[1].accountId").value(firstAccount.accountId().toString()));
+    }
+
+    @Test
+    void ownerShouldReceiveEmptyListWhenFilteringByAccountFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto list account own");
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto list account other");
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list account other group"
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Movimento proprio", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountId", otherAccount.accountId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void ownerShouldListTransactionsFilteredBySimulationGroupId() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto list simulation");
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list simulation"
+        );
+
+        UUID firstSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Simulation list first"
+        );
+        linkSimulationGroupToAccount(firstSimulationGroupId, account);
+
+        UUID secondSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Simulation list second"
+        );
+        linkSimulationGroupToAccount(secondSimulationGroupId, account);
+
+        UUID firstSimulationTransactionId = createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        account,
+                        categoryId,
+                        firstSimulationGroupId,
+                        "Simulata uno",
+                        "-10.00",
+                        LocalDate.of(2026, 6, 10)
+                )
+        );
+
+        createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        account,
+                        categoryId,
+                        secondSimulationGroupId,
+                        "Simulata due",
+                        "-20.00",
+                        LocalDate.of(2026, 6, 11)
+                )
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Non simulata", "-30.00", LocalDate.of(2026, 6, 12))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("simulationGroupId", firstSimulationGroupId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(firstSimulationTransactionId.toString()))
+                .andExpect(jsonPath("$[0].transactionIsSimulated").value(true))
+                .andExpect(jsonPath("$[0].simulationGroupId").value(firstSimulationGroupId.toString()));
+    }
+
+    @Test
+    void ownerShouldReceiveEmptyListWhenFilteringBySimulationGroupFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto list simulation own");
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list simulation other group"
+        );
+
+        UUID otherSimulationGroupId = createSimulationGroup(
+                otherOwner.userGroupId(),
+                "Simulation list other group"
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Movimento proprio", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("simulationGroupId", otherSimulationGroupId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void superCollaboratorShouldListGroupTransactions() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto list super");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list super"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Movimento super", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(transactionId.toString()));
+    }
+
+    @Test
+    void viewerCollaboratorShouldListGroupTransactionsEvenWithoutAccountAccess() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto list viewer");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list viewer"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Movimento viewer", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(transactionId.toString()));
+    }
+
+    @Test
+    void collaboratorShouldListOnlyTransactionsOnLinkedAccounts() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto list collaborator linked");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto list collaborator hidden");
+
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list collaborator"
+        );
+
+        UUID linkedTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(linkedAccount, categoryId, "Movimento linked", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Movimento hidden", "-20.00", LocalDate.of(2026, 6, 11))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(linkedTransactionId.toString()))
+                .andExpect(jsonPath("$[0].accountId").value(linkedAccount.accountId().toString()));
+    }
+
+    @Test
+    void collaboratorShouldReceiveEmptyListWhenFilteringByUnlinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto list collaborator linked filter");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto list collaborator hidden filter");
+
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list collaborator hidden filter"
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(linkedAccount, categoryId, "Movimento linked", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Movimento hidden", "-20.00", LocalDate.of(2026, 6, 11))
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountId", hiddenAccount.accountId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void listTransactionsShouldIncludeConfirmedRecurringOccurrences() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto list recurring occurrence");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria list recurring occurrence"
+        );
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        UUID transactionId = createConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 15)
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$[0].transactionIsUserEntered").value(false))
+                .andExpect(jsonPath("$[0].transactionIsConfirmed").value(true))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()));
+    }
+
+    @Test
+    void listTransactionsShouldReturnBadRequestWhenAccountIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountId", "not-a-uuid"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void ownerShouldListTransactionsFilteredByAccountIdAndSimulationGroupId() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef firstAccount = createAccount(owner.userGroupId(), "Conto combined filter first");
+        AccountRef secondAccount = createAccount(owner.userGroupId(), "Conto combined filter second");
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria combined filter"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Simulation combined filter"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, firstAccount);
+        linkSimulationGroupToAccount(simulationGroupId, secondAccount);
+
+        UUID expectedTransactionId = createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        firstAccount,
+                        categoryId,
+                        simulationGroupId,
+                        "Transazione conto e simulazione corretta",
+                        "-10.00",
+                        LocalDate.of(2026, 6, 10)
+                )
+        );
+
+        createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        secondAccount,
+                        categoryId,
+                        simulationGroupId,
+                        "Transazione stessa simulazione altro conto",
+                        "-20.00",
+                        LocalDate.of(2026, 6, 11)
+                )
+        );
+
+        createTransactionViaApi(
+                owner,
+                transactionRequest(
+                        firstAccount,
+                        categoryId,
+                        "Transazione stesso conto non simulata",
+                        "-30.00",
+                        LocalDate.of(2026, 6, 12)
+                )
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountId", firstAccount.accountId().toString())
+                        .param("simulationGroupId", simulationGroupId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(expectedTransactionId.toString()))
+                .andExpect(jsonPath("$[0].accountId").value(firstAccount.accountId().toString()))
+                .andExpect(jsonPath("$[0].simulationGroupId").value(simulationGroupId.toString()));
+    }
+
+    @Test
+    void collaboratorShouldListOnlyLinkedAccountTransactionsWhenFilteringBySimulationGroupId() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator simulation linked"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator simulation hidden"
+        );
+
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria collaborator simulation filter"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Simulation collaborator filter"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, linkedAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        UUID visibleTransactionId = createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        linkedAccount,
+                        categoryId,
+                        simulationGroupId,
+                        "Simulata visibile",
+                        "-10.00",
+                        LocalDate.of(2026, 6, 10)
+                )
+        );
+
+        createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        hiddenAccount,
+                        categoryId,
+                        simulationGroupId,
+                        "Simulata nascosta",
+                        "-20.00",
+                        LocalDate.of(2026, 6, 11)
+                )
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("simulationGroupId", simulationGroupId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(visibleTransactionId.toString()))
+                .andExpect(jsonPath("$[0].accountId").value(linkedAccount.accountId().toString()));
+    }
+
+    @Test
+    void listTransactionsShouldAllowDateRangeUpToFiveYears() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto five years range");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria five years range"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(
+                        account,
+                        categoryId,
+                        "Movimento nel range cinque anni",
+                        "-10.00",
+                        LocalDate.of(2030, 12, 31)
+                )
+        );
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-01-01")
+                        .param("to", "2030-12-31"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(transactionId.toString()));
+    }
+
+    @Test
+    void listTransactionsShouldReturnBadRequestWhenSimulationGroupIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("simulationGroupId", "not-a-uuid"))
+                .andExpect(status().isBadRequest());
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
@@ -2033,6 +2662,84 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 new BigDecimal("-99.90"),
                 categoryId,
                 LocalDate.of(2026, 7, 15),
+                account.accountId(),
+                recurringTransactionId,
+                userGroupId
+        );
+
+        return transactionId;
+    }
+
+    private Map<String, Object> transactionRequest(
+            AccountRef account,
+            UUID categoryId,
+            String description,
+            String amount,
+            LocalDate chargeDate
+    ) {
+        Map<String, Object> body = validTransactionRequest(account, categoryId);
+        body.put("transactionDescription", description);
+        body.put("transactionAmount", new BigDecimal(amount));
+        body.put("transactionChargeDate", chargeDate.toString());
+        return body;
+    }
+
+    private Map<String, Object> simulatedTransactionRequest(
+            AccountRef account,
+            UUID categoryId,
+            UUID simulationGroupId,
+            String description,
+            String amount,
+            LocalDate chargeDate
+    ) {
+        Map<String, Object> body = transactionRequest(
+                account,
+                categoryId,
+                description,
+                amount,
+                chargeDate
+        );
+
+        body.put("transactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+
+        return body;
+    }
+
+    private UUID createConfirmedRecurringOccurrence(
+            UUID userGroupId,
+            AccountRef account,
+            UUID categoryId,
+            UUID recurringTransactionId,
+            LocalDate chargeDate
+    ) {
+        UUID transactionId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                        INSERT INTO transactions (
+                            transaction_id,
+                            transaction_description,
+                            transaction_amount,
+                            transaction_affects_account_balance,
+                            transaction_affects_liquidity,
+                            category_id,
+                            transaction_charge_date,
+                            transaction_is_confirmed,
+                            account_id,
+                            transaction_is_simulated,
+                            transaction_is_user_entered,
+                            recurring_transaction_id,
+                            transaction_reminder_enabled,
+                            transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, TRUE, TRUE, ?, ?, TRUE, ?, FALSE, FALSE, ?, TRUE, 7, ?)
+                        """,
+                transactionId,
+                "Occorrenza ricorrente confermata",
+                new BigDecimal("-99.90"),
+                categoryId,
+                chargeDate,
                 account.accountId(),
                 recurringTransactionId,
                 userGroupId
