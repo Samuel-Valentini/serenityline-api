@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -1007,6 +1008,485 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(countTransactionsForUserGroup(owner.userGroupId())).isZero();
     }
 
+    @Test
+    void getTransactionShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldReadOwnGroupTransactionById() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        AccountRef account = createAccount(owner.userGroupId(), "Conto read owner");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read owner"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(account, categoryId)
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.transactionDescription").value("Spesa supermercato"))
+                .andExpect(jsonPath("$.transactionAmount").value(-42.5))
+                .andExpect(jsonPath("$.transactionAffectsAccountBalance").value(true))
+                .andExpect(jsonPath("$.transactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
+                .andExpect(jsonPath("$.transactionChargeDate").value("2026-06-10"))
+                .andExpect(jsonPath("$.transactionIsConfirmed").value(false))
+                .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.creditCardId").doesNotExist())
+                .andExpect(jsonPath("$.bucketId").doesNotExist())
+                .andExpect(jsonPath("$.transactionIsSimulated").value(false))
+                .andExpect(jsonPath("$.simulationGroupId").doesNotExist())
+                .andExpect(jsonPath("$.transactionIsUserEntered").value(true))
+                .andExpect(jsonPath("$.recurringTransactionId").doesNotExist())
+                .andExpect(jsonPath("$.transactionReminderEnabled").value(true))
+                .andExpect(jsonPath("$.transactionReminderDaysBefore").value(7))
+                .andExpect(jsonPath("$.transactionCreatedAt").exists())
+                .andExpect(jsonPath("$.transactionUpdatedAt").exists());
+    }
+
+    @Test
+    void ownerShouldReadTransactionWithOptionalReferencesById() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto read optional references");
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta read optional references"
+        );
+
+        BucketRef bucket = createOpenBucket(
+                owner.userGroupId(),
+                "Bucket read optional references"
+        );
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Simulation read optional references"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read optional references"
+        );
+
+        Map<String, Object> body = validTransactionRequest(account, categoryId);
+        body.put("creditCardId", creditCard.creditCardId());
+        body.put("bucketId", bucket.bucketId());
+        body.put("transactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+        body.put("transactionIsConfirmed", true);
+        body.put("transactionReminderEnabled", false);
+        body.put("transactionReminderDaysBefore", 3);
+
+        UUID transactionId = createTransactionViaApi(owner, body);
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.transactionDescription").value("Spesa supermercato"))
+                .andExpect(jsonPath("$.transactionAmount").value(-42.5))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
+                .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.creditCardId").value(creditCard.creditCardId().toString()))
+                .andExpect(jsonPath("$.bucketId").value(bucket.bucketId().toString()))
+                .andExpect(jsonPath("$.transactionIsSimulated").value(true))
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
+                .andExpect(jsonPath("$.transactionIsUserEntered").value(true))
+                .andExpect(jsonPath("$.recurringTransactionId").doesNotExist())
+                .andExpect(jsonPath("$.transactionReminderEnabled").value(false))
+                .andExpect(jsonPath("$.transactionReminderDaysBefore").value(3))
+                .andExpect(jsonPath("$.transactionCreatedAt").exists())
+                .andExpect(jsonPath("$.transactionUpdatedAt").exists());
+    }
+
+    @Test
+    void superCollaboratorShouldReadGroupTransactionById() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto read super");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read super"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(account, categoryId)
+        );
+
+        String accessToken = accessTokenFor(superCollaborator);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()));
+    }
+
+    @Test
+    void viewerCollaboratorShouldReadGroupTransactionByIdEvenWithoutAccountAccess() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto read viewer");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read viewer"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(account, categoryId)
+        );
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()));
+    }
+
+    @Test
+    void collaboratorShouldReadLinkedAccountTransactionById() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto read collaborator linked");
+        grantAccountAccess(account, collaborator);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read collaborator linked"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(account, categoryId)
+        );
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenReadingUnlinkedAccountTransactionById() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto read collaborator accessible"
+        );
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto read collaborator hidden"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read collaborator hidden"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(hiddenAccount, categoryId)
+        );
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenReadingTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(
+                otherOwner.userGroupId(),
+                "Conto read other group"
+        );
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria read other group"
+        );
+
+        UUID otherTransactionId = createTransactionViaApi(
+                otherOwner,
+                validTransactionRequest(otherAccount, otherCategoryId)
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + otherTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenReadingTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(
+                otherOwner.userGroupId(),
+                "Conto read viewer other group"
+        );
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria read viewer other group"
+        );
+
+        UUID otherTransactionId = createTransactionViaApi(
+                otherOwner,
+                validTransactionRequest(otherAccount, otherCategoryId)
+        );
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + otherTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenReadingTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(
+                otherOwner.userGroupId(),
+                "Conto read collaborator other group"
+        );
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria read collaborator other group"
+        );
+
+        UUID otherTransactionId = createTransactionViaApi(
+                otherOwner,
+                validTransactionRequest(otherAccount, otherCategoryId)
+        );
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + otherTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void getTransactionShouldReturnNotFoundWhenTransactionDoesNotExist() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void getTransactionShouldReturnBadRequestWhenTransactionIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void collaboratorShouldNotReadTransactionOnlyBecauseLinkedInTransactionsUsers() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto read collaborator transaction-user-only hidden"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read collaborator transaction-user-only"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(hiddenAccount, categoryId)
+        );
+
+        linkTransactionToUser(
+                transactionId,
+                collaborator.userId(),
+                collaborator.userGroupId()
+        );
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void ownerShouldReadTransactionCreatedByCollaboratorById() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto read owner reads collaborator transaction"
+        );
+        grantAccountAccess(account, collaborator);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read owner reads collaborator transaction"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                collaborator,
+                validTransactionRequest(account, categoryId)
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()));
+    }
+
+    @Test
+    void ownerShouldReadTransactionAfterCategoryWasDeactivated() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto read after category deactivated"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read after deactivation"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(account, categoryId)
+        );
+
+        deactivateCategory(categoryId);
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()));
+    }
+
+    @Test
+    void ownerShouldReadConfirmedRecurringOccurrenceById() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto read confirmed recurring occurrence"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria read confirmed recurring occurrence"
+        );
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 7, 15)
+        );
+
+        UUID transactionId = createConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.transactionDescription").value("Occorrenza ricorrente confermata"))
+                .andExpect(jsonPath("$.transactionAmount").value(-99.9))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
+                .andExpect(jsonPath("$.transactionChargeDate").value("2026-07-15"))
+                .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
+                .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.transactionIsUserEntered").value(false))
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.transactionReminderEnabled").value(true))
+                .andExpect(jsonPath("$.transactionReminderDaysBefore").value(7));
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
@@ -1449,6 +1929,116 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
 
         return jwtTokenService.createAccessToken(user)
                 .token();
+    }
+
+    private UUID createTransactionViaApi(
+            UserRef actor,
+            Map<String, Object> body
+    ) throws Exception {
+        MvcResult result = mockMvc.perform(post(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(actor)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        return transactionIdFrom(result);
+    }
+
+    private void linkTransactionToUser(
+            UUID transactionId,
+            UUID userId,
+            UUID userGroupId
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO transactions_users (
+                            transaction_id,
+                            user_id,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?)
+                        ON CONFLICT (transaction_id, user_id) DO NOTHING
+                        """,
+                transactionId,
+                userId,
+                userGroupId
+        );
+    }
+
+    private void deactivateCategory(UUID categoryId) {
+        jdbcTemplate.update("""
+                        INSERT INTO category_status_history (
+                            category_id,
+                            category_is_active,
+                            category_status_updated_at
+                        )
+                        VALUES (?, FALSE, now() + interval '1 second')
+                        """,
+                categoryId
+        );
+    }
+
+    private UUID createRecurringTransaction(
+            UUID userGroupId,
+            LocalDate firstPaymentDate
+    ) {
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                        INSERT INTO recurring_transactions (
+                            recurring_transaction_id,
+                            recurring_transaction_first_payment_date,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?)
+                        """,
+                recurringTransactionId,
+                firstPaymentDate,
+                userGroupId
+        );
+
+        return recurringTransactionId;
+    }
+
+    private UUID createConfirmedRecurringOccurrence(
+            UUID userGroupId,
+            AccountRef account,
+            UUID categoryId,
+            UUID recurringTransactionId
+    ) {
+        UUID transactionId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                        INSERT INTO transactions (
+                            transaction_id,
+                            transaction_description,
+                            transaction_amount,
+                            transaction_affects_account_balance,
+                            transaction_affects_liquidity,
+                            category_id,
+                            transaction_charge_date,
+                            transaction_is_confirmed,
+                            account_id,
+                            transaction_is_simulated,
+                            transaction_is_user_entered,
+                            recurring_transaction_id,
+                            transaction_reminder_enabled,
+                            transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, TRUE, TRUE, ?, ?, TRUE, ?, FALSE, FALSE, ?, TRUE, 7, ?)
+                        """,
+                transactionId,
+                "Occorrenza ricorrente confermata",
+                new BigDecimal("-99.90"),
+                categoryId,
+                LocalDate.of(2026, 7, 15),
+                account.accountId(),
+                recurringTransactionId,
+                userGroupId
+        );
+
+        return transactionId;
     }
 
     private record UserRef(
