@@ -2566,6 +2566,1070 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(1L);
     }
 
+    @Test
+    void linkSimulationGroupAccountShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + UUID.randomUUID() + "/accounts/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldLinkGroupAccountToActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario link owner"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto link owner"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario link owner"))
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(account.accountId().toString()));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                account.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void superCollaboratorShouldLinkGroupAccountToActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario link super"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto link super"
+        );
+
+        String accessToken = accessTokenFor(superCollaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(account.accountId().toString()));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                account.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void linkSimulationGroupAccountShouldBeIdempotent() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario link idempotente"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto link idempotente"
+        );
+
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(account.accountId().toString()));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                account.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenLinkingAccountToArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario link archived"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto link archived"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenLinkingAccountToSimulationGroupFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        UUID otherSimulationGroupId = createSimulationGroup(
+                otherOwner.userGroupId(),
+                "Scenario link altro gruppo"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto link owner cross"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + otherSimulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupLinks(otherSimulationGroupId, otherOwner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenLinkingAccountFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario link account altro gruppo"
+        );
+
+        AccountRef otherAccount = createAccount(
+                otherOwner.userGroupId(),
+                "Conto link altro gruppo"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + otherAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldLinkOperableAccountToOperableSimulationGroupAndSeeAllAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef alreadyLinkedOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link già operabile"
+        );
+        AccountRef newOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link nuovo operabile"
+        );
+        AccountRef nonOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link non operabile"
+        );
+
+        grantAccountAccess(alreadyLinkedOperableAccount, viewer);
+        grantAccountAccess(newOperableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario link viewer"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, alreadyLinkedOperableAccount);
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + newOperableAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(3)))
+                .andExpect(content().string(containsString(alreadyLinkedOperableAccount.accountId().toString())))
+                .andExpect(content().string(containsString(newOperableAccount.accountId().toString())))
+                .andExpect(content().string(containsString(nonOperableAccount.accountId().toString())));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                newOperableAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveForbiddenWhenLinkingNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link operabile base"
+        );
+        AccountRef nonOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link forbidden"
+        );
+
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer link forbidden"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, operableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + nonOperableAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.account.operationNotAllowed"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                nonOperableAccount.accountId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenLinkingAccountToUnlinkedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link unlinked"
+        );
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer link unlinked"
+        );
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + operableAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenLinkingAccountToSimulationGroupLinkedOnlyToNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link operable target"
+        );
+        AccountRef nonOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer link non operable target"
+        );
+
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer link non operable only"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + operableAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                operableAccount.accountId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void collaboratorShouldLinkAccessibleAccountAndHideHiddenAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef alreadyLinkedAccessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator link già accessibile"
+        );
+        AccountRef newAccessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator link nuovo accessibile"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator link hidden"
+        );
+
+        grantAccountAccess(alreadyLinkedAccessibleAccount, collaborator);
+        grantAccountAccess(newAccessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator link"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, alreadyLinkedAccessibleAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + newAccessibleAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(2)))
+                .andExpect(content().string(containsString(alreadyLinkedAccessibleAccount.accountId().toString())))
+                .andExpect(content().string(containsString(newAccessibleAccount.accountId().toString())))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                newAccessibleAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenLinkingHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator link accessibile base"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator link not found"
+        );
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator link hidden account"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + hiddenAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                hiddenAccount.accountId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenLinkingAccountToHiddenSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator link target accessible"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator link target hidden"
+        );
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator link hidden simulation"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + accessibleAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"))
+                .andExpect(content().string(not(containsString("Scenario collaborator link hidden simulation"))))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                accessibleAccount.accountId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void unlinkSimulationGroupAccountShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + UUID.randomUUID() + "/accounts/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldUnlinkGroupAccountFromActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink owner"
+        );
+
+        AccountRef accountToRemove = createAccount(
+                owner.userGroupId(),
+                "Conto unlink owner remove"
+        );
+        AccountRef accountToKeep = createAccount(
+                owner.userGroupId(),
+                "Conto unlink owner keep"
+        );
+
+        linkSimulationGroupToAccount(simulationGroupId, accountToRemove);
+        linkSimulationGroupToAccount(simulationGroupId, accountToKeep);
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + accountToRemove.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(accountToKeep.accountId().toString()))
+                .andExpect(content().string(not(containsString(accountToRemove.accountId().toString()))));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                accountToRemove.accountId(),
+                owner.userGroupId()
+        )).isZero();
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                accountToKeep.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldUnlinkLastAccountFromActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink owner last"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto unlink owner last"
+        );
+
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(0)));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUnlinkingMissingLink() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink missing link"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto unlink missing link"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.accountLinkNotFound"));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUnlinkingFromArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink archived"
+        );
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto unlink archived"
+        );
+
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                account.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUnlinkingAccountFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink account altro gruppo"
+        );
+
+        AccountRef otherAccount = createAccount(
+                otherOwner.userGroupId(),
+                "Conto unlink altro gruppo"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + otherAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldUnlinkOperableAccountWhenAnotherOperableAccountRemainsAndSeeAllAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef accountToRemove = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink remove"
+        );
+        AccountRef accountToKeep = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink keep"
+        );
+        AccountRef nonOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink non operable"
+        );
+
+        grantAccountAccess(accountToRemove, viewer);
+        grantAccountAccess(accountToKeep, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink viewer"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accountToRemove);
+        linkSimulationGroupToAccount(simulationGroupId, accountToKeep);
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + accountToRemove.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(2)))
+                .andExpect(content().string(containsString(accountToKeep.accountId().toString())))
+                .andExpect(content().string(containsString(nonOperableAccount.accountId().toString())))
+                .andExpect(content().string(not(containsString(accountToRemove.accountId().toString()))));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                accountToRemove.accountId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldNotUnlinkLastOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink last operable"
+        );
+        AccountRef nonOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink last non operable"
+        );
+
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer unlink last"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, operableAccount);
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + operableAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.accessibleAccountRequired"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                operableAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveForbiddenWhenUnlinkingNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink operable base"
+        );
+        AccountRef nonOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink forbidden"
+        );
+
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer unlink forbidden"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, operableAccount);
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + nonOperableAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.account.operationNotAllowed"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                nonOperableAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenUnlinkingFromUnlinkedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer unlink unlinked"
+        );
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer unlink unlinked"
+        );
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + operableAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void collaboratorShouldUnlinkAccessibleAccountWhenAnotherAccessibleAccountRemainsAndHideHiddenAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accountToRemove = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink remove"
+        );
+        AccountRef accountToKeep = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink keep"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink hidden"
+        );
+
+        grantAccountAccess(accountToRemove, collaborator);
+        grantAccountAccess(accountToKeep, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink collaborator"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accountToRemove);
+        linkSimulationGroupToAccount(simulationGroupId, accountToKeep);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + accountToRemove.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(accountToKeep.accountId().toString()))
+                .andExpect(content().string(not(containsString(accountToRemove.accountId().toString()))))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                accountToRemove.accountId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void collaboratorShouldNotUnlinkLastAccessibleAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink last accessible"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink last hidden"
+        );
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator unlink last"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + accessibleAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.accessibleAccountRequired"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                accessibleAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenUnlinkingHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink accessible base"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink hidden account"
+        );
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator unlink hidden account"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + hiddenAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                hiddenAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenUnlinkingFromHiddenSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink accessible target"
+        );
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink hidden target"
+        );
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator unlink hidden simulation"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + accessibleAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"))
+                .andExpect(content().string(not(containsString("Scenario collaborator unlink hidden simulation"))))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                hiddenAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenUnlinkingMissingLinkForAccessibleAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink linked"
+        );
+        AccountRef unlinkedAccessibleAccount = createAccount(
+                owner.userGroupId(),
+                "Conto collaborator unlink missing link"
+        );
+
+        grantAccountAccess(linkedAccessibleAccount, collaborator);
+        grantAccountAccess(unlinkedAccessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator unlink missing link"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, linkedAccessibleAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + unlinkedAccessibleAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.accountLinkNotFound"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                linkedAccessibleAccount.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenLinkingAccountToMissingSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        AccountRef account = createAccount(owner.userGroupId(), "Conto link missing simulation");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + UUID.randomUUID() + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenLinkingMissingAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario link missing account"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(countSimulationGroupLinks(simulationGroupId, owner.userGroupId()))
+                .isZero();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenLinkingAccountFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto collaborator base");
+        AccountRef otherGroupAccount = createAccount(otherOwner.userGroupId(), "Conto collaborator other group");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator link other group account"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/" + otherGroupAccount.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                simulationGroupId,
+                otherGroupAccount.accountId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void unlinkSimulationGroupAccountShouldNotDeleteSameAccountLinkFromAnotherSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto unlink altra simulation");
+
+        UUID firstSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink senza link"
+        );
+
+        UUID secondSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario unlink con link"
+        );
+
+        linkSimulationGroupToAccount(secondSimulationGroupId, account);
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(delete(SIMULATION_GROUPS_PATH + "/" + firstSimulationGroupId + "/accounts/" + account.accountId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.accountLinkNotFound"));
+
+        assertThat(countSimulationGroupAccountLinks(
+                firstSimulationGroupId,
+                account.accountId(),
+                owner.userGroupId()
+        )).isZero();
+
+        assertThat(countSimulationGroupAccountLinks(
+                secondSimulationGroupId,
+                account.accountId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void linkSimulationGroupAccountShouldRejectMalformedAccountId() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario malformed account id"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/accounts/not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("error.badRequest"));
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
 
@@ -2822,6 +3886,24 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
                 Long.class,
                 userGroupId,
                 simulationGroupName
+        );
+
+        return count == null ? 0L : count;
+    }
+
+    private long countSimulationGroupLinks(
+            UUID simulationGroupId,
+            UUID userGroupId
+    ) {
+        Long count = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM simulation_groups_accounts
+                        WHERE simulation_group_id = ?
+                          AND user_group_id = ?
+                        """,
+                Long.class,
+                simulationGroupId,
+                userGroupId
         );
 
         return count == null ? 0L : count;

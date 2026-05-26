@@ -4,10 +4,7 @@ import jakarta.validation.Valid;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupCreateRequest;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupResponse;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupUpdateRequest;
-import me.serenityline.api.finance.simulation.service.SimulationGroupCreationService;
-import me.serenityline.api.finance.simulation.service.SimulationGroupLifecycleService;
-import me.serenityline.api.finance.simulation.service.SimulationGroupQueryService;
-import me.serenityline.api.finance.simulation.service.SimulationGroupUpdateService;
+import me.serenityline.api.finance.simulation.service.*;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,8 +23,9 @@ public class SimulationGroupController {
     private final SimulationGroupQueryService simulationGroupQueryService;
     private final SimulationGroupUpdateService simulationGroupUpdateService;
     private final SimulationGroupLifecycleService simulationGroupLifecycleService;
+    private final SimulationGroupAccountService simulationGroupAccountService;
 
-    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService, SimulationGroupQueryService simulationGroupQueryService, SimulationGroupUpdateService simulationGroupUpdateService, SimulationGroupLifecycleService simulationGroupLifecycleService) {
+    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService, SimulationGroupQueryService simulationGroupQueryService, SimulationGroupUpdateService simulationGroupUpdateService, SimulationGroupLifecycleService simulationGroupLifecycleService, SimulationGroupAccountService simulationGroupAccountService) {
         this.simulationGroupCreationService = Objects.requireNonNull(
                 simulationGroupCreationService,
                 "simulationGroupCreationService"
@@ -43,6 +41,10 @@ public class SimulationGroupController {
         this.simulationGroupLifecycleService = Objects.requireNonNull(
                 simulationGroupLifecycleService,
                 "simulationGroupLifecycleService"
+        );
+        this.simulationGroupAccountService = Objects.requireNonNull(
+                simulationGroupAccountService,
+                "simulationGroupAccountService"
         );
     }
 
@@ -123,6 +125,36 @@ public class SimulationGroupController {
         SimulationGroupResponse response = simulationGroupLifecycleService.restoreSimulationGroup(
                 authenticatedUser.userId(),
                 simulationGroupId
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{simulationGroupId}/accounts/{accountId}")
+    public ResponseEntity<SimulationGroupResponse> linkAccount(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID simulationGroupId,
+            @PathVariable UUID accountId
+    ) {
+        SimulationGroupResponse response = simulationGroupAccountService.linkAccount(
+                authenticatedUser.userId(),
+                simulationGroupId,
+                accountId
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{simulationGroupId}/accounts/{accountId}")
+    public ResponseEntity<SimulationGroupResponse> unlinkAccount(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID simulationGroupId,
+            @PathVariable UUID accountId
+    ) {
+        SimulationGroupResponse response = simulationGroupAccountService.unlinkAccount(
+                authenticatedUser.userId(),
+                simulationGroupId,
+                accountId
         );
 
         return ResponseEntity.ok(response);
