@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/finance/simulation-groups")
@@ -55,6 +56,19 @@ public class SimulationGroupController {
         List<SimulationGroupResponse> response = simulationGroupQueryService.findSimulationGroups(
                 authenticatedUser.userId(),
                 status
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{simulationGroupId}")
+    public ResponseEntity<SimulationGroupResponse> findSimulationGroup(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID simulationGroupId
+    ) {
+        SimulationGroupResponse response = simulationGroupQueryService.findSimulationGroup(
+                authenticatedUser.userId(),
+                simulationGroupId
         );
 
         return ResponseEntity.ok(response);

@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface SimulationGroupRepository extends JpaRepository<SimulationGroup, UUID> {
@@ -68,5 +69,32 @@ public interface SimulationGroupRepository extends JpaRepository<SimulationGroup
             @Param("userId") UUID userId,
             @Param("includeActive") boolean includeActive,
             @Param("includeArchived") boolean includeArchived
+    );
+
+    Optional<SimulationGroup> findBySimulationGroupIdAndUserGroup_UserGroupId(
+            UUID simulationGroupId,
+            UUID userGroupId
+    );
+
+    @Query(value = """
+            SELECT simulation_group.*
+            FROM simulation_groups simulation_group
+            WHERE simulation_group.simulation_group_id = :simulationGroupId
+              AND simulation_group.user_group_id = :userGroupId
+              AND EXISTS (
+                    SELECT 1
+                    FROM simulation_groups_accounts simulation_group_account
+                    JOIN accounts_users account_user
+                      ON account_user.account_id = simulation_group_account.account_id
+                     AND account_user.user_group_id = simulation_group_account.user_group_id
+                    WHERE simulation_group_account.simulation_group_id = simulation_group.simulation_group_id
+                      AND simulation_group_account.user_group_id = simulation_group.user_group_id
+                      AND account_user.user_id = :userId
+              )
+            """, nativeQuery = true)
+    Optional<SimulationGroup> findVisibleToLinkedUserById(
+            @Param("simulationGroupId") UUID simulationGroupId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
     );
 }

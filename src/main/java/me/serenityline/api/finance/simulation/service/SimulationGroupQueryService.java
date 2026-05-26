@@ -59,6 +59,35 @@ public class SimulationGroupQueryService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public SimulationGroupResponse findSimulationGroup(
+            UUID currentUserId,
+            UUID simulationGroupId
+    ) {
+        Objects.requireNonNull(currentUserId, "currentUserId");
+        Objects.requireNonNull(simulationGroupId, "simulationGroupId");
+
+        User currentUser = findCurrentUser(currentUserId);
+        UUID userGroupId = currentUser.getUserGroup().getUserGroupId();
+
+        SimulationGroup simulationGroup = findVisibleSimulationGroup(
+                currentUser,
+                userGroupId,
+                simulationGroupId
+        );
+
+        List<UUID> accountIds = findAccountIdsForResponse(
+                currentUser,
+                userGroupId,
+                simulationGroup
+        );
+
+        return SimulationGroupResponse.from(
+                simulationGroup,
+                accountIds
+        );
+    }
+
     private User findCurrentUser(UUID currentUserId) {
         return userRepository.findById(currentUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
@@ -108,5 +137,26 @@ public class SimulationGroupQueryService {
         return user.getUserRole() == UserRole.OWNER
                 || user.getUserRole() == UserRole.SUPER_COLLABORATOR
                 || user.getUserRole() == UserRole.VIEWER_COLLABORATOR;
+    }
+
+    private SimulationGroup findVisibleSimulationGroup(
+            User currentUser,
+            UUID userGroupId,
+            UUID simulationGroupId
+    ) {
+        if (canSeeAllSimulationGroups(currentUser)) {
+            return simulationGroupRepository.findBySimulationGroupIdAndUserGroup_UserGroupId(
+                            simulationGroupId,
+                            userGroupId
+                    )
+                    .orElseThrow(() -> new ResourceNotFoundException("finance.simulationGroup.notFound"));
+        }
+
+        return simulationGroupRepository.findVisibleToLinkedUserById(
+                        simulationGroupId,
+                        userGroupId,
+                        currentUser.getUserId()
+                )
+                .orElseThrow(() -> new ResourceNotFoundException("finance.simulationGroup.notFound"));
     }
 }
