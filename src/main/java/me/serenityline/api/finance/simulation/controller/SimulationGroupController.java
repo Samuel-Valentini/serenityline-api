@@ -5,6 +5,7 @@ import me.serenityline.api.finance.simulation.dto.SimulationGroupCreateRequest;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupResponse;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupUpdateRequest;
 import me.serenityline.api.finance.simulation.service.SimulationGroupCreationService;
+import me.serenityline.api.finance.simulation.service.SimulationGroupLifecycleService;
 import me.serenityline.api.finance.simulation.service.SimulationGroupQueryService;
 import me.serenityline.api.finance.simulation.service.SimulationGroupUpdateService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
@@ -24,8 +25,9 @@ public class SimulationGroupController {
     private final SimulationGroupCreationService simulationGroupCreationService;
     private final SimulationGroupQueryService simulationGroupQueryService;
     private final SimulationGroupUpdateService simulationGroupUpdateService;
+    private final SimulationGroupLifecycleService simulationGroupLifecycleService;
 
-    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService, SimulationGroupQueryService simulationGroupQueryService, SimulationGroupUpdateService simulationGroupUpdateService) {
+    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService, SimulationGroupQueryService simulationGroupQueryService, SimulationGroupUpdateService simulationGroupUpdateService, SimulationGroupLifecycleService simulationGroupLifecycleService) {
         this.simulationGroupCreationService = Objects.requireNonNull(
                 simulationGroupCreationService,
                 "simulationGroupCreationService"
@@ -37,6 +39,10 @@ public class SimulationGroupController {
         this.simulationGroupUpdateService = Objects.requireNonNull(
                 simulationGroupUpdateService,
                 "simulationGroupUpdateService"
+        );
+        this.simulationGroupLifecycleService = Objects.requireNonNull(
+                simulationGroupLifecycleService,
+                "simulationGroupLifecycleService"
         );
     }
 
@@ -91,6 +97,32 @@ public class SimulationGroupController {
                 authenticatedUser.userId(),
                 simulationGroupId,
                 request
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{simulationGroupId}/archive")
+    public ResponseEntity<SimulationGroupResponse> archiveSimulationGroup(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID simulationGroupId
+    ) {
+        SimulationGroupResponse response = simulationGroupLifecycleService.archiveSimulationGroup(
+                authenticatedUser.userId(),
+                simulationGroupId
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{simulationGroupId}/restore")
+    public ResponseEntity<SimulationGroupResponse> restoreSimulationGroup(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID simulationGroupId
+    ) {
+        SimulationGroupResponse response = simulationGroupLifecycleService.restoreSimulationGroup(
+                authenticatedUser.userId(),
+                simulationGroupId
         );
 
         return ResponseEntity.ok(response);

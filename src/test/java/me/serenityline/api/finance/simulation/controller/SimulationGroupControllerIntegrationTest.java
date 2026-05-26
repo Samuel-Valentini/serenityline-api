@@ -1946,6 +1946,626 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(2L);
     }
 
+    @Test
+    void archiveSimulationGroupShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + UUID.randomUUID() + "/archive"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldArchiveActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archive owner"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario archive owner"))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").exists());
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isTrue();
+    }
+
+    @Test
+    void superCollaboratorShouldArchiveActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archive super"
+        );
+
+        String accessToken = accessTokenFor(superCollaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").exists());
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isTrue();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenArchivingAlreadyArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archive già archiviato"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isTrue();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenArchivingSimulationGroupFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        UUID otherSimulationGroupId = createSimulationGroup(
+                otherOwner.userGroupId(),
+                "Scenario archive altro gruppo"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + otherSimulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(isSimulationGroupArchived(otherSimulationGroupId)).isFalse();
+    }
+
+    @Test
+    void viewerCollaboratorShouldArchiveSimulationGroupLinkedToOperableAccountAndSeeAllAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(owner.userGroupId(), "Conto viewer archive operabile");
+        AccountRef nonOperableAccount = createAccount(owner.userGroupId(), "Conto viewer archive non operabile");
+
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archive viewer"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, operableAccount);
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").exists())
+                .andExpect(jsonPath("$.accountIds", hasSize(2)))
+                .andExpect(content().string(containsString(operableAccount.accountId().toString())))
+                .andExpect(content().string(containsString(nonOperableAccount.accountId().toString())));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isTrue();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenArchivingSimulationGroupLinkedOnlyToNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef nonOperableAccount = createAccount(owner.userGroupId(), "Conto viewer archive non operabile only");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archive viewer non operabile only"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isFalse();
+    }
+
+    @Test
+    void collaboratorShouldArchiveSimulationGroupLinkedToAccessibleAccountAndHideOtherAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto collaborator archive accessibile");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto collaborator archive nascosto");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archive collaborator"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").exists())
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.accountId().toString()))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenArchivingSimulationGroupLinkedOnlyToHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto collaborator archive hidden only");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archive collaborator hidden only"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"))
+                .andExpect(content().string(not(containsString("Scenario archive collaborator hidden only"))))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isFalse();
+    }
+
+    @Test
+    void restoreSimulationGroupShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + UUID.randomUUID() + "/restore"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldRestoreArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore owner"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario restore owner"))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").doesNotExist());
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isFalse();
+        assertThat(countActiveSimulationGroupsByName(owner.userGroupId(), "Scenario restore owner"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void superCollaboratorShouldRestoreArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore super"
+        );
+
+        String accessToken = accessTokenFor(superCollaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").doesNotExist());
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isFalse();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenRestoringAlreadyActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore già attivo"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isFalse();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenRestoringSimulationGroupFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        UUID otherSimulationGroupId = createArchivedSimulationGroup(
+                otherOwner.userGroupId(),
+                "Scenario restore altro gruppo"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + otherSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(isSimulationGroupArchived(otherSimulationGroupId)).isTrue();
+    }
+
+    @Test
+    void viewerCollaboratorShouldRestoreSimulationGroupLinkedToOperableAccountAndSeeAllAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(owner.userGroupId(), "Conto viewer restore operabile");
+        AccountRef nonOperableAccount = createAccount(owner.userGroupId(), "Conto viewer restore non operabile");
+
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore viewer"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, operableAccount);
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").doesNotExist())
+                .andExpect(jsonPath("$.accountIds", hasSize(2)))
+                .andExpect(content().string(containsString(operableAccount.accountId().toString())))
+                .andExpect(content().string(containsString(nonOperableAccount.accountId().toString())));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isFalse();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenRestoringSimulationGroupLinkedOnlyToNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef nonOperableAccount = createAccount(owner.userGroupId(), "Conto viewer restore non operabile only");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore viewer non operabile only"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldRestoreSimulationGroupLinkedToAccessibleAccountAndHideOtherAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto collaborator restore accessibile");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto collaborator restore nascosto");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore collaborator"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").doesNotExist())
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.accountId().toString()))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isFalse();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenRestoringSimulationGroupLinkedOnlyToHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto collaborator restore hidden only");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore collaborator hidden only"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"))
+                .andExpect(content().string(not(containsString("Scenario restore collaborator hidden only"))))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(isSimulationGroupArchived(simulationGroupId)).isTrue();
+    }
+
+    @Test
+    void ownerShouldReceiveConflictWhenRestoringArchivedSimulationGroupWithActiveDuplicateName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "Scenario restore duplicato");
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore duplicato"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + archivedSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameAlreadyExists"));
+
+        assertThat(isSimulationGroupArchived(archivedSimulationGroupId)).isTrue();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveConflictWhenRestoringArchivedSimulationGroupWithActiveDuplicateName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(owner.userGroupId(), "Conto viewer restore duplicate");
+
+        grantAccountAccess(operableAccount, viewer);
+
+        createSimulationGroup(owner.userGroupId(), "Scenario restore viewer duplicate");
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore viewer duplicate"
+        );
+        linkSimulationGroupToAccount(archivedSimulationGroupId, operableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + archivedSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameAlreadyExists"));
+
+        assertThat(isSimulationGroupArchived(archivedSimulationGroupId)).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldReceiveConflictWhenRestoringArchivedSimulationGroupWithVisibleActiveDuplicateName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto collaborator restore duplicate visible");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID activeDuplicateSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore collaborator duplicate visible"
+        );
+        linkSimulationGroupToAccount(activeDuplicateSimulationGroupId, accessibleAccount);
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore collaborator duplicate visible"
+        );
+        linkSimulationGroupToAccount(archivedSimulationGroupId, accessibleAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + archivedSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameAlreadyExists"));
+
+        assertThat(isSimulationGroupArchived(archivedSimulationGroupId)).isTrue();
+    }
+
+    @Test
+    void collaboratorShouldNotLearnHiddenDuplicateNameWhenRestoringArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto collaborator restore target");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto collaborator restore duplicate hidden");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID activeHiddenDuplicateSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore collaborator duplicate hidden"
+        );
+        linkSimulationGroupToAccount(activeHiddenDuplicateSimulationGroupId, hiddenAccount);
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario restore collaborator duplicate hidden"
+        );
+        linkSimulationGroupToAccount(archivedSimulationGroupId, accessibleAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + archivedSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameNotAllowed"))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(isSimulationGroupArchived(archivedSimulationGroupId)).isTrue();
+    }
+
+    @Test
+    void restoreSimulationGroupShouldRejectNormalizedDuplicateName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "Scenario normalizzato restore");
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "  SCENARIO   NORMALIZZATO   RESTORE  "
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + archivedSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameAlreadyExists"));
+
+        assertThat(isSimulationGroupArchived(archivedSimulationGroupId)).isTrue();
+    }
+
+    @Test
+    void archiveSimulationGroupShouldFreeNameForNewActiveSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario nome riutilizzabile"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + simulationGroupId + "/archive")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk());
+
+        String requestBody = createRequestWithoutAccountIdsJson(
+                "Scenario nome riutilizzabile",
+                null
+        );
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario nome riutilizzabile"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario nome riutilizzabile"))
+                .isEqualTo(2L);
+
+        assertThat(countActiveSimulationGroupsByName(owner.userGroupId(), "Scenario nome riutilizzabile"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void restoreSimulationGroupShouldIgnoreActiveDuplicateNameInAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(
+                otherOwner.userGroupId(),
+                "Scenario duplicate other group"
+        );
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario duplicate other group"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + archivedSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(archivedSimulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario duplicate other group"))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").doesNotExist());
+
+        assertThat(isSimulationGroupArchived(archivedSimulationGroupId)).isFalse();
+    }
+
+    @Test
+    void restoreSimulationGroupShouldAllowDuplicateNameWhenOtherDuplicateIsArchived() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario duplicate archived only"
+        );
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario duplicate archived only"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(post(SIMULATION_GROUPS_PATH + "/" + archivedSimulationGroupId + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(archivedSimulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario duplicate archived only"))
+                .andExpect(jsonPath("$.simulationGroupArchivedAt").doesNotExist());
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario duplicate archived only"))
+                .isEqualTo(2L);
+
+        assertThat(countActiveSimulationGroupsByName(owner.userGroupId(), "Scenario duplicate archived only"))
+                .isEqualTo(1L);
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
 
@@ -2176,6 +2796,35 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
                 account.accountId(),
                 account.userGroupId()
         );
+    }
+
+    private boolean isSimulationGroupArchived(UUID simulationGroupId) {
+        Boolean archived = jdbcTemplate.queryForObject("""
+                        SELECT simulation_group_archived_at IS NOT NULL
+                        FROM simulation_groups
+                        WHERE simulation_group_id = ?
+                        """,
+                Boolean.class,
+                simulationGroupId
+        );
+
+        return Boolean.TRUE.equals(archived);
+    }
+
+    private long countActiveSimulationGroupsByName(UUID userGroupId, String simulationGroupName) {
+        Long count = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM simulation_groups
+                        WHERE user_group_id = ?
+                          AND simulation_group_name = ?
+                          AND simulation_group_archived_at IS NULL
+                        """,
+                Long.class,
+                userGroupId,
+                simulationGroupName
+        );
+
+        return count == null ? 0L : count;
     }
 
     private record UserRef(
