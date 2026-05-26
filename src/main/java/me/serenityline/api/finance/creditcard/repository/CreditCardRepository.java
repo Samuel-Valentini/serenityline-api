@@ -82,4 +82,10 @@ public interface CreditCardRepository extends JpaRepository<CreditCard, UUID> {
             @Param("normalizedCreditCardName") String normalizedCreditCardName,
             @Param("creditCardId") UUID creditCardId
     );
+
+    Optional<CreditCard> findByCreditCardIdAndAccount_AccountIdAndUserGroup_UserGroupId(
+            UUID creditCardId,
+            UUID accountId,
+            UUID userGroupId
+    );
 }

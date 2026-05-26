@@ -495,7 +495,7 @@ CREATE TABLE recurring_transaction_history
     day_of_unit                              SMALLINT       NOT NULL,
     recurrence_interval                      SMALLINT       NOT NULL,
     recurrence_unit                          VARCHAR(50)    NOT NULL,
-    payment_date_adjustment_policy           VARCHAR(50)    NOT NULL DEFAULT 'NONE',
+    payment_date_adjustment_policy           VARCHAR(50)    NOT NULL DEFAULT 'PREVIOUS_BUSINESS_DAY',
     payment_amount                           NUMERIC(19, 2) NOT NULL,
     recurring_transaction_end_date           DATE,
     final_payment_amount                     NUMERIC(19, 2),

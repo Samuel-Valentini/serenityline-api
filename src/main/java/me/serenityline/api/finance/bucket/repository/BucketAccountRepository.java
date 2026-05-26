@@ -104,4 +104,19 @@ public interface BucketAccountRepository extends JpaRepository<BucketAccount, UU
             @Param("accountId") UUID accountId,
             @Param("userGroupId") UUID userGroupId
     );
+
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM buckets_accounts bucket_account
+                WHERE bucket_account.bucket_id = :bucketId
+                  AND bucket_account.account_id = :accountId
+                  AND bucket_account.user_group_id = :userGroupId
+            )
+            """, nativeQuery = true)
+    boolean existsLink(
+            @Param("bucketId") UUID bucketId,
+            @Param("accountId") UUID accountId,
+            @Param("userGroupId") UUID userGroupId
+    );
 }
