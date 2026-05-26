@@ -4,8 +4,10 @@ import jakarta.validation.Valid;
 import me.serenityline.api.finance.transaction.dto.TransactionCreateRequest;
 import me.serenityline.api.finance.transaction.dto.TransactionResponse;
 import me.serenityline.api.finance.transaction.dto.TransactionSearchRequest;
+import me.serenityline.api.finance.transaction.dto.TransactionUpdateRequest;
 import me.serenityline.api.finance.transaction.service.TransactionCreationService;
 import me.serenityline.api.finance.transaction.service.TransactionReadService;
+import me.serenityline.api.finance.transaction.service.TransactionUpdateService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -24,13 +26,16 @@ public class TransactionController {
 
     private final TransactionCreationService transactionCreationService;
     private final TransactionReadService transactionReadService;
+    private final TransactionUpdateService transactionUpdateService;
 
     public TransactionController(
             TransactionCreationService transactionCreationService,
-            TransactionReadService transactionReadService
+            TransactionReadService transactionReadService,
+            TransactionUpdateService transactionUpdateService
     ) {
         this.transactionCreationService = Objects.requireNonNull(transactionCreationService, "transactionCreationService");
         this.transactionReadService = Objects.requireNonNull(transactionReadService, "transactionReadService");
+        this.transactionUpdateService = Objects.requireNonNull(transactionUpdateService, "transactionUpdateService");
     }
 
     @PostMapping
@@ -77,6 +82,21 @@ public class TransactionController {
                         accountId,
                         simulationGroupId
                 )
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PutMapping("/{transactionId}")
+    public ResponseEntity<TransactionResponse> updateTransaction(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID transactionId,
+            @Valid @RequestBody TransactionUpdateRequest request
+    ) {
+        TransactionResponse response = transactionUpdateService.updateTransaction(
+                authenticatedUser.userId(),
+                transactionId,
+                request
         );
 
         return ResponseEntity.ok(response);

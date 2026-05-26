@@ -21,8 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -2116,6 +2115,1218 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void ownerShouldUpdateTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef oldAccount = createAccount(owner.userGroupId(), "Conto update old");
+        AccountRef newAccount = createAccount(owner.userGroupId(), "Conto update new");
+
+        UUID oldCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update old");
+        UUID newCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update new");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(oldAccount, oldCategoryId, "Descrizione vecchia", "-42.50", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                newAccount,
+                newCategoryId,
+                "Descrizione aggiornata",
+                "123.45",
+                LocalDate.of(2026, 7, 20)
+        );
+        body.put("transactionAffectsAccountBalance", true);
+        body.put("transactionAffectsLiquidity", false);
+        body.put("transactionIsConfirmed", true);
+        body.put("transactionReminderEnabled", false);
+        body.put("transactionReminderDaysBefore", 2);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.transactionDescription").value("Descrizione aggiornata"))
+                .andExpect(jsonPath("$.transactionAmount").value(123.45))
+                .andExpect(jsonPath("$.transactionAffectsAccountBalance").value(true))
+                .andExpect(jsonPath("$.transactionAffectsLiquidity").value(false))
+                .andExpect(jsonPath("$.categoryId").value(newCategoryId.toString()))
+                .andExpect(jsonPath("$.transactionChargeDate").value("2026-07-20"))
+                .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
+                .andExpect(jsonPath("$.accountId").value(newAccount.accountId().toString()))
+                .andExpect(jsonPath("$.creditCardId").doesNotExist())
+                .andExpect(jsonPath("$.bucketId").doesNotExist())
+                .andExpect(jsonPath("$.transactionIsSimulated").value(false))
+                .andExpect(jsonPath("$.simulationGroupId").doesNotExist())
+                .andExpect(jsonPath("$.transactionIsUserEntered").value(true))
+                .andExpect(jsonPath("$.recurringTransactionId").doesNotExist())
+                .andExpect(jsonPath("$.transactionReminderEnabled").value(false))
+                .andExpect(jsonPath("$.transactionReminderDaysBefore").value(2))
+                .andExpect(jsonPath("$.transactionCreatedAt").exists())
+                .andExpect(jsonPath("$.transactionUpdatedAt").exists());
+
+        Map<String, Object> row = findTransaction(transactionId);
+
+        assertThat(row.get("transaction_description")).isEqualTo("Descrizione aggiornata");
+        assertThat((BigDecimal) row.get("transaction_amount")).isEqualByComparingTo(new BigDecimal("123.45"));
+        assertThat(row.get("transaction_affects_account_balance")).isEqualTo(true);
+        assertThat(row.get("transaction_affects_liquidity")).isEqualTo(false);
+        assertThat(row.get("category_id")).isEqualTo(newCategoryId);
+        assertThat(((java.sql.Date) row.get("transaction_charge_date")).toLocalDate()).isEqualTo(LocalDate.of(2026, 7, 20));
+        assertThat(row.get("transaction_is_confirmed")).isEqualTo(true);
+        assertThat(row.get("account_id")).isEqualTo(newAccount.accountId());
+        assertThat(row.get("transaction_is_user_entered")).isEqualTo(true);
+        assertThat(row.get("recurring_transaction_id")).isNull();
+        assertThat(row.get("user_group_id")).isEqualTo(owner.userGroupId());
+    }
+
+    @Test
+    void ownerShouldUpdateConfirmedRecurringOccurrence() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update recurring");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update recurring");
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        UUID transactionId = createConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 15)
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Importo ricorrente effettivo",
+                "-83.47",
+                LocalDate.of(2026, 6, 16)
+        );
+        body.put("transactionIsConfirmed", true);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(transactionId.toString()))
+                .andExpect(jsonPath("$.transactionDescription").value("Importo ricorrente effettivo"))
+                .andExpect(jsonPath("$.transactionAmount").value(-83.47))
+                .andExpect(jsonPath("$.transactionChargeDate").value("2026-06-16"))
+                .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
+                .andExpect(jsonPath("$.transactionIsUserEntered").value(false))
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()));
+
+        Map<String, Object> row = findTransaction(transactionId);
+
+        assertThat(row.get("transaction_is_user_entered")).isEqualTo(false);
+        assertThat(row.get("recurring_transaction_id")).isEqualTo(recurringTransactionId);
+        assertThat(row.get("transaction_is_confirmed")).isEqualTo(true);
+    }
+
+    @Test
+    void updateTransactionShouldRejectUnconfirmingRecurringOccurrence() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update recurring unconfirm");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update recurring unconfirm");
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        UUID transactionId = createConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 15)
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Tentativo non confermata",
+                "-83.47",
+                LocalDate.of(2026, 6, 16)
+        );
+        body.put("transactionIsConfirmed", false);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.recurringTransactionMustBeConfirmed"));
+
+        Map<String, Object> row = findTransaction(transactionId);
+
+        assertThat(row.get("transaction_description")).isEqualTo("Occorrenza ricorrente confermata");
+        assertThat(row.get("transaction_is_confirmed")).isEqualTo(true);
+        assertThat(row.get("recurring_transaction_id")).isEqualTo(recurringTransactionId);
+    }
+
+    @Test
+    void superCollaboratorShouldUpdateGroupTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update super");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update super");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchia super", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Aggiornata super",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionDescription").value("Aggiornata super"))
+                .andExpect(jsonPath("$.transactionAmount").value(-20.0));
+    }
+
+    @Test
+    void viewerCollaboratorShouldUpdateTransactionOnOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update viewer");
+        grantAccountAccess(account, viewer);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update viewer");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchia viewer", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Aggiornata viewer",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionDescription").value("Aggiornata viewer"));
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveForbiddenWhenUpdatingTransactionOnNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto update viewer hidden");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update viewer hidden");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Vecchia viewer hidden", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                hiddenAccount,
+                categoryId,
+                "Aggiornata viewer hidden",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.account.operationNotAllowed"));
+    }
+
+    @Test
+    void collaboratorShouldUpdateTransactionOnLinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update collaborator");
+        grantAccountAccess(account, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update collaborator");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchia collaborator", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Aggiornata collaborator",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionDescription").value("Aggiornata collaborator"));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenUpdatingTransactionOnHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto update collaborator hidden");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update collaborator hidden");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Vecchia hidden", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                hiddenAccount,
+                categoryId,
+                "Aggiornata hidden",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUpdatingTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto update other group");
+        UUID otherCategoryId = createActiveCategory(otherOwner.userGroupId(), otherOwner.userId(), "Categoria update other group");
+
+        UUID otherTransactionId = createTransactionViaApi(
+                otherOwner,
+                transactionRequest(otherAccount, otherCategoryId, "Altro gruppo", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update own body");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update own body");
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Tentativo cross group",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + otherTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void collaboratorShouldUpdateTransactionMovingItToAnotherLinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef oldAccount = createAccount(owner.userGroupId(), "Conto update collaborator old linked");
+        AccountRef newAccount = createAccount(owner.userGroupId(), "Conto update collaborator new linked");
+
+        grantAccountAccess(oldAccount, collaborator);
+        grantAccountAccess(newAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update collaborator move");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(oldAccount, categoryId, "Vecchio conto", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                newAccount,
+                categoryId,
+                "Nuovo conto",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountId").value(newAccount.accountId().toString()));
+
+        assertThat(findTransaction(transactionId).get("account_id")).isEqualTo(newAccount.accountId());
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveForbiddenWhenMovingTransactionToNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef oldAccount = createAccount(owner.userGroupId(), "Conto update viewer old linked");
+        AccountRef newHiddenAccount = createAccount(owner.userGroupId(), "Conto update viewer new hidden");
+
+        grantAccountAccess(oldAccount, viewer);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update viewer move forbidden");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(oldAccount, categoryId, "Vecchio conto viewer", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                newHiddenAccount,
+                categoryId,
+                "Nuovo conto viewer hidden",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.account.operationNotAllowed"));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenMovingTransactionToHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef oldAccount = createAccount(owner.userGroupId(), "Conto update collaborator old");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto update collaborator new hidden");
+
+        grantAccountAccess(oldAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update collaborator move hidden");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(oldAccount, categoryId, "Vecchio conto collaborator", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                hiddenAccount,
+                categoryId,
+                "Nuovo conto collaborator hidden",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+    }
+
+    @Test
+    void ownerShouldAddAndRemoveCreditCardOnTransactionUpdate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update card");
+        CreditCardRef creditCard = createCreditCard(owner.userGroupId(), account, "Carta update card");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update card");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Senza carta", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> addBody = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Con carta",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        addBody.put("creditCardId", creditCard.creditCardId());
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(addBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardId").value(creditCard.creditCardId().toString()));
+
+        Map<String, Object> removeBody = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Di nuovo senza carta",
+                "-30.00",
+                LocalDate.of(2026, 6, 12)
+        );
+        removeBody.put("creditCardId", null);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(removeBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creditCardId").doesNotExist());
+
+        assertThat(findTransaction(transactionId).get("credit_card_id")).isNull();
+    }
+
+    @Test
+    void ownerShouldRejectCreditCardLinkedToDifferentAccountOnUpdate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef selectedAccount = createAccount(owner.userGroupId(), "Conto update card selected");
+        AccountRef cardAccount = createAccount(owner.userGroupId(), "Conto update card other");
+
+        CreditCardRef creditCard = createCreditCard(owner.userGroupId(), cardAccount, "Carta update card mismatch");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update card mismatch");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(selectedAccount, categoryId, "Card mismatch old", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                selectedAccount,
+                categoryId,
+                "Card mismatch new",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("creditCardId", creditCard.creditCardId());
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"));
+    }
+
+    @Test
+    void ownerShouldAddAndRemoveBucketOnTransactionUpdate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update bucket");
+        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket update");
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update bucket");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Senza bucket", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> addBody = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Con bucket",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        addBody.put("bucketId", bucket.bucketId());
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(addBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.bucketId().toString()));
+
+        Map<String, Object> removeBody = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Di nuovo senza bucket",
+                "-30.00",
+                LocalDate.of(2026, 6, 12)
+        );
+        removeBody.put("bucketId", null);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(removeBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").doesNotExist());
+
+        assertThat(findTransaction(transactionId).get("bucket_id")).isNull();
+    }
+
+    @Test
+    void ownerShouldRejectClosedBucketOnUpdate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update closed bucket");
+        BucketRef closedBucket = createClosedBucket(owner.userGroupId(), "Bucket update closed");
+        linkBucketToAccount(closedBucket, account, owner.userGroupId());
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update closed bucket");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Senza bucket chiuso", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Con bucket chiuso",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("bucketId", closedBucket.bucketId());
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"));
+    }
+
+    @Test
+    void ownerShouldRejectChangingTransactionToInactiveCategoryOnUpdate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update inactive category");
+        UUID activeCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update active");
+        UUID inactiveCategoryId = createInactiveCategory(owner.userGroupId(), owner.userId(), "Categoria update inactive");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, activeCategoryId, "Categoria attiva", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                inactiveCategoryId,
+                "Categoria inattiva",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.category.notFound"));
+    }
+
+    @Test
+    void ownerShouldUpdateTransactionKeepingSameCategoryAfterItWasDeactivated() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update same inactive category");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update then inactive");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Prima della disattivazione", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        deactivateCategory(categoryId);
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Dopo disattivazione categoria",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
+                .andExpect(jsonPath("$.transactionDescription").value("Dopo disattivazione categoria"));
+    }
+
+    @Test
+    void ownerShouldTurnRegularTransactionIntoSimulatedTransactionOnUpdate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update to simulation");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update to simulation");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation update to simulated");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Non simulata", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Ora simulata",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("transactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionIsSimulated").value(true))
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()));
+    }
+
+    @Test
+    void ownerShouldTurnSimulatedTransactionIntoRegularTransactionOnUpdate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update from simulation");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update from simulation");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation update from simulated");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        account,
+                        categoryId,
+                        simulationGroupId,
+                        "Simulata",
+                        "-10.00",
+                        LocalDate.of(2026, 6, 10)
+                )
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Ora non simulata",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("transactionIsSimulated", false);
+        body.put("simulationGroupId", null);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionIsSimulated").value(false))
+                .andExpect(jsonPath("$.simulationGroupId").doesNotExist());
+
+        assertThat(findTransaction(transactionId).get("simulation_group_id")).isNull();
+    }
+
+    @Test
+    void updateTransactionShouldRequireSimulationGroupWhenSimulated() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update simulation required");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update simulation required");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Non simulata", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Simulata senza gruppo",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("transactionIsSimulated", true);
+        body.put("simulationGroupId", null);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.simulationGroupRequired"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectSimulationGroupWhenNotSimulated() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update simulation not allowed");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update simulation not allowed");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation update not allowed");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Non simulata", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Non simulata ma con gruppo",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("transactionIsSimulated", false);
+        body.put("simulationGroupId", simulationGroupId);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.simulationGroupNotAllowed"));
+    }
+
+    @Test
+    void updateTransactionShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void updateTransactionShouldReturnNotFoundWhenTransactionDoesNotExist() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update missing transaction");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update missing transaction");
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Missing transaction",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectBlankDescription() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update blank");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update blank");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchia descrizione", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "   ",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectZeroAmount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update zero amount");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update zero amount");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchio importo", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Importo zero",
+                "0.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.amountNotZero"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectAmountWithMoreThanTwoDecimals() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update invalid decimals");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update invalid decimals");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchio importo", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Importo con troppi decimali",
+                "-20.123",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectFalseFalseAffectsFlags() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update false false");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update false false");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchie flag", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Flag false false",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("transactionAffectsAccountBalance", false);
+        body.put("transactionAffectsLiquidity", false);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.affectsSomethingRequired"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectNegativeReminderDays() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update negative reminder");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update negative reminder");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchio reminder", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Reminder negativo",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("transactionReminderDaysBefore", -1);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectReminderDaysGreaterThan366() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update reminder too high");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update reminder too high");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchio reminder", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Reminder troppo alto",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("transactionReminderDaysBefore", 367);
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void updateTransactionShouldRejectMissingRequiredFullUpdateField() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update missing field");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update missing field");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Vecchia", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Manca campo",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.remove("transactionReminderEnabled");
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void collaboratorShouldNotUpdateHiddenTransactionEvenWhenMovingItToLinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto update hidden source");
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto update linked target");
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria hidden source");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Transazione nascosta", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                linkedAccount,
+                categoryId,
+                "Tentativo spostamento",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+
+        assertThat(findTransaction(transactionId).get("account_id")).isEqualTo(hiddenAccount.accountId());
+    }
+
+    @Test
+    void viewerCollaboratorShouldNotUpdateNonOperableTransactionEvenWhenMovingItToOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto update viewer hidden source");
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto update viewer linked target");
+        grantAccountAccess(linkedAccount, viewer);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria viewer hidden source");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Transazione viewer nascosta", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                linkedAccount,
+                categoryId,
+                "Tentativo viewer spostamento",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.account.operationNotAllowed"));
+
+        assertThat(findTransaction(transactionId).get("account_id")).isEqualTo(hiddenAccount.accountId());
+    }
+
+    @Test
+    void updateTransactionShouldPreserveImmutableFields() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update immutable");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update immutable");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Prima", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> before = findTransaction(transactionId);
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Dopo",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk());
+
+        Map<String, Object> after = findTransaction(transactionId);
+
+        assertThat(after.get("transaction_id")).isEqualTo(before.get("transaction_id"));
+        assertThat(after.get("transaction_is_user_entered")).isEqualTo(before.get("transaction_is_user_entered"));
+        assertThat(after.get("recurring_transaction_id")).isEqualTo(before.get("recurring_transaction_id"));
+        assertThat(after.get("user_group_id")).isEqualTo(before.get("user_group_id"));
+        assertThat(after.get("transaction_created_at")).isEqualTo(before.get("transaction_created_at"));
+        assertThat(after.get("transaction_updated_at")).isNotEqualTo(before.get("transaction_updated_at"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUpdatingTransactionToAccountFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update own account");
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto update other group account");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update own account");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Prima", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                otherAccount,
+                categoryId,
+                "Account altro gruppo",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(findTransaction(transactionId).get("account_id")).isEqualTo(account.accountId());
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUpdatingTransactionToCategoryFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto update category other group");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria update own");
+        UUID otherCategoryId = createActiveCategory(otherOwner.userGroupId(), otherOwner.userId(), "Categoria update other");
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Prima", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                otherCategoryId,
+                "Categoria altro gruppo",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.category.notFound"));
+
+        assertThat(findTransaction(transactionId).get("category_id")).isEqualTo(categoryId);
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
@@ -2748,6 +3959,31 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         return transactionId;
     }
 
+    private Map<String, Object> validTransactionUpdateRequest(
+            AccountRef account,
+            UUID categoryId,
+            String description,
+            String amount,
+            LocalDate chargeDate
+    ) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("transactionDescription", description);
+        body.put("transactionAmount", new BigDecimal(amount));
+        body.put("transactionAffectsAccountBalance", true);
+        body.put("transactionAffectsLiquidity", true);
+        body.put("categoryId", categoryId);
+        body.put("transactionChargeDate", chargeDate.toString());
+        body.put("transactionIsConfirmed", true);
+        body.put("accountId", account.accountId());
+        body.put("creditCardId", null);
+        body.put("bucketId", null);
+        body.put("transactionIsSimulated", false);
+        body.put("simulationGroupId", null);
+        body.put("transactionReminderEnabled", true);
+        body.put("transactionReminderDaysBefore", 7);
+        return body;
+    }
+
     private record UserRef(
             UUID userId,
             UUID userGroupId,
@@ -2763,4 +3999,6 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
 
     private record BucketRef(UUID bucketId) {
     }
+
+
 }

@@ -144,12 +144,7 @@ public class Transaction {
                 : transactionReminderDaysBefore;
         this.userGroup = Objects.requireNonNull(userGroup, "userGroup");
 
-        validateAffectsSomething();
-        validateSimulationConsistency();
-        validateRecurringConsistency();
-        validateReminderDaysBefore();
-        validateEntitiesBelongToUserGroup();
-        validateCreditCardBelongsToAccount();
+        validateState();
     }
 
     public static Transaction createUserEntered(
@@ -262,6 +257,52 @@ public class Transaction {
         return normalized;
     }
 
+    public void update(
+            String transactionDescription,
+            BigDecimal transactionAmount,
+            Boolean transactionAffectsAccountBalance,
+            Boolean transactionAffectsLiquidity,
+            Category category,
+            LocalDate transactionChargeDate,
+            Boolean transactionIsConfirmed,
+            Account account,
+            CreditCard creditCard,
+            Bucket bucket,
+            boolean transactionIsSimulated,
+            SimulationGroup simulationGroup,
+            Boolean transactionReminderEnabled,
+            Short transactionReminderDaysBefore
+    ) {
+        this.transactionDescription = cleanDescription(transactionDescription);
+        this.transactionAmount = normalizeAmount(transactionAmount);
+        this.transactionAffectsAccountBalance = Objects.requireNonNull(
+                transactionAffectsAccountBalance,
+                "transactionAffectsAccountBalance"
+        );
+        this.transactionAffectsLiquidity = Objects.requireNonNull(
+                transactionAffectsLiquidity,
+                "transactionAffectsLiquidity"
+        );
+        this.category = Objects.requireNonNull(category, "category");
+        this.transactionChargeDate = Objects.requireNonNull(transactionChargeDate, "transactionChargeDate");
+        this.transactionIsConfirmed = Objects.requireNonNull(transactionIsConfirmed, "transactionIsConfirmed");
+        this.account = Objects.requireNonNull(account, "account");
+        this.creditCard = creditCard;
+        this.bucket = bucket;
+        this.transactionIsSimulated = transactionIsSimulated;
+        this.simulationGroup = simulationGroup;
+        this.transactionReminderEnabled = Objects.requireNonNull(
+                transactionReminderEnabled,
+                "transactionReminderEnabled"
+        );
+        this.transactionReminderDaysBefore = Objects.requireNonNull(
+                transactionReminderDaysBefore,
+                "transactionReminderDaysBefore"
+        );
+
+        validateState();
+    }
+
     @PrePersist
     void prePersist() {
         OffsetDateTime now = OffsetDateTime.now();
@@ -282,6 +323,15 @@ public class Transaction {
 
     public void touch() {
         transactionUpdatedAt = OffsetDateTime.now();
+    }
+
+    private void validateState() {
+        validateAffectsSomething();
+        validateSimulationConsistency();
+        validateRecurringConsistency();
+        validateReminderDaysBefore();
+        validateEntitiesBelongToUserGroup();
+        validateCreditCardBelongsToAccount();
     }
 
     private void validateAffectsSomething() {
@@ -444,4 +494,5 @@ public class Transaction {
     public UserGroup getUserGroup() {
         return userGroup;
     }
+
 }
