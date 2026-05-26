@@ -18,8 +18,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
@@ -115,6 +114,21 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 + "\"";
+    }
+
+    private static String updateRequestJson(
+            String simulationGroupName,
+            String simulationGroupDescription
+    ) {
+        return """
+                {
+                  "simulationGroupName": %s,
+                  "simulationGroupDescription": %s
+                }
+                """.formatted(
+                jsonNullableString(simulationGroupName),
+                jsonNullableString(simulationGroupDescription)
+        );
     }
 
     @Test
@@ -1291,6 +1305,645 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
         mockMvc.perform(get(SIMULATION_GROUPS_PATH + "/not-a-uuid")
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateSimulationGroupShouldRequireAuthentication() throws Exception {
+        String requestBody = updateRequestJson(
+                "Scenario aggiornato",
+                "Descrizione aggiornata"
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldUpdateSimulationGroupNameAndDescription() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario originale"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "Scenario aggiornato",
+                "Descrizione aggiornata"
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario aggiornato"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Descrizione aggiornata"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario originale"))
+                .isZero();
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario aggiornato"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldUpdateOnlyDescriptionWhenNameIsMissing() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario nome invariato"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = """
+                {
+                  "simulationGroupDescription": "Descrizione modificata"
+                }
+                """;
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario nome invariato"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Descrizione modificata"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario nome invariato"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldUpdateOnlyNameWhenDescriptionIsMissing() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario vecchio nome"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = """
+                {
+                  "simulationGroupName": "Scenario nuovo nome"
+                }
+                """;
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario nuovo nome"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Existing simulation group"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario vecchio nome"))
+                .isZero();
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario nuovo nome"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void updateSimulationGroupShouldTrimNameAndDescription() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario da pulire"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "  Scenario pulito  ",
+                "  Descrizione pulita  "
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario pulito"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Descrizione pulita"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario pulito"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void updateSimulationGroupShouldClearDescriptionWhenDescriptionIsBlank() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario clear description"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = """
+                {
+                  "simulationGroupDescription": "   "
+                }
+                """;
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario clear description"))
+                .andExpect(jsonPath("$.simulationGroupDescription").doesNotExist());
+    }
+
+    @Test
+    void updateSimulationGroupShouldRejectEmptyPatch() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario patch vuota"
+        );
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.updateEmpty"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario patch vuota"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void updateSimulationGroupShouldRejectBlankName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario nome blank"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = """
+                {
+                  "simulationGroupName": "   "
+                }
+                """;
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameRequired"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario nome blank"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUpdatingArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archived patch"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "Scenario archived patch updated",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario archived patch"))
+                .isEqualTo(1L);
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario archived patch updated"))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenUpdatingSimulationGroupFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        UUID otherSimulationGroupId = createSimulationGroup(
+                otherOwner.userGroupId(),
+                "Scenario altro gruppo patch"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "Scenario tentativo cross group",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + otherSimulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario tentativo cross group"))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldUpdateSimulationGroupLinkedToOperableAccountAndSeeAllAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef operableAccount = createAccount(owner.userGroupId(), "Conto viewer operabile patch");
+        AccountRef nonOperableAccount = createAccount(owner.userGroupId(), "Conto viewer non operabile patch");
+
+        grantAccountAccess(operableAccount, viewer);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer patch"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, operableAccount);
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+        String requestBody = updateRequestJson(
+                "Scenario viewer patch updated",
+                "Viewer updated"
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario viewer patch updated"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Viewer updated"))
+                .andExpect(jsonPath("$.accountIds", hasSize(2)))
+                .andExpect(content().string(containsString(operableAccount.accountId().toString())))
+                .andExpect(content().string(containsString(nonOperableAccount.accountId().toString())));
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenUpdatingUnlinkedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer unlinked patch"
+        );
+
+        String accessToken = accessTokenFor(viewer);
+        String requestBody = updateRequestJson(
+                "Scenario viewer unlinked patch updated",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario viewer unlinked patch"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldUpdateSimulationGroupLinkedToAccessibleAccountAndHideOtherAccountIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto collaborator accessibile patch");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto collaborator nascosto patch");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator patch"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+        String requestBody = updateRequestJson(
+                "Scenario collaborator patch updated",
+                "Collaborator updated"
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario collaborator patch updated"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Collaborator updated"))
+                .andExpect(jsonPath("$.accountIds", hasSize(1)))
+                .andExpect(jsonPath("$.accountIds[0]").value(accessibleAccount.accountId().toString()))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenUpdatingSimulationGroupLinkedOnlyToHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto collaborator hidden patch");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator hidden patch"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+        String requestBody = updateRequestJson(
+                "Scenario collaborator hidden patch updated",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"))
+                .andExpect(content().string(not(containsString("Scenario collaborator hidden patch"))))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario collaborator hidden patch"))
+                .isEqualTo(1L);
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario collaborator hidden patch updated"))
+                .isZero();
+    }
+
+    @Test
+    void ownerShouldReceiveConflictWhenUpdatingToExistingActiveName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "Scenario già usato");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario da rinominare"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "Scenario già usato",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameAlreadyExists"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario da rinominare"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldNotLearnDuplicateNameWhenUpdatingToExistingActiveName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto collaborator duplicate patch");
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        createSimulationGroup(owner.userGroupId(), "Scenario nome segreto");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario collaborator duplicate patch"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, accessibleAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+        String requestBody = updateRequestJson(
+                "Scenario nome segreto",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameNotAllowed"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario collaborator duplicate patch"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void updateSimulationGroupShouldRejectNormalizedDuplicateName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "Scenario normalizzato");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario da aggiornare normalizzato"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "  SCENARIO   NORMALIZZATO  ",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameAlreadyExists"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario da aggiornare normalizzato"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void updateSimulationGroupShouldAllowKeepingSameName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario stesso nome"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "Scenario stesso nome",
+                "Descrizione aggiornata stesso nome"
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario stesso nome"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Descrizione aggiornata stesso nome"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario stesso nome"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void superCollaboratorShouldUpdateSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario super patch"
+        );
+
+        String accessToken = accessTokenFor(superCollaborator);
+        String requestBody = updateRequestJson(
+                "Scenario super patch updated",
+                "Super updated"
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario super patch updated"))
+                .andExpect(jsonPath("$.simulationGroupDescription").value("Super updated"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario super patch updated"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveNotFoundWhenUpdatingSimulationGroupLinkedOnlyToNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef nonOperableAccount = createAccount(
+                owner.userGroupId(),
+                "Conto viewer non operabile only patch"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer non operabile only patch"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+        String requestBody = updateRequestJson(
+                "Scenario viewer non operabile only patch updated",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario viewer non operabile only patch"))
+                .isEqualTo(1L);
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario viewer non operabile only patch updated"))
+                .isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveConflictWhenUpdatingToExistingActiveName() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto viewer duplicate patch"
+        );
+        grantAccountAccess(account, viewer);
+
+        createSimulationGroup(owner.userGroupId(), "Scenario viewer nome usato");
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario viewer da rinominare"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        String accessToken = accessTokenFor(viewer);
+        String requestBody = updateRequestJson(
+                "Scenario viewer nome usato",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.nameAlreadyExists"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario viewer da rinominare"))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void updateSimulationGroupShouldAllowNameUsedOnlyByArchivedSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario nome archiviato"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario da aggiornare con nome archiviato"
+        );
+
+        String accessToken = accessTokenFor(owner);
+        String requestBody = updateRequestJson(
+                "Scenario nome archiviato",
+                null
+        );
+
+        mockMvc.perform(patch(SIMULATION_GROUPS_PATH + "/" + simulationGroupId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.simulationGroupName").value("Scenario nome archiviato"));
+
+        assertThat(countSimulationGroupsByName(owner.userGroupId(), "Scenario nome archiviato"))
+                .isEqualTo(2L);
     }
 
     private UserRef createUserWithNewGroup(String role) {

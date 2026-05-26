@@ -97,4 +97,49 @@ public interface SimulationGroupRepository extends JpaRepository<SimulationGroup
             @Param("userGroupId") UUID userGroupId,
             @Param("userId") UUID userId
     );
+
+    Optional<SimulationGroup> findBySimulationGroupIdAndUserGroup_UserGroupIdAndSimulationGroupArchivedAtIsNull(
+            UUID simulationGroupId,
+            UUID userGroupId
+    );
+
+    @Query(value = """
+            SELECT simulation_group.*
+            FROM simulation_groups simulation_group
+            WHERE simulation_group.simulation_group_id = :simulationGroupId
+              AND simulation_group.user_group_id = :userGroupId
+              AND simulation_group.simulation_group_archived_at IS NULL
+              AND EXISTS (
+                    SELECT 1
+                    FROM simulation_groups_accounts simulation_group_account
+                    JOIN accounts_users account_user
+                      ON account_user.account_id = simulation_group_account.account_id
+                     AND account_user.user_group_id = simulation_group_account.user_group_id
+                    WHERE simulation_group_account.simulation_group_id = simulation_group.simulation_group_id
+                      AND simulation_group_account.user_group_id = simulation_group.user_group_id
+                      AND account_user.user_id = :userId
+              )
+            """, nativeQuery = true)
+    Optional<SimulationGroup> findActiveOperableToLinkedUserById(
+            @Param("simulationGroupId") UUID simulationGroupId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
+    );
+
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM simulation_groups simulation_group
+                WHERE simulation_group.user_group_id = :userGroupId
+                  AND simulation_group.simulation_group_id <> :simulationGroupId
+                  AND simulation_group.simulation_group_archived_at IS NULL
+                  AND lower(btrim(regexp_replace(simulation_group.simulation_group_name, '[[:space:]]+', ' ', 'g')))
+                    = lower(btrim(regexp_replace(:simulationGroupName, '[[:space:]]+', ' ', 'g')))
+            )
+            """, nativeQuery = true)
+    boolean existsActiveByNormalizedNameExcludingSimulationGroupId(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("simulationGroupId") UUID simulationGroupId,
+            @Param("simulationGroupName") String simulationGroupName
+    );
 }

@@ -3,8 +3,10 @@ package me.serenityline.api.finance.simulation.controller;
 import jakarta.validation.Valid;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupCreateRequest;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupResponse;
+import me.serenityline.api.finance.simulation.dto.SimulationGroupUpdateRequest;
 import me.serenityline.api.finance.simulation.service.SimulationGroupCreationService;
 import me.serenityline.api.finance.simulation.service.SimulationGroupQueryService;
+import me.serenityline.api.finance.simulation.service.SimulationGroupUpdateService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,8 +23,9 @@ public class SimulationGroupController {
 
     private final SimulationGroupCreationService simulationGroupCreationService;
     private final SimulationGroupQueryService simulationGroupQueryService;
+    private final SimulationGroupUpdateService simulationGroupUpdateService;
 
-    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService, SimulationGroupQueryService simulationGroupQueryService) {
+    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService, SimulationGroupQueryService simulationGroupQueryService, SimulationGroupUpdateService simulationGroupUpdateService) {
         this.simulationGroupCreationService = Objects.requireNonNull(
                 simulationGroupCreationService,
                 "simulationGroupCreationService"
@@ -30,6 +33,10 @@ public class SimulationGroupController {
         this.simulationGroupQueryService = Objects.requireNonNull(
                 simulationGroupQueryService,
                 "simulationGroupQueryService"
+        );
+        this.simulationGroupUpdateService = Objects.requireNonNull(
+                simulationGroupUpdateService,
+                "simulationGroupUpdateService"
         );
     }
 
@@ -69,6 +76,21 @@ public class SimulationGroupController {
         SimulationGroupResponse response = simulationGroupQueryService.findSimulationGroup(
                 authenticatedUser.userId(),
                 simulationGroupId
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{simulationGroupId}")
+    public ResponseEntity<SimulationGroupResponse> updateSimulationGroup(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID simulationGroupId,
+            @Valid @RequestBody SimulationGroupUpdateRequest request
+    ) {
+        SimulationGroupResponse response = simulationGroupUpdateService.updateSimulationGroup(
+                authenticatedUser.userId(),
+                simulationGroupId,
+                request
         );
 
         return ResponseEntity.ok(response);
