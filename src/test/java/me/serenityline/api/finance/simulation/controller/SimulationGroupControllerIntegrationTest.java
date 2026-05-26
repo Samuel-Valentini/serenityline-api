@@ -17,10 +17,10 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
 
@@ -682,6 +682,320 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
                 .isZero();
     }
 
+    @Test
+    void findSimulationGroupsShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldSeeOnlyActiveSimulationGroupsByDefault() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "Scenario attivo");
+        createArchivedSimulationGroup(owner.userGroupId(), "Scenario archiviato");
+        createSimulationGroup(otherOwner.userGroupId(), "Scenario altro gruppo");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].simulationGroupName").value("Scenario attivo"))
+                .andExpect(jsonPath("$[0].accountIds", hasSize(0)));
+    }
+
+    @Test
+    void ownerShouldFilterArchivedSimulationGroups() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "Scenario attivo");
+        createArchivedSimulationGroup(owner.userGroupId(), "Scenario archiviato");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .param("status", "ARCHIVED")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].simulationGroupName").value("Scenario archiviato"))
+                .andExpect(jsonPath("$[0].simulationGroupArchivedAt").exists());
+    }
+
+    @Test
+    void ownerShouldFilterAllSimulationGroups() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "A scenario attivo");
+        createArchivedSimulationGroup(owner.userGroupId(), "B scenario archiviato");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .param("status", "ALL")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[*].simulationGroupName", contains(
+                        "A scenario attivo",
+                        "B scenario archiviato"
+                )));
+    }
+
+    @Test
+    void findSimulationGroupsShouldRejectInvalidStatus() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .param("status", "DELETED")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.status.invalid"));
+    }
+
+    @Test
+    void viewerCollaboratorShouldSeeAllSimulationGroupsIncludingUnlinkedAndNonOperableAccounts() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef nonOperableAccount = createAccount(owner.userGroupId(), "Conto visibile ma non operativo viewer");
+
+        UUID unlinkedSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "A scenario senza conti"
+        );
+
+        UUID linkedSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "B scenario conto non operativo"
+        );
+
+        linkSimulationGroupToAccount(linkedSimulationGroupId, nonOperableAccount);
+
+        String accessToken = accessTokenFor(viewer);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[*].simulationGroupName", contains(
+                        "A scenario senza conti",
+                        "B scenario conto non operativo"
+                )))
+                .andExpect(content().string(containsString(unlinkedSimulationGroupId.toString())))
+                .andExpect(content().string(containsString(linkedSimulationGroupId.toString())))
+                .andExpect(content().string(containsString(nonOperableAccount.accountId().toString())));
+    }
+
+    @Test
+    void collaboratorShouldSeeOnlySimulationGroupsLinkedToAccessibleAccounts() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto accessibile collaborator");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto nascosto collaborator");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID visibleSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "A scenario visibile"
+        );
+        linkSimulationGroupToAccount(visibleSimulationGroupId, accessibleAccount);
+        linkSimulationGroupToAccount(visibleSimulationGroupId, hiddenAccount);
+
+        UUID hiddenSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "B scenario nascosto"
+        );
+        linkSimulationGroupToAccount(hiddenSimulationGroupId, hiddenAccount);
+
+        createSimulationGroup(owner.userGroupId(), "C scenario senza conti");
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].simulationGroupName").value("A scenario visibile"))
+                .andExpect(jsonPath("$[0].simulationGroupId").value(visibleSimulationGroupId.toString()))
+                .andExpect(jsonPath("$[0].accountIds", hasSize(1)))
+                .andExpect(jsonPath("$[0].accountIds[0]").value(accessibleAccount.accountId().toString()))
+                .andExpect(content().string(not(containsString(hiddenAccount.accountId().toString()))))
+                .andExpect(content().string(not(containsString(hiddenSimulationGroupId.toString()))))
+                .andExpect(content().string(not(containsString("B scenario nascosto"))))
+                .andExpect(content().string(not(containsString("C scenario senza conti"))));
+    }
+
+    @Test
+    void collaboratorShouldSeeAccessibleArchivedSimulationGroupsWhenStatusIsArchived() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto archived collaborator");
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID activeSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario attivo collaborator"
+        );
+        linkSimulationGroupToAccount(activeSimulationGroupId, accessibleAccount);
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "Scenario archiviato collaborator"
+        );
+        linkSimulationGroupToAccount(archivedSimulationGroupId, accessibleAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .param("status", "ARCHIVED")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].simulationGroupName").value("Scenario archiviato collaborator"))
+                .andExpect(jsonPath("$[0].simulationGroupId").value(archivedSimulationGroupId.toString()))
+                .andExpect(jsonPath("$[0].simulationGroupArchivedAt").exists())
+                .andExpect(jsonPath("$[0].accountIds", hasSize(1)))
+                .andExpect(jsonPath("$[0].accountIds[0]").value(accessibleAccount.accountId().toString()));
+    }
+
+    @Test
+    void superCollaboratorShouldSeeAllSimulationGroupsIncludingUnlinkedOnes() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        createSimulationGroup(owner.userGroupId(), "A scenario senza conti");
+        createArchivedSimulationGroup(owner.userGroupId(), "B scenario archiviato");
+
+        String accessToken = accessTokenFor(superCollaborator);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .param("status", "ALL")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[*].simulationGroupName", contains(
+                        "A scenario senza conti",
+                        "B scenario archiviato"
+                )));
+    }
+
+    @Test
+    void collaboratorShouldFilterAllVisibleSimulationGroups() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accessibleAccount = createAccount(owner.userGroupId(), "Conto accessibile all");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto nascosto all");
+
+        grantAccountAccess(accessibleAccount, collaborator);
+
+        UUID activeVisibleSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "A scenario attivo visibile"
+        );
+        linkSimulationGroupToAccount(activeVisibleSimulationGroupId, accessibleAccount);
+
+        UUID archivedVisibleSimulationGroupId = createArchivedSimulationGroup(
+                owner.userGroupId(),
+                "B scenario archiviato visibile"
+        );
+        linkSimulationGroupToAccount(archivedVisibleSimulationGroupId, accessibleAccount);
+
+        UUID hiddenSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "C scenario nascosto"
+        );
+        linkSimulationGroupToAccount(hiddenSimulationGroupId, hiddenAccount);
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .param("status", "ALL")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[*].simulationGroupName", contains(
+                        "A scenario attivo visibile",
+                        "B scenario archiviato visibile"
+                )))
+                .andExpect(content().string(not(containsString("C scenario nascosto"))))
+                .andExpect(content().string(not(containsString(hiddenSimulationGroupId.toString()))));
+    }
+
+    @Test
+    void findSimulationGroupsShouldAcceptTrimmedCaseInsensitiveStatus() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "A scenario attivo");
+        createArchivedSimulationGroup(owner.userGroupId(), "B scenario archiviato");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .param("status", " all ")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[*].simulationGroupName", contains(
+                        "A scenario attivo",
+                        "B scenario archiviato"
+                )));
+    }
+
+    @Test
+    void collaboratorShouldReceiveEmptyListWhenNoSimulationGroupIsAccessible() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto nascosto empty");
+
+        UUID hiddenSimulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Scenario nascosto empty"
+        );
+        linkSimulationGroupToAccount(hiddenSimulationGroupId, hiddenAccount);
+
+        createSimulationGroup(owner.userGroupId(), "Scenario senza conti empty");
+
+        String accessToken = accessTokenFor(collaborator);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)))
+                .andExpect(content().string(not(containsString("Scenario nascosto empty"))))
+                .andExpect(content().string(not(containsString(hiddenSimulationGroupId.toString()))));
+    }
+
+    @Test
+    void findSimulationGroupsShouldReturnResultsOrderedByNameCaseInsensitive() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        createSimulationGroup(owner.userGroupId(), "beta scenario");
+        createSimulationGroup(owner.userGroupId(), "Alpha scenario");
+        createSimulationGroup(owner.userGroupId(), "gamma scenario");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(SIMULATION_GROUPS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[*].simulationGroupName", contains(
+                        "Alpha scenario",
+                        "beta scenario",
+                        "gamma scenario"
+                )));
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
 
@@ -896,6 +1210,24 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
         return simulationGroupId;
     }
 
+    private void linkSimulationGroupToAccount(
+            UUID simulationGroupId,
+            AccountRef account
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO simulation_groups_accounts (
+                            simulation_group_id,
+                            account_id,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?)
+                        """,
+                simulationGroupId,
+                account.accountId(),
+                account.userGroupId()
+        );
+    }
+
     private record UserRef(
             UUID userId,
             UUID userGroupId
@@ -907,4 +1239,5 @@ class SimulationGroupControllerIntegrationTest extends IntegrationTestSupport {
             UUID userGroupId
     ) {
     }
+
 }

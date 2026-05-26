@@ -42,4 +42,21 @@ public interface SimulationGroupAccountRepository extends JpaRepository<Simulati
             @Param("simulationGroupId") UUID simulationGroupId,
             @Param("userGroupId") UUID userGroupId
     );
+
+    @Query(value = """
+            SELECT simulation_group_account.account_id
+            FROM simulation_groups_accounts simulation_group_account
+            JOIN accounts_users account_user
+              ON account_user.account_id = simulation_group_account.account_id
+             AND account_user.user_group_id = simulation_group_account.user_group_id
+            WHERE simulation_group_account.simulation_group_id = :simulationGroupId
+              AND simulation_group_account.user_group_id = :userGroupId
+              AND account_user.user_id = :userId
+            ORDER BY simulation_group_account.account_id
+            """, nativeQuery = true)
+    List<UUID> findVisibleAccountIds(
+            @Param("simulationGroupId") UUID simulationGroupId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
+    );
 }

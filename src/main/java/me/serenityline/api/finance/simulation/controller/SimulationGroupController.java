@@ -4,15 +4,14 @@ import jakarta.validation.Valid;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupCreateRequest;
 import me.serenityline.api.finance.simulation.dto.SimulationGroupResponse;
 import me.serenityline.api.finance.simulation.service.SimulationGroupCreationService;
+import me.serenityline.api.finance.simulation.service.SimulationGroupQueryService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Objects;
 
 @RestController
@@ -20,11 +19,16 @@ import java.util.Objects;
 public class SimulationGroupController {
 
     private final SimulationGroupCreationService simulationGroupCreationService;
+    private final SimulationGroupQueryService simulationGroupQueryService;
 
-    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService) {
+    public SimulationGroupController(SimulationGroupCreationService simulationGroupCreationService, SimulationGroupQueryService simulationGroupQueryService) {
         this.simulationGroupCreationService = Objects.requireNonNull(
                 simulationGroupCreationService,
                 "simulationGroupCreationService"
+        );
+        this.simulationGroupQueryService = Objects.requireNonNull(
+                simulationGroupQueryService,
+                "simulationGroupQueryService"
         );
     }
 
@@ -41,5 +45,18 @@ public class SimulationGroupController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(response);
+    }
+
+    @GetMapping
+    public ResponseEntity<List<SimulationGroupResponse>> findSimulationGroups(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @RequestParam(required = false) String status
+    ) {
+        List<SimulationGroupResponse> response = simulationGroupQueryService.findSimulationGroups(
+                authenticatedUser.userId(),
+                status
+        );
+
+        return ResponseEntity.ok(response);
     }
 }
