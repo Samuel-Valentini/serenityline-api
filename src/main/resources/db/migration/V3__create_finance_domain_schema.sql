@@ -389,15 +389,51 @@ CREATE TABLE simulation_groups
 CREATE INDEX idx_simulation_groups_user_group_id
     ON simulation_groups (user_group_id);
 
-CREATE INDEX idx_simulation_groups_active_group
-    ON simulation_groups (user_group_id, simulation_group_name)
+CREATE INDEX idx_simulation_groups_active_group_name
+    ON simulation_groups (user_group_id, lower(simulation_group_name), simulation_group_name)
     WHERE simulation_group_archived_at IS NULL;
+
+CREATE INDEX idx_simulation_groups_archived_group_name
+    ON simulation_groups (user_group_id, lower(simulation_group_name), simulation_group_name)
+    WHERE simulation_group_archived_at IS NOT NULL;
 
 CREATE UNIQUE INDEX uq_simulation_groups_active_name_group
-    ON simulation_groups (user_group_id, lower(btrim(simulation_group_name)))
+    ON simulation_groups (
+                          user_group_id,
+                          lower(btrim(regexp_replace(simulation_group_name, '[[:space:]]+', ' ', 'g')))
+        )
     WHERE simulation_group_archived_at IS NULL;
 
-------------------
+CREATE TABLE simulation_groups_accounts
+(
+    simulation_group_account_id         UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
+    simulation_group_id                 UUID        NOT NULL,
+    account_id                          UUID        NOT NULL,
+    user_group_id                       UUID        NOT NULL,
+    simulation_group_account_created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_simulation_groups_accounts_simulation_group
+        FOREIGN KEY (simulation_group_id, user_group_id)
+            REFERENCES simulation_groups (simulation_group_id, user_group_id)
+            ON DELETE CASCADE,
+
+    CONSTRAINT fk_simulation_groups_accounts_account_group
+        FOREIGN KEY (account_id, user_group_id)
+            REFERENCES accounts (account_id, user_group_id)
+            ON DELETE CASCADE,
+
+    CONSTRAINT uq_simulation_groups_accounts_simulation_group_account
+        UNIQUE (simulation_group_id, account_id, user_group_id)
+);
+
+CREATE INDEX idx_simulation_groups_accounts_user_group_id
+    ON simulation_groups_accounts (user_group_id);
+
+CREATE INDEX idx_simulation_groups_accounts_simulation_group
+    ON simulation_groups_accounts (simulation_group_id, user_group_id);
+
+CREATE INDEX idx_simulation_groups_accounts_account
+    ON simulation_groups_accounts (account_id, user_group_id);
 
 CREATE TABLE recurring_transactions
 (
