@@ -7,7 +7,6 @@ import me.serenityline.api.finance.transaction.dto.TransactionSearchRequest;
 import me.serenityline.api.finance.transaction.entity.Transaction;
 import me.serenityline.api.finance.transaction.repository.TransactionRepository;
 import me.serenityline.api.user.entity.User;
-import me.serenityline.api.user.entity.UserRole;
 import me.serenityline.api.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,13 +22,16 @@ public class TransactionReadService {
 
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
+    private final TransactionAccessService transactionAccessService;
 
     public TransactionReadService(
             UserRepository userRepository,
-            TransactionRepository transactionRepository
+            TransactionRepository transactionRepository,
+            TransactionAccessService transactionAccessService
     ) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.transactionRepository = Objects.requireNonNull(transactionRepository, "transactionRepository");
+        this.transactionAccessService = Objects.requireNonNull(transactionAccessService, "transactionAccessService");
     }
 
     @Transactional(readOnly = true)
@@ -45,10 +47,10 @@ public class TransactionReadService {
 
         UUID userGroupId = currentUser.getUserGroup().getUserGroupId();
 
-        Transaction transaction = findReadableTransaction(
+        Transaction transaction = transactionAccessService.findReadableTransaction(
                 currentUser,
-                transactionId,
-                userGroupId
+                userGroupId,
+                transactionId
         );
 
         return TransactionResponse.from(transaction);
@@ -71,7 +73,7 @@ public class TransactionReadService {
 
         List<Transaction> transactions;
 
-        if (canReadAllGroupTransactions(currentUser)) {
+        if (transactionAccessService.canReadAllGroupTransactions(currentUser)) {
             transactions = transactionRepository.findGroupTransactionsInRange(
                     userGroupId,
                     request.from(),
@@ -93,31 +95,6 @@ public class TransactionReadService {
         return transactions.stream()
                 .map(TransactionResponse::from)
                 .toList();
-    }
-
-    private Transaction findReadableTransaction(
-            User currentUser,
-            UUID transactionId,
-            UUID userGroupId
-    ) {
-        if (canReadAllGroupTransactions(currentUser)) {
-            return transactionRepository.findByTransactionIdAndUserGroup_UserGroupId(
-                    transactionId,
-                    userGroupId
-            ).orElseThrow(() -> new ResourceNotFoundException("finance.transaction.notFound"));
-        }
-
-        return transactionRepository.findByTransactionIdAndLinkedUserAccess(
-                transactionId,
-                userGroupId,
-                currentUser.getUserId()
-        ).orElseThrow(() -> new ResourceNotFoundException("finance.transaction.notFound"));
-    }
-
-    private boolean canReadAllGroupTransactions(User user) {
-        return user.getUserRole() == UserRole.OWNER
-                || user.getUserRole() == UserRole.SUPER_COLLABORATOR
-                || user.getUserRole() == UserRole.VIEWER_COLLABORATOR;
     }
 
     private void validateSearchRequest(TransactionSearchRequest request) {

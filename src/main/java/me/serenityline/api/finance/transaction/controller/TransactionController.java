@@ -33,7 +33,8 @@ public class TransactionController {
     public TransactionController(
             TransactionCreationService transactionCreationService,
             TransactionReadService transactionReadService,
-            TransactionUpdateService transactionUpdateService, TransactionDeletionService transactionDeletionService
+            TransactionUpdateService transactionUpdateService,
+            TransactionDeletionService transactionDeletionService
     ) {
         this.transactionCreationService = Objects.requireNonNull(transactionCreationService, "transactionCreationService");
         this.transactionReadService = Objects.requireNonNull(transactionReadService, "transactionReadService");

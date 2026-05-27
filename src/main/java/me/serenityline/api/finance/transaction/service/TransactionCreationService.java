@@ -2,7 +2,6 @@ package me.serenityline.api.finance.transaction.service;
 
 import me.serenityline.api.common.error.ResourceNotFoundException;
 import me.serenityline.api.finance.account.entity.Account;
-import me.serenityline.api.finance.account.repository.AccountRepository;
 import me.serenityline.api.finance.bucket.entity.Bucket;
 import me.serenityline.api.finance.bucket.repository.BucketAccountRepository;
 import me.serenityline.api.finance.bucket.repository.BucketRepository;
@@ -20,9 +19,7 @@ import me.serenityline.api.finance.transaction.entity.TransactionUser;
 import me.serenityline.api.finance.transaction.repository.TransactionRepository;
 import me.serenityline.api.finance.transaction.repository.TransactionUserRepository;
 import me.serenityline.api.user.entity.User;
-import me.serenityline.api.user.entity.UserRole;
 import me.serenityline.api.user.repository.UserRepository;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,7 +32,6 @@ public class TransactionCreationService {
     private static final short DEFAULT_REMINDER_DAYS_BEFORE = 7;
 
     private final UserRepository userRepository;
-    private final AccountRepository accountRepository;
     private final CategoryRepository categoryRepository;
     private final CreditCardRepository creditCardRepository;
     private final BucketRepository bucketRepository;
@@ -44,10 +40,10 @@ public class TransactionCreationService {
     private final SimulationGroupAccountRepository simulationGroupAccountRepository;
     private final TransactionRepository transactionRepository;
     private final TransactionUserRepository transactionUserRepository;
+    private final TransactionAccessService transactionAccessService;
 
     public TransactionCreationService(
             UserRepository userRepository,
-            AccountRepository accountRepository,
             CategoryRepository categoryRepository,
             CreditCardRepository creditCardRepository,
             BucketRepository bucketRepository,
@@ -55,10 +51,10 @@ public class TransactionCreationService {
             SimulationGroupRepository simulationGroupRepository,
             SimulationGroupAccountRepository simulationGroupAccountRepository,
             TransactionRepository transactionRepository,
-            TransactionUserRepository transactionUserRepository
+            TransactionUserRepository transactionUserRepository,
+            TransactionAccessService transactionAccessService
     ) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
-        this.accountRepository = Objects.requireNonNull(accountRepository, "accountRepository");
         this.categoryRepository = Objects.requireNonNull(categoryRepository, "categoryRepository");
         this.creditCardRepository = Objects.requireNonNull(creditCardRepository, "creditCardRepository");
         this.bucketRepository = Objects.requireNonNull(bucketRepository, "bucketRepository");
@@ -67,6 +63,7 @@ public class TransactionCreationService {
         this.simulationGroupAccountRepository = Objects.requireNonNull(simulationGroupAccountRepository, "simulationGroupAccountRepository");
         this.transactionRepository = Objects.requireNonNull(transactionRepository, "transactionRepository");
         this.transactionUserRepository = Objects.requireNonNull(transactionUserRepository, "transactionUserRepository");
+        this.transactionAccessService = Objects.requireNonNull(transactionAccessService, "transactionAccessService");
     }
 
     @Transactional
@@ -80,7 +77,7 @@ public class TransactionCreationService {
         User currentUser = findCurrentUser(currentUserId);
         UUID userGroupId = currentUser.getUserGroup().getUserGroupId();
 
-        Account account = resolveOperableAccount(
+        Account account = transactionAccessService.findOperableAccount(
                 currentUser,
                 userGroupId,
                 request.accountId()
@@ -145,42 +142,6 @@ public class TransactionCreationService {
     private User findCurrentUser(UUID currentUserId) {
         return userRepository.findById(currentUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
-    }
-
-    private Account resolveOperableAccount(
-            User currentUser,
-            UUID userGroupId,
-            UUID accountId
-    ) {
-        if (accountId == null) {
-            throw new IllegalArgumentException("finance.transaction.accountRequired");
-        }
-
-        if (canOperateOnAllAccounts(currentUser)) {
-            return accountRepository.findByAccountIdAndUserGroup_UserGroupId(accountId, userGroupId)
-                    .orElseThrow(() -> new ResourceNotFoundException("finance.account.notFound"));
-        }
-
-        if (currentUser.getUserRole() == UserRole.VIEWER_COLLABORATOR) {
-            Account account = accountRepository.findByAccountIdAndUserGroup_UserGroupId(accountId, userGroupId)
-                    .orElseThrow(() -> new ResourceNotFoundException("finance.account.notFound"));
-
-            accountRepository.findVisibleAccountForLinkedUser(
-                            accountId,
-                            userGroupId,
-                            currentUser.getUserId()
-                    )
-                    .orElseThrow(() -> new AccessDeniedException("finance.account.operationNotAllowed"));
-
-            return account;
-        }
-
-        return accountRepository.findVisibleAccountForLinkedUser(
-                        accountId,
-                        userGroupId,
-                        currentUser.getUserId()
-                )
-                .orElseThrow(() -> new ResourceNotFoundException("finance.account.notFound"));
     }
 
     private Category resolveActiveCategory(
@@ -283,7 +244,7 @@ public class TransactionCreationService {
             UUID userGroupId,
             UUID simulationGroupId
     ) {
-        if (canOperateOnAllAccounts(currentUser)) {
+        if (transactionAccessService.canOperateOnAllAccounts(currentUser)) {
             return simulationGroupRepository
                     .findBySimulationGroupIdAndUserGroup_UserGroupIdAndSimulationGroupArchivedAtIsNull(
                             simulationGroupId,
@@ -314,10 +275,5 @@ public class TransactionCreationService {
 
     private boolean defaultFalse(Boolean value) {
         return value != null && value;
-    }
-
-    private boolean canOperateOnAllAccounts(User user) {
-        return user.getUserRole() == UserRole.OWNER
-                || user.getUserRole() == UserRole.SUPER_COLLABORATOR;
     }
 }
