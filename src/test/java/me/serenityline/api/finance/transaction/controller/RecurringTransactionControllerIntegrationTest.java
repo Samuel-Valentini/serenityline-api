@@ -17,14 +17,14 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -56,6 +56,42 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
     private static String uniqueEmail(String label) {
         return label + "-" + UUID.randomUUID() + "@example.com";
+    }
+
+    private static LocalDate date(Map<String, Object> row, String columnName) {
+        Object value = row.get(columnName);
+
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof LocalDate localDate) {
+            return localDate;
+        }
+
+        if (value instanceof java.sql.Date sqlDate) {
+            return sqlDate.toLocalDate();
+        }
+
+        throw new IllegalStateException("Unsupported date type for column " + columnName + ": " + value.getClass());
+    }
+
+    private static BigDecimal decimal(Map<String, Object> row, String columnName) {
+        Object value = row.get(columnName);
+
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof BigDecimal bigDecimal) {
+            return bigDecimal;
+        }
+
+        if (value instanceof Number number) {
+            return BigDecimal.valueOf(number.doubleValue());
+        }
+
+        return new BigDecimal(value.toString());
     }
 
     @Test
@@ -2932,6 +2968,2065 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                         .value("Ricorrente simulata history"));
     }
 
+    @Test
+    void patchRecurringTransactionShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectEmptyPatch() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch empty");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch empty");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch empty",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.emptyPatch"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectUnknownRootField() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch unknown root");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch unknown root");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch unknown root",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("unknownField", "boom");
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectUnknownRuleField() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch unknown rule");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch unknown rule"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch unknown rule",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("paymentAmount", "-90.00");
+        rule.put("unexpected", true);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectUnknownDetailsField() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch unknown details");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch unknown details");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch unknown details",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Nuova descrizione");
+        details.put("unexpected", true);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void ownerShouldPatchRootFieldsWithoutCreatingHistoryRows() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch root");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch root");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch root",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionFirstPaymentDate", "2026-06-15");
+        body.put("recurringTransactionAmountIsAdjustable", false);
+        body.put("recurringTransactionReminderEnabled", false);
+        body.put("recurringTransactionReminderDaysBefore", 0);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionFirstPaymentDate").value("2026-06-15"))
+                .andExpect(jsonPath("$.recurringTransactionAmountIsAdjustable").value(false))
+                .andExpect(jsonPath("$.recurringTransactionReminderEnabled").value(false))
+                .andExpect(jsonPath("$.recurringTransactionReminderDaysBefore").value(0))
+                .andExpect(jsonPath("$.paymentAmount").value(-100.0))
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente patch root"));
+
+        Map<String, Object> row = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(date(row, "recurring_transaction_first_payment_date")).isEqualTo(LocalDate.of(2026, 6, 15));
+        assertThat(row.get("recurring_transaction_amount_is_adjustable")).isEqualTo(false);
+        assertThat(row.get("recurring_transaction_reminder_enabled")).isEqualTo(false);
+        assertThat(((Number) row.get("recurring_transaction_reminder_days_before")).intValue()).isZero();
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+    }
+
+    @Test
+    void ownerShouldPatchRuleByAppendingOpenHistoryAndClosingPreviousOpenRule() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch rule open");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch rule open");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch rule open",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("effectiveFrom", "2026-08-01");
+        rule.put("paymentAmount", "-125.50");
+        rule.put("dayOfUnit", 15);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentAmount").value(-125.5))
+                .andExpect(jsonPath("$.effectiveFrom").value("2026-08-01"))
+                .andExpect(jsonPath("$.dayOfUnit").value(15));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(2);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+
+        List<Map<String, Object>> history = findRuleHistoryRowsByCreatedAt(recurringTransactionId);
+
+        Map<String, Object> first = history.get(0);
+        Map<String, Object> second = history.get(1);
+
+        assertThat(date(first, "effective_from")).isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(date(first, "effective_to")).isEqualTo(LocalDate.of(2026, 8, 1));
+
+        assertThat(date(second, "effective_from")).isEqualTo(LocalDate.of(2026, 8, 1));
+        assertThat(date(second, "effective_to")).isNull();
+        assertThat(decimal(second, "payment_amount")).isEqualByComparingTo(new BigDecimal("-125.50"));
+        assertThat(((Number) second.get("day_of_unit")).intValue()).isEqualTo(15);
+    }
+
+    @Test
+    void ownerShouldPatchBoundedRuleOverrideWithoutClosingCurrentOpenRule() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch bounded rule");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch bounded rule");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch bounded rule",
+                LocalDate.of(2026, 1, 1),
+                new BigDecimal("-200.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("effectiveFrom", "2025-03-01");
+        rule.put("effectiveTo", "2025-05-01");
+        rule.put("paymentAmount", "-70.00");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effectiveFrom").value("2025-03-01"))
+                .andExpect(jsonPath("$.effectiveTo").value("2025-05-01"))
+                .andExpect(jsonPath("$.paymentAmount").value(-70.0));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(2);
+
+        Map<String, Object> currentOpen = findCurrentOpenRuleHistoryRow(recurringTransactionId);
+        assertThat(date(currentOpen, "effective_from")).isEqualTo(LocalDate.of(2026, 1, 1));
+        assertThat(date(currentOpen, "effective_to")).isNull();
+        assertThat(decimal(currentOpen, "payment_amount")).isEqualByComparingTo(new BigDecimal("-200.00"));
+    }
+
+    @Test
+    void patchRuleShouldCopyOmittedFieldsFromRuleEffectiveAtRequestedDate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch rule copy");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch rule copy");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch rule copy",
+                LocalDate.of(2026, 1, 10),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> firstPatchRule = new LinkedHashMap<>();
+        firstPatchRule.put("effectiveFrom", "2026-03-01");
+        firstPatchRule.put("recurrenceInterval", 2);
+        firstPatchRule.put("recurrenceUnit", "MONTH");
+        firstPatchRule.put("dayOfUnit", 20);
+        firstPatchRule.put("paymentDateAdjustmentPolicy", "NEXT_BUSINESS_DAY");
+        firstPatchRule.put("paymentAmount", "-150.00");
+
+        Map<String, Object> firstPatch = new LinkedHashMap<>();
+        firstPatch.put("rule", firstPatchRule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(firstPatch)))
+                .andExpect(status().isOk());
+
+        Map<String, Object> secondPatchRule = new LinkedHashMap<>();
+        secondPatchRule.put("effectiveFrom", "2026-04-01");
+        secondPatchRule.put("paymentAmount", "-175.00");
+
+        Map<String, Object> secondPatch = new LinkedHashMap<>();
+        secondPatch.put("rule", secondPatchRule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(secondPatch)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentAmount").value(-175.0))
+                .andExpect(jsonPath("$.recurrenceInterval").value(2))
+                .andExpect(jsonPath("$.recurrenceUnit").value("MONTH"))
+                .andExpect(jsonPath("$.dayOfUnit").value(20))
+                .andExpect(jsonPath("$.paymentDateAdjustmentPolicy").value("NEXT_BUSINESS_DAY"));
+
+        Map<String, Object> latest = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(decimal(latest, "payment_amount")).isEqualByComparingTo(new BigDecimal("-175.00"));
+        assertThat(((Number) latest.get("recurrence_interval")).intValue()).isEqualTo(2);
+        assertThat(latest.get("recurrence_unit")).isEqualTo("MONTH");
+        assertThat(((Number) latest.get("day_of_unit")).intValue()).isEqualTo(20);
+        assertThat(latest.get("payment_date_adjustment_policy")).isEqualTo("NEXT_BUSINESS_DAY");
+    }
+
+    @Test
+    void patchRuleShouldKeepBaseDayOfUnitWhenDayOfUnitIsOmitted() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch day omitted");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch day omitted");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch day omitted",
+                LocalDate.of(2026, 1, 10),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> firstRule = new LinkedHashMap<>();
+        firstRule.put("effectiveFrom", "2026-03-01");
+        firstRule.put("recurrenceUnit", "MONTH");
+        firstRule.put("dayOfUnit", 25);
+        firstRule.put("paymentAmount", "-120.00");
+
+        Map<String, Object> firstBody = new LinkedHashMap<>();
+        firstBody.put("rule", firstRule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(firstBody)))
+                .andExpect(status().isOk());
+
+        Map<String, Object> secondRule = new LinkedHashMap<>();
+        secondRule.put("effectiveFrom", "2026-04-15");
+        secondRule.put("paymentAmount", "-130.00");
+
+        Map<String, Object> secondBody = new LinkedHashMap<>();
+        secondBody.put("rule", secondRule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(secondBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentAmount").value(-130.0))
+                .andExpect(jsonPath("$.dayOfUnit").value(25));
+
+        Map<String, Object> latest = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(((Number) latest.get("day_of_unit")).intValue()).isEqualTo(25);
+    }
+
+    @Test
+    void patchRuleShouldRejectInvalidDayOfUnitForRecurrenceUnit() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch invalid day");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch invalid day");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch invalid day",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("effectiveFrom", "2026-07-01");
+        rule.put("recurrenceUnit", "WEEK");
+        rule.put("dayOfUnit", 8);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.dayOfUnitInvalid"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void patchRuleShouldRejectEffectiveToEqualToEffectiveFrom() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch invalid effective");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch invalid effective");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch invalid effective",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("effectiveFrom", "2026-07-01");
+        rule.put("effectiveTo", "2026-07-01");
+        rule.put("paymentAmount", "-80.00");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.effectiveDatesInvalid"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void patchRuleShouldRejectZeroPaymentAmount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch zero amount");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch zero amount");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch zero amount",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("paymentAmount", "0.00");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.paymentAmountNotZero"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void patchRuleShouldRejectPaymentAmountWithMoreThanTwoDecimals() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch amount decimals");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch amount decimals");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch amount decimals",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("paymentAmount", "-100.123");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void patchRuleShouldClearNullableRuleFieldsWithBlankString() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch clear rule");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch clear rule");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch clear rule",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> firstRule = new LinkedHashMap<>();
+        firstRule.put("effectiveFrom", "2026-06-01");
+        firstRule.put("recurringTransactionEndDate", "2026-12-31");
+        firstRule.put("finalPaymentAmount", "-50.00");
+
+        Map<String, Object> firstBody = new LinkedHashMap<>();
+        firstBody.put("rule", firstRule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(firstBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionEndDate").value("2026-12-31"))
+                .andExpect(jsonPath("$.finalPaymentAmount").value(-50.0));
+
+        Map<String, Object> secondRule = new LinkedHashMap<>();
+        secondRule.put("effectiveFrom", "2026-07-01");
+        secondRule.put("recurringTransactionEndDate", "");
+        secondRule.put("finalPaymentAmount", "");
+
+        Map<String, Object> secondBody = new LinkedHashMap<>();
+        secondBody.put("rule", secondRule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(secondBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionEndDate").doesNotExist())
+                .andExpect(jsonPath("$.finalPaymentAmount").doesNotExist());
+
+        Map<String, Object> latest = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(date(latest, "effective_from")).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(date(latest, "recurring_transaction_end_date")).isNull();
+        assertThat(decimal(latest, "final_payment_amount")).isNull();
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(3);
+    }
+
+    @Test
+    void ownerShouldPatchDetailsByAppendingDetailsHistoryOnly() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch details");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch details");
+        UUID newCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch details nuova");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+        UUID newFinancialPriorityId = financialPriorityId("OPTIONAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch details",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("effectiveFrom", "2026-07-01");
+        details.put("recurringTransactionDescription", "Ricorrente patch details aggiornata");
+        details.put("categoryId", newCategoryId);
+        details.put("financialPriorityId", newFinancialPriorityId);
+        details.put("recurringTransactionAffectsAccountBalance", false);
+        details.put("recurringTransactionAffectsLiquidity", true);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente patch details aggiornata"))
+                .andExpect(jsonPath("$.categoryId").value(newCategoryId.toString()))
+                .andExpect(jsonPath("$.financialPriorityId").value(newFinancialPriorityId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
+                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(2);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(recurringTransactionId, owner.userGroupId());
+
+        assertThat(date(latestDetails, "recurring_transaction_details_effective_from"))
+                .isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(latestDetails.get("recurring_transaction_description"))
+                .isEqualTo("Ricorrente patch details aggiornata");
+        assertThat(latestDetails.get("category_id")).isEqualTo(newCategoryId);
+        assertThat(latestDetails.get("financial_priority_id")).isEqualTo(newFinancialPriorityId);
+        assertThat(latestDetails.get("linked_account_id")).isEqualTo(account.accountId());
+    }
+
+    @Test
+    void patchDetailsShouldClearCreditCardWithBlankString() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch clear credit card");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch clear credit card"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta patch clear credit card"
+        );
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch clear credit card",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> firstDetails = new LinkedHashMap<>();
+        firstDetails.put("linkedCreditCardId", creditCard.creditCardId());
+
+        Map<String, Object> firstBody = new LinkedHashMap<>();
+        firstBody.put("details", firstDetails);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(firstBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedCreditCardId").value(creditCard.creditCardId().toString()));
+
+        Map<String, Object> secondDetails = new LinkedHashMap<>();
+        secondDetails.put("effectiveFrom", "2026-07-01");
+        secondDetails.put("linkedCreditCardId", "");
+
+        Map<String, Object> secondBody = new LinkedHashMap<>();
+        secondBody.put("details", secondDetails);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(secondBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedCreditCardId").doesNotExist());
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(date(latestDetails, "recurring_transaction_details_effective_from"))
+                .isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(latestDetails.get("linked_credit_card_id")).isNull();
+        assertThat(latestDetails.get("linked_account_id")).isEqualTo(account.accountId());
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(3);
+    }
+
+    @Test
+    void patchDetailsShouldClearBucketWithBlankString() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch clear bucket");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch clear bucket"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket patch clear bucket");
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch clear bucket",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> firstDetails = new LinkedHashMap<>();
+        firstDetails.put("linkedBucketId", bucket.bucketId());
+
+        Map<String, Object> firstBody = new LinkedHashMap<>();
+        firstBody.put("details", firstDetails);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(firstBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()));
+
+        Map<String, Object> secondDetails = new LinkedHashMap<>();
+        secondDetails.put("effectiveFrom", "2026-07-01");
+        secondDetails.put("linkedBucketId", "");
+
+        Map<String, Object> secondBody = new LinkedHashMap<>();
+        secondBody.put("details", secondDetails);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(secondBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedBucketId").doesNotExist());
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(date(latestDetails, "recurring_transaction_details_effective_from"))
+                .isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(latestDetails.get("linked_bucket_id")).isNull();
+        assertThat(latestDetails.get("linked_account_id")).isEqualTo(account.accountId());
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(3);
+    }
+
+    @Test
+    void patchDetailsShouldCopyOmittedFieldsFromDetailsEffectiveAtRequestedDate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch details copy");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch details copy");
+        UUID secondCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch details copy second");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente details base",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                "Ricorrente details seconda",
+                secondCategoryId,
+                financialPriorityId,
+                account,
+                LocalDate.of(2026, 8, 1),
+                owner.userGroupId()
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("effectiveFrom", "2026-07-01");
+        details.put("recurringTransactionDescription", "Ricorrente details retroattiva");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente details retroattiva"))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()));
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(recurringTransactionId, owner.userGroupId());
+
+        assertThat(latestDetails.get("category_id")).isEqualTo(categoryId);
+        assertThat(latestDetails.get("financial_priority_id")).isEqualTo(financialPriorityId);
+        assertThat(latestDetails.get("linked_account_id")).isEqualTo(account.accountId());
+    }
+
+    @Test
+    void patchDetailsShouldRejectBlankRequiredDescription() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch blank description");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch blank description");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch blank description",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "   ");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+    }
+
+    @Test
+    void patchDetailsShouldRejectFalseFalseAffectsFlags() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch false false");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch false false");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch false false",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionAffectsAccountBalance", false);
+        details.put("recurringTransactionAffectsLiquidity", false);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.affectsSomethingRequired"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+    }
+
+    @Test
+    void patchDetailsShouldRejectCreditCardFromDifferentAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch wrong card");
+        AccountRef otherAccount = createAccount(owner.userGroupId(), "Conto patch wrong card other");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch wrong card");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        CreditCardRef otherCreditCard = createCreditCard(owner.userGroupId(), otherAccount, "Carta patch wrong card");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch wrong card",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("linkedCreditCardId", otherCreditCard.creditCardId());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.notFound"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+    }
+
+    @Test
+    void patchDetailsShouldRejectBucketNotLinkedToAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch wrong bucket");
+        AccountRef otherAccount = createAccount(owner.userGroupId(), "Conto patch wrong bucket other");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch wrong bucket");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket patch wrong bucket");
+        linkBucketToAccount(bucket, otherAccount, owner.userGroupId());
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch wrong bucket",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("linkedBucketId", bucket.bucketId());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.bucket.notFound"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+    }
+
+    @Test
+    void ownerShouldPatchBaseRecurringTransactionToSimulated() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch to simulated");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch to simulated");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation patch to simulated");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch to simulated",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(true))
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()));
+
+        Map<String, Object> row = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(row.get("recurring_transaction_is_simulated")).isEqualTo(true);
+        assertThat(row.get("simulation_group_id")).isEqualTo(simulationGroupId);
+    }
+
+    @Test
+    void ownerShouldPatchSimulatedRecurringTransactionToBaseWhenSimulationGroupIsBlank() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch to base");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch to base");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation patch to base");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID recurringTransactionId = createSimulatedRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                simulationGroupId,
+                "Ricorrente patch to base",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionIsSimulated", false);
+        body.put("simulationGroupId", "");
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(false))
+                .andExpect(jsonPath("$.simulationGroupId").doesNotExist());
+
+        Map<String, Object> row = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(row.get("recurring_transaction_is_simulated")).isEqualTo(false);
+        assertThat(row.get("simulation_group_id")).isNull();
+    }
+
+    @Test
+    void patchShouldRejectSimulatedTrueWithoutSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch simulated missing group");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch simulated missing group");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch simulated missing group",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionIsSimulated", true);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.simulationGroupRequired"));
+    }
+
+    @Test
+    void patchShouldRejectSimulationGroupWhenRecurringTransactionIsNotSimulated() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch simulation not allowed");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch simulation not allowed");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation patch not allowed");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch simulation not allowed",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("simulationGroupId", simulationGroupId);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.simulationGroupNotAllowed"));
+    }
+
+    @Test
+    void patchShouldRejectSimulationGroupNotLinkedToCurrentAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch simulation unlinked");
+        AccountRef otherAccount = createAccount(owner.userGroupId(), "Conto patch simulation unlinked other");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch simulation unlinked");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation patch unlinked");
+        linkSimulationGroupToAccount(simulationGroupId, otherAccount);
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch simulation unlinked",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+    }
+
+    @Test
+    void patchShouldRejectReminderDaysGreaterThan366() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch reminder invalid");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch reminder invalid");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch reminder invalid",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionReminderDaysBefore", 367);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void superCollaboratorShouldPatchRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch super");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch super");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch super",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Ricorrente patch super aggiornata");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente patch super aggiornata"));
+    }
+
+    @Test
+    void viewerCollaboratorShouldPatchLinkedRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch viewer linked");
+        grantAccountAccess(account, viewer);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch viewer linked");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch viewer linked",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Ricorrente patch viewer linked aggiornata");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente patch viewer linked aggiornata"));
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveForbiddenWhenPatchingHiddenRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch viewer hidden");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch viewer hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch viewer hidden",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Non deve passare");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.operationNotAllowed"));
+    }
+
+    @Test
+    void collaboratorShouldPatchLinkedRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch collaborator linked");
+        grantAccountAccess(account, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch collaborator linked");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch collaborator linked",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Ricorrente patch collaborator linked aggiornata");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente patch collaborator linked aggiornata"));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenPatchingHiddenRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch collaborator hidden");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch collaborator hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch collaborator hidden",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Non deve passare");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenPatchingRecurringTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto patch other group");
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria patch other group"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                otherOwner,
+                otherAccount,
+                otherCategoryId,
+                financialPriorityId,
+                "Ricorrente patch other group",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Non deve passare");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+    }
+
+    @Test
+    void patchRecurringTransactionShouldReturnBadRequestWhenIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionReminderEnabled", false);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRollbackAllChangesWhenRuleIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch rollback");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch rollback");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch rollback",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("effectiveFrom", "2026-07-01");
+        rule.put("paymentAmount", "0.00");
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("recurringTransactionDescription", "Non deve essere salvata");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionFirstPaymentDate", "2026-06-15");
+        body.put("recurringTransactionReminderEnabled", false);
+        body.put("details", details);
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.paymentAmountNotZero"));
+
+        Map<String, Object> root = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(date(root, "recurring_transaction_first_payment_date"))
+                .isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(root.get("recurring_transaction_reminder_enabled")).isEqualTo(true);
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(1);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(recurringTransactionId, owner.userGroupId());
+        assertThat(latestDetails.get("recurring_transaction_description"))
+                .isEqualTo("Ricorrente patch rollback");
+    }
+
+    @Test
+    void patchShouldValidateSimulationGroupAgainstNewLinkedAccountWhenDetailsChangeAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef oldAccount = createAccount(owner.userGroupId(), "Conto patch simulation old account");
+        AccountRef newAccount = createAccount(owner.userGroupId(), "Conto patch simulation new account");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch simulation account");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation patch new account");
+        linkSimulationGroupToAccount(simulationGroupId, newAccount);
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                oldAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch simulation account",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("linkedAccountId", newAccount.accountId());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+        body.put("recurringTransactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedAccountId").value(newAccount.accountId().toString()))
+                .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(true))
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()));
+
+        Map<String, Object> root = findRecurringTransactionRow(recurringTransactionId);
+        assertThat(root.get("simulation_group_id")).isEqualTo(simulationGroupId);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(recurringTransactionId, owner.userGroupId());
+        assertThat(latestDetails.get("linked_account_id")).isEqualTo(newAccount.accountId());
+    }
+
+    @Test
+    void patchShouldRejectSimulationGroupNotLinkedToNewLinkedAccountWhenDetailsChangeAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef oldAccount = createAccount(owner.userGroupId(), "Conto patch simulation old negative");
+        AccountRef newAccount = createAccount(owner.userGroupId(), "Conto patch simulation new negative");
+        AccountRef simulationAccount = createAccount(owner.userGroupId(), "Conto patch simulation linked elsewhere");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch simulation negative");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation patch negative");
+        linkSimulationGroupToAccount(simulationGroupId, simulationAccount);
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                oldAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch simulation negative",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("linkedAccountId", newAccount.accountId());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+        body.put("recurringTransactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(1);
+
+        Map<String, Object> root = findRecurringTransactionRow(recurringTransactionId);
+        assertThat(root.get("recurring_transaction_is_simulated")).isEqualTo(false);
+        assertThat(root.get("simulation_group_id")).isNull();
+    }
+
+    @Test
+    void ownerShouldPatchSimulatedRecurringTransactionToBaseWithoutSendingSimulationGroupId() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch simulated to base omitted group");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch simulated to base omitted");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation patch simulated to base omitted");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID recurringTransactionId = createSimulatedRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                simulationGroupId,
+                "Ricorrente patch simulated to base omitted",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionIsSimulated", false);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(false))
+                .andExpect(jsonPath("$.simulationGroupId").doesNotExist());
+
+        Map<String, Object> root = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(root.get("recurring_transaction_is_simulated")).isEqualTo(false);
+        assertThat(root.get("simulation_group_id")).isNull();
+    }
+
+    @Test
+    void patchRuleWithoutEffectiveFromShouldUseCurrentOpenRuleEffectiveFrom() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch rule without effective from");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch rule without effective from");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch rule without effective from",
+                LocalDate.of(2026, 6, 10),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("paymentAmount", "-123.45");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effectiveFrom").value("2026-06-10"))
+                .andExpect(jsonPath("$.paymentAmount").value(-123.45));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(2);
+
+        Map<String, Object> latestRule = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(date(latestRule, "effective_from")).isEqualTo(LocalDate.of(2026, 6, 10));
+        assertThat(date(latestRule, "effective_to")).isNull();
+        assertThat(decimal(latestRule, "payment_amount")).isEqualByComparingTo(new BigDecimal("-123.45"));
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectNonObjectBody() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[]"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectNullRuleObject() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch null rule");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch null rule");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch null rule",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", null);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectArrayDetailsObject() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch array details");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch array details");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch array details",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        String body = """
+                {
+                  "details": []
+                }
+                """;
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void collaboratorShouldNotPatchLinkedRecurringTransactionToHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef visibleAccount = createAccount(owner.userGroupId(), "Conto patch collaborator visible");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto patch collaborator hidden target");
+
+        grantAccountAccess(visibleAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch collaborator move");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                visibleAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch collaborator move",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("linkedAccountId", hiddenAccount.accountId());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(1);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(latestDetails.get("linked_account_id")).isEqualTo(visibleAccount.accountId());
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectMalformedJson() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("request.body.invalid"));
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectJsonNullBody() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("null"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectTextualBody() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("\"not-an-object\""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectArrayRuleObject() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch array rule");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch array rule");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch array rule",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        String body = """
+                {
+                  "rule": []
+                }
+                """;
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectNullDetailsObject() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch null details");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch null details");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch null details",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        String body = """
+                {
+                  "details": null
+                }
+                """;
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectInvalidRootFieldTypeWithoutMutating() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch invalid root type");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch invalid root type");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch invalid root type",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        String body = """
+                {
+                  "recurringTransactionReminderEnabled": {
+                    "value": true
+                  }
+                }
+                """;
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
+
+        Map<String, Object> root = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(root.get("recurring_transaction_reminder_enabled")).isEqualTo(true);
+        assertThat(((Number) root.get("recurring_transaction_reminder_days_before")).intValue())
+                .isEqualTo(7);
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRollbackRootChangesWhenRuleValidationFails() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch rollback rule");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch rollback rule");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch rollback rule",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("paymentAmount", "0.00");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionReminderEnabled", false);
+        body.put("recurringTransactionReminderDaysBefore", 3);
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.paymentAmountNotZero"));
+
+        Map<String, Object> root = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(root.get("recurring_transaction_reminder_enabled")).isEqualTo(true);
+        assertThat(((Number) root.get("recurring_transaction_reminder_days_before")).intValue())
+                .isEqualTo(7);
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRollbackRootChangesWhenDetailsValidationFails() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch rollback details");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch rollback details");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch rollback details",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("linkedAccountId", UUID.randomUUID());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("recurringTransactionReminderEnabled", false);
+        body.put("recurringTransactionReminderDaysBefore", 3);
+        body.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+
+        Map<String, Object> root = findRecurringTransactionRow(recurringTransactionId);
+
+        assertThat(root.get("recurring_transaction_reminder_enabled")).isEqualTo(true);
+        assertThat(((Number) root.get("recurring_transaction_reminder_days_before")).intValue())
+                .isEqualTo(7);
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(1);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(latestDetails.get("linked_account_id")).isEqualTo(account.accountId());
+    }
+
+    @Test
+    void patchDetailsShouldRejectFalseFalseWhenOneFlagIsCopiedFromBaseDetails() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto patch copied affects flags");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria patch copied affects flags");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente patch copied affects flags",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> firstDetails = new LinkedHashMap<>();
+        firstDetails.put("recurringTransactionAffectsAccountBalance", false);
+        firstDetails.put("recurringTransactionAffectsLiquidity", true);
+
+        Map<String, Object> firstBody = new LinkedHashMap<>();
+        firstBody.put("details", firstDetails);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(firstBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
+                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true));
+
+        Map<String, Object> secondDetails = new LinkedHashMap<>();
+        secondDetails.put("recurringTransactionAffectsLiquidity", false);
+
+        Map<String, Object> secondBody = new LinkedHashMap<>();
+        secondBody.put("details", secondDetails);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(secondBody)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.affectsSomethingRequired"));
+
+        assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId()))
+                .isEqualTo(2);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(latestDetails.get("recurring_transaction_affects_account_balance")).isEqualTo(false);
+        assertThat(latestDetails.get("recurring_transaction_affects_liquidity")).isEqualTo(true);
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
@@ -3622,6 +5717,109 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         body.put("simulationGroupId", simulationGroupId);
 
         return createRecurringTransactionThroughApi(authenticatedUser, body);
+    }
+
+    private int countRecurringTransactionRuleHistory(UUID recurringTransactionId) {
+        Integer count = jdbcTemplate.queryForObject(
+                """
+                        SELECT count(*)
+                        FROM recurring_transaction_history
+                        WHERE recurring_transaction_id = ?
+                        """,
+                Integer.class,
+                recurringTransactionId
+        );
+
+        return count == null ? 0 : count;
+    }
+
+    private int countRecurringTransactionDetailsHistory(UUID recurringTransactionId, UUID userGroupId) {
+        Integer count = jdbcTemplate.queryForObject(
+                """
+                        SELECT count(*)
+                        FROM recurring_transaction_details_history
+                        WHERE recurring_transaction_id = ?
+                          AND user_group_id = ?
+                        """,
+                Integer.class,
+                recurringTransactionId,
+                userGroupId
+        );
+
+        return count == null ? 0 : count;
+    }
+
+    private Map<String, Object> findRecurringTransactionRow(UUID recurringTransactionId) {
+        return jdbcTemplate.queryForMap(
+                """
+                        SELECT *
+                        FROM recurring_transactions
+                        WHERE recurring_transaction_id = ?
+                        """,
+                recurringTransactionId
+        );
+    }
+
+    private Map<String, Object> findCurrentOpenRuleHistoryRow(UUID recurringTransactionId) {
+        return jdbcTemplate.queryForMap(
+                """
+                        SELECT *
+                        FROM recurring_transaction_history
+                        WHERE recurring_transaction_id = ?
+                          AND effective_to IS NULL
+                        ORDER BY
+                            recurring_transaction_history_created_at DESC,
+                            recurring_transaction_history_id DESC
+                        LIMIT 1
+                        """,
+                recurringTransactionId
+        );
+    }
+
+    private Map<String, Object> findLatestRuleHistoryRow(UUID recurringTransactionId) {
+        return jdbcTemplate.queryForMap(
+                """
+                        SELECT *
+                        FROM recurring_transaction_history
+                        WHERE recurring_transaction_id = ?
+                        ORDER BY
+                            recurring_transaction_history_created_at DESC,
+                            recurring_transaction_history_id DESC
+                        LIMIT 1
+                        """,
+                recurringTransactionId
+        );
+    }
+
+    private List<Map<String, Object>> findRuleHistoryRowsByCreatedAt(UUID recurringTransactionId) {
+        return jdbcTemplate.queryForList(
+                """
+                        SELECT *
+                        FROM recurring_transaction_history
+                        WHERE recurring_transaction_id = ?
+                        ORDER BY
+                            recurring_transaction_history_created_at ASC,
+                            recurring_transaction_history_id ASC
+                        """,
+                recurringTransactionId
+        );
+    }
+
+    private Map<String, Object> findLatestDetailsHistoryRow(UUID recurringTransactionId, UUID userGroupId) {
+        return jdbcTemplate.queryForMap(
+                """
+                        SELECT *
+                        FROM recurring_transaction_details_history
+                        WHERE recurring_transaction_id = ?
+                          AND user_group_id = ?
+                        ORDER BY
+                            recurring_transaction_details_history_created_at DESC,
+                            recurring_transaction_details_history_id DESC
+                        LIMIT 1
+                        """,
+                recurringTransactionId,
+                userGroupId
+        );
     }
 
     private record UserRef(

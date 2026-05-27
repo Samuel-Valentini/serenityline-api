@@ -119,4 +119,57 @@ public class RecurringTransactionAccessService {
 
         return count != null && count > 0;
     }
+
+    public RecurringTransaction findOperableRecurringTransaction(
+            User currentUser,
+            UUID userGroupId,
+            UUID recurringTransactionId
+    ) {
+        Objects.requireNonNull(currentUser, "currentUser");
+        Objects.requireNonNull(userGroupId, "userGroupId");
+        Objects.requireNonNull(recurringTransactionId, "recurringTransactionId");
+
+        if (canOperateOnAllGroupRecurringTransactions(currentUser)) {
+            return recurringTransactionRepository.findByRecurringTransactionIdAndUserGroup_UserGroupId(
+                    recurringTransactionId,
+                    userGroupId
+            ).orElseThrow(() -> new ResourceNotFoundException("finance.recurringTransaction.notFound"));
+        }
+
+        if (currentUser.getUserRole() == UserRole.VIEWER_COLLABORATOR) {
+            RecurringTransaction recurringTransaction = recurringTransactionRepository
+                    .findByRecurringTransactionIdAndUserGroup_UserGroupId(
+                            recurringTransactionId,
+                            userGroupId
+                    )
+                    .orElseThrow(() -> new ResourceNotFoundException("finance.recurringTransaction.notFound"));
+
+            boolean hasCurrentAccountAccess = recurringTransactionRepository
+                    .findReadableByLinkedUserAccess(
+                            recurringTransactionId,
+                            userGroupId,
+                            currentUser.getUserId()
+                    )
+                    .isPresent();
+
+            if (!hasCurrentAccountAccess) {
+                throw new org.springframework.security.access.AccessDeniedException(
+                        "finance.recurringTransaction.operationNotAllowed"
+                );
+            }
+
+            return recurringTransaction;
+        }
+
+        return recurringTransactionRepository.findReadableByLinkedUserAccess(
+                recurringTransactionId,
+                userGroupId,
+                currentUser.getUserId()
+        ).orElseThrow(() -> new ResourceNotFoundException("finance.recurringTransaction.notFound"));
+    }
+
+    public boolean canOperateOnAllGroupRecurringTransactions(User user) {
+        return user.getUserRole() == UserRole.OWNER
+                || user.getUserRole() == UserRole.SUPER_COLLABORATOR;
+    }
 }

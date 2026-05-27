@@ -4,15 +4,13 @@ import jakarta.validation.Valid;
 import me.serenityline.api.finance.transaction.dto.RecurringTransactionCreateRequest;
 import me.serenityline.api.finance.transaction.dto.RecurringTransactionHistoryResponse;
 import me.serenityline.api.finance.transaction.dto.RecurringTransactionResponse;
-import me.serenityline.api.finance.transaction.service.RecurringTransactionCreationService;
-import me.serenityline.api.finance.transaction.service.RecurringTransactionHistoryReadService;
-import me.serenityline.api.finance.transaction.service.RecurringTransactionListService;
-import me.serenityline.api.finance.transaction.service.RecurringTransactionReadService;
+import me.serenityline.api.finance.transaction.service.*;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.Objects;
@@ -26,12 +24,14 @@ public class RecurringTransactionController {
     private final RecurringTransactionReadService recurringTransactionReadService;
     private final RecurringTransactionListService recurringTransactionListService;
     private final RecurringTransactionHistoryReadService recurringTransactionHistoryReadService;
+    private final RecurringTransactionPatchService recurringTransactionPatchService;
 
     public RecurringTransactionController(
             RecurringTransactionCreationService recurringTransactionCreationService,
             RecurringTransactionReadService recurringTransactionReadService,
             RecurringTransactionListService recurringTransactionListService,
-            RecurringTransactionHistoryReadService recurringTransactionHistoryReadService
+            RecurringTransactionHistoryReadService recurringTransactionHistoryReadService,
+            RecurringTransactionPatchService recurringTransactionPatchService
     ) {
         this.recurringTransactionCreationService = Objects.requireNonNull(
                 recurringTransactionCreationService,
@@ -48,6 +48,10 @@ public class RecurringTransactionController {
         this.recurringTransactionHistoryReadService = Objects.requireNonNull(
                 recurringTransactionHistoryReadService,
                 "recurringTransactionHistoryReadService"
+        );
+        this.recurringTransactionPatchService = Objects.requireNonNull(
+                recurringTransactionPatchService,
+                "recurringTransactionPatchService"
         );
     }
 
@@ -104,6 +108,21 @@ public class RecurringTransactionController {
                         authenticatedUser.userId(),
                         recurringTransactionId
                 );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{recurringTransactionId}")
+    public ResponseEntity<RecurringTransactionResponse> patchRecurringTransaction(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID recurringTransactionId,
+            @RequestBody JsonNode body
+    ) {
+        RecurringTransactionResponse response = recurringTransactionPatchService.patchRecurringTransaction(
+                authenticatedUser.userId(),
+                recurringTransactionId,
+                body
+        );
 
         return ResponseEntity.ok(response);
     }

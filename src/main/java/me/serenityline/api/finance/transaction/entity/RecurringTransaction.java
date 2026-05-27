@@ -102,6 +102,30 @@ public class RecurringTransaction {
         );
     }
 
+    public void updateMutableSettings(
+            LocalDate firstPaymentDate,
+            boolean amountIsAdjustable,
+            boolean simulated,
+            SimulationGroup simulationGroup,
+            boolean reminderEnabled,
+            short reminderDaysBefore
+    ) {
+        this.recurringTransactionFirstPaymentDate = Objects.requireNonNull(
+                firstPaymentDate,
+                "firstPaymentDate"
+        );
+        this.recurringTransactionAmountIsAdjustable = amountIsAdjustable;
+        this.recurringTransactionIsSimulated = simulated;
+        this.simulationGroup = simulationGroup;
+        this.recurringTransactionReminderEnabled = reminderEnabled;
+        this.recurringTransactionReminderDaysBefore = reminderDaysBefore;
+
+        validateSimulationConsistency();
+        validateReminderDaysBefore();
+        validateSimulationGroupBelongsToUserGroup();
+        touch();
+    }
+
     @PrePersist
     void prePersist() {
         OffsetDateTime now = OffsetDateTime.now();
@@ -145,10 +169,14 @@ public class RecurringTransaction {
             return;
         }
 
-        UUID simulationGroupUserGroupId = simulationGroup.getUserGroup().getUserGroupId();
-        UUID recurringTransactionUserGroupId = userGroup.getUserGroupId();
+        if (userGroup == null || simulationGroup.getUserGroup() == null) {
+            throw new IllegalArgumentException("finance.recurringTransaction.simulationGroupMismatch");
+        }
 
-        if (!simulationGroupUserGroupId.equals(recurringTransactionUserGroupId)) {
+        if (!Objects.equals(
+                userGroup.getUserGroupId(),
+                simulationGroup.getUserGroup().getUserGroupId()
+        )) {
             throw new IllegalArgumentException("finance.recurringTransaction.simulationGroupMismatch");
         }
     }

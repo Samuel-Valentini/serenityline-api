@@ -224,6 +224,16 @@ public class RecurringTransactionHistory {
         }
     }
 
+    public void closeAt(LocalDate effectiveTo) {
+        Objects.requireNonNull(effectiveTo, "effectiveTo");
+
+        if (!effectiveTo.isAfter(this.effectiveFrom)) {
+            throw new IllegalArgumentException("finance.recurringTransaction.effectiveToInvalid");
+        }
+
+        this.effectiveTo = effectiveTo;
+    }
+
     public UUID getRecurringTransactionHistoryId() {
         return recurringTransactionHistoryId;
     }

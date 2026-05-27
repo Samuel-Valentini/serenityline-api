@@ -144,13 +144,13 @@ public class RecurringTransactionListService {
             UUID userGroupId
     ) {
         RecurringTransactionHistory currentHistory = recurringTransactionHistoryRepository
-                .findFirstByRecurringTransaction_RecurringTransactionIdAndEffectiveToIsNullOrderByEffectiveFromDescRecurringTransactionHistoryCreatedAtDesc(
+                .findCurrentOpenByRecurringTransactionId(
                         recurringTransaction.getRecurringTransactionId()
                 )
                 .orElseThrow(() -> new ResourceNotFoundException("finance.recurringTransaction.historyNotFound"));
 
         RecurringTransactionDetailsHistory currentDetails = recurringTransactionDetailsHistoryRepository
-                .findFirstByRecurringTransaction_RecurringTransactionIdAndUserGroup_UserGroupIdOrderByRecurringTransactionDetailsEffectiveFromDescRecurringTransactionDetailsHistoryCreatedAtDesc(
+                .findCurrentByRecurringTransactionIdAndUserGroupId(
                         recurringTransaction.getRecurringTransactionId(),
                         userGroupId
                 )

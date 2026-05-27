@@ -73,7 +73,7 @@ public class RecurringTransactionHistoryReadService {
         }
 
         List<RecurringTransactionHistory> ruleHistory = recurringTransactionHistoryRepository
-                .findAllByRecurringTransaction_RecurringTransactionIdOrderByEffectiveFromAscRecurringTransactionHistoryCreatedAtAsc(
+                .findAllHistoryByRecurringTransactionId(
                         recurringTransaction.getRecurringTransactionId()
                 );
 
@@ -82,7 +82,7 @@ public class RecurringTransactionHistoryReadService {
         }
 
         List<RecurringTransactionDetailsHistory> detailsHistory = recurringTransactionDetailsHistoryRepository
-                .findAllByRecurringTransaction_RecurringTransactionIdAndUserGroup_UserGroupIdOrderByRecurringTransactionDetailsEffectiveFromAscRecurringTransactionDetailsHistoryCreatedAtAsc(
+                .findAllHistoryByRecurringTransactionIdAndUserGroupId(
                         recurringTransaction.getRecurringTransactionId(),
                         userGroupId
                 );

@@ -353,6 +353,36 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
+    @ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<ApiErrorResponse> handleBadRequestException(
+            BadRequestException exception,
+            HttpServletRequest request,
+            Locale locale
+    ) {
+        String code = exception.getMessage();
+
+        ResolvedError error = resolveSafeError(
+                code,
+                "error.badRequest",
+                locale
+        );
+
+        logClientError(
+                request,
+                error,
+                exception,
+                HttpStatus.BAD_REQUEST
+        );
+
+        ApiErrorResponse response = ApiErrorResponse.of(
+                error.code(),
+                error.message(),
+                request.getRequestURI()
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleGenericException(
             Exception exception,
