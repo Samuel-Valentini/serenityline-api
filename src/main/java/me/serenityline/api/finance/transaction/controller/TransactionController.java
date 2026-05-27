@@ -6,6 +6,7 @@ import me.serenityline.api.finance.transaction.dto.TransactionResponse;
 import me.serenityline.api.finance.transaction.dto.TransactionSearchRequest;
 import me.serenityline.api.finance.transaction.dto.TransactionUpdateRequest;
 import me.serenityline.api.finance.transaction.service.TransactionCreationService;
+import me.serenityline.api.finance.transaction.service.TransactionDeletionService;
 import me.serenityline.api.finance.transaction.service.TransactionReadService;
 import me.serenityline.api.finance.transaction.service.TransactionUpdateService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
@@ -27,15 +28,17 @@ public class TransactionController {
     private final TransactionCreationService transactionCreationService;
     private final TransactionReadService transactionReadService;
     private final TransactionUpdateService transactionUpdateService;
+    private final TransactionDeletionService transactionDeletionService;
 
     public TransactionController(
             TransactionCreationService transactionCreationService,
             TransactionReadService transactionReadService,
-            TransactionUpdateService transactionUpdateService
+            TransactionUpdateService transactionUpdateService, TransactionDeletionService transactionDeletionService
     ) {
         this.transactionCreationService = Objects.requireNonNull(transactionCreationService, "transactionCreationService");
         this.transactionReadService = Objects.requireNonNull(transactionReadService, "transactionReadService");
         this.transactionUpdateService = Objects.requireNonNull(transactionUpdateService, "transactionUpdateService");
+        this.transactionDeletionService = Objects.requireNonNull(transactionDeletionService, "transactionDeletionService");
     }
 
     @PostMapping
@@ -100,5 +103,18 @@ public class TransactionController {
         );
 
         return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{transactionId}")
+    public ResponseEntity<Void> deleteTransaction(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID transactionId
+    ) {
+        transactionDeletionService.deleteTransaction(
+                authenticatedUser.userId(),
+                transactionId
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

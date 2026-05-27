@@ -3327,6 +3327,447 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(findTransaction(transactionId).get("category_id")).isEqualTo(categoryId);
     }
 
+    @Test
+    void deleteTransactionShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldDeleteOwnGroupTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete owner");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete owner"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Da eliminare", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        assertThat(countTransactionById(transactionId)).isEqualTo(1L);
+        assertThat(countTransactionUsers(
+                transactionId,
+                owner.userId(),
+                owner.userGroupId()
+        )).isEqualTo(1L);
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent())
+                .andExpect(jsonPath("$").doesNotExist());
+
+        assertThat(countTransactionById(transactionId)).isZero();
+        assertThat(countTransactionUsers(
+                transactionId,
+                owner.userId(),
+                owner.userGroupId()
+        )).isZero();
+    }
+
+    @Test
+    void deletedTransactionShouldNotBeReadableAnymore() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete then read");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete then read"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Da eliminare e leggere", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void ownerShouldDeleteConfirmedRecurringOccurrenceWithoutDeletingRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete recurring occurrence");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete recurring occurrence"
+        );
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        UUID transactionId = createConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 15)
+        );
+
+        assertThat(countTransactionById(transactionId)).isEqualTo(1L);
+        assertThat(countRecurringTransactionById(recurringTransactionId)).isEqualTo(1L);
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(countTransactionById(transactionId)).isZero();
+        assertThat(countRecurringTransactionById(recurringTransactionId)).isEqualTo(1L);
+    }
+
+    @Test
+    void superCollaboratorShouldDeleteGroupTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete super");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete super"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Delete super", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator))))
+                .andExpect(status().isNoContent());
+
+        assertThat(countTransactionById(transactionId)).isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldDeleteTransactionOnOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete viewer linked");
+        grantAccountAccess(account, viewer);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete viewer linked"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Delete viewer linked", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isNoContent());
+
+        assertThat(countTransactionById(transactionId)).isZero();
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveForbiddenWhenDeletingTransactionOnNonOperableAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto delete viewer hidden");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete viewer hidden"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Delete viewer hidden", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.account.operationNotAllowed"));
+
+        assertThat(countTransactionById(transactionId)).isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldDeleteTransactionOnLinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete collaborator linked");
+        grantAccountAccess(account, collaborator);
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete collaborator linked"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Delete collaborator linked", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNoContent());
+
+        assertThat(countTransactionById(transactionId)).isZero();
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenDeletingTransactionOnHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto delete collaborator hidden");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete collaborator hidden"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Delete collaborator hidden", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+
+        assertThat(countTransactionById(transactionId)).isEqualTo(1L);
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenDeletingTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto delete other group");
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria delete other group"
+        );
+
+        UUID otherTransactionId = createTransactionViaApi(
+                otherOwner,
+                transactionRequest(otherAccount, otherCategoryId, "Delete other group", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + otherTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+
+        assertThat(countTransactionById(otherTransactionId)).isEqualTo(1L);
+    }
+
+    @Test
+    void deleteTransactionShouldReturnNotFoundWhenTransactionDoesNotExist() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void deleteTransactionShouldReturnBadRequestWhenTransactionIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void deleteTransactionShouldReturnNotFoundWhenDeletingAlreadyDeletedTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete twice");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete twice"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Delete twice", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+    }
+
+    @Test
+    void deletedTransactionShouldNotBeListedAnymore() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete list");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete list"
+        );
+
+        UUID deletedTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Da eliminare dalla lista", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        UUID remainingTransactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Da mantenere nella lista", "-20.00", LocalDate.of(2026, 6, 11))
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + deletedTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].transactionId").value(remainingTransactionId.toString()));
+    }
+
+    @Test
+    void deleteTransactionShouldCascadeAllTransactionUserLinks() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete cascade all links");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete cascade all links"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(account, categoryId, "Delete cascade links", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        linkTransactionToUser(
+                transactionId,
+                collaborator.userId(),
+                collaborator.userGroupId()
+        );
+
+        assertThat(countTransactionUserLinksByTransactionId(transactionId)).isEqualTo(2L);
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(countTransactionById(transactionId)).isZero();
+        assertThat(countTransactionUserLinksByTransactionId(transactionId)).isZero();
+    }
+
+    @Test
+    void ownerShouldDeleteSimulatedTransactionWithoutDeletingSimulationGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete simulated");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete simulated"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.userGroupId(),
+                "Simulation delete transaction"
+        );
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                simulatedTransactionRequest(
+                        account,
+                        categoryId,
+                        simulationGroupId,
+                        "Simulata da eliminare",
+                        "-10.00",
+                        LocalDate.of(2026, 6, 10)
+                )
+        );
+
+        assertThat(countTransactionById(transactionId)).isEqualTo(1L);
+        assertThat(countSimulationGroupById(simulationGroupId)).isEqualTo(1L);
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(countTransactionById(transactionId)).isZero();
+        assertThat(countSimulationGroupById(simulationGroupId)).isEqualTo(1L);
+    }
+
+    @Test
+    void collaboratorShouldNotDeleteTransactionOnlyBecauseLinkedInTransactionsUsers() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(
+                owner.userGroupId(),
+                "Conto delete collaborator transaction-user-only hidden"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete collaborator transaction-user-only"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(hiddenAccount, categoryId, "Delete transaction-user-only", "-10.00", LocalDate.of(2026, 6, 10))
+        );
+
+        linkTransactionToUser(
+                transactionId,
+                collaborator.userId(),
+                collaborator.userGroupId()
+        );
+
+        mockMvc.perform(delete(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
+
+        assertThat(countTransactionById(transactionId)).isEqualTo(1L);
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
@@ -3984,6 +4425,58 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         return body;
     }
 
+    private long countTransactionById(UUID transactionId) {
+        Long count = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM transactions
+                        WHERE transaction_id = ?
+                        """,
+                Long.class,
+                transactionId
+        );
+
+        return count == null ? 0L : count;
+    }
+
+    private long countRecurringTransactionById(UUID recurringTransactionId) {
+        Long count = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM recurring_transactions
+                        WHERE recurring_transaction_id = ?
+                        """,
+                Long.class,
+                recurringTransactionId
+        );
+
+        return count == null ? 0L : count;
+    }
+
+    private long countTransactionUserLinksByTransactionId(UUID transactionId) {
+        Long count = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM transactions_users
+                        WHERE transaction_id = ?
+                        """,
+                Long.class,
+                transactionId
+        );
+
+        return count == null ? 0L : count;
+    }
+
+    private long countSimulationGroupById(UUID simulationGroupId) {
+        Long count = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM simulation_groups
+                        WHERE simulation_group_id = ?
+                        """,
+                Long.class,
+                simulationGroupId
+        );
+
+        return count == null ? 0L : count;
+    }
+
     private record UserRef(
             UUID userId,
             UUID userGroupId,
@@ -3999,6 +4492,5 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
 
     private record BucketRef(UUID bucketId) {
     }
-
 
 }
