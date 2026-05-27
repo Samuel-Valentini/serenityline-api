@@ -2,8 +2,10 @@ package me.serenityline.api.finance.transaction.controller;
 
 import jakarta.validation.Valid;
 import me.serenityline.api.finance.transaction.dto.RecurringTransactionCreateRequest;
+import me.serenityline.api.finance.transaction.dto.RecurringTransactionHistoryResponse;
 import me.serenityline.api.finance.transaction.dto.RecurringTransactionResponse;
 import me.serenityline.api.finance.transaction.service.RecurringTransactionCreationService;
+import me.serenityline.api.finance.transaction.service.RecurringTransactionHistoryReadService;
 import me.serenityline.api.finance.transaction.service.RecurringTransactionListService;
 import me.serenityline.api.finance.transaction.service.RecurringTransactionReadService;
 import me.serenityline.api.security.auth.AuthenticatedUser;
@@ -23,11 +25,13 @@ public class RecurringTransactionController {
     private final RecurringTransactionCreationService recurringTransactionCreationService;
     private final RecurringTransactionReadService recurringTransactionReadService;
     private final RecurringTransactionListService recurringTransactionListService;
+    private final RecurringTransactionHistoryReadService recurringTransactionHistoryReadService;
 
     public RecurringTransactionController(
             RecurringTransactionCreationService recurringTransactionCreationService,
             RecurringTransactionReadService recurringTransactionReadService,
-            RecurringTransactionListService recurringTransactionListService
+            RecurringTransactionListService recurringTransactionListService,
+            RecurringTransactionHistoryReadService recurringTransactionHistoryReadService
     ) {
         this.recurringTransactionCreationService = Objects.requireNonNull(
                 recurringTransactionCreationService,
@@ -40,6 +44,10 @@ public class RecurringTransactionController {
         this.recurringTransactionListService = Objects.requireNonNull(
                 recurringTransactionListService,
                 "recurringTransactionListService"
+        );
+        this.recurringTransactionHistoryReadService = Objects.requireNonNull(
+                recurringTransactionHistoryReadService,
+                "recurringTransactionHistoryReadService"
         );
     }
 
@@ -82,6 +90,20 @@ public class RecurringTransactionController {
                 accountId,
                 simulationGroupIds
         );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{recurringTransactionId}/history")
+    public ResponseEntity<RecurringTransactionHistoryResponse> getRecurringTransactionHistory(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID recurringTransactionId
+    ) {
+        RecurringTransactionHistoryResponse response = recurringTransactionHistoryReadService
+                .getRecurringTransactionHistory(
+                        authenticatedUser.userId(),
+                        recurringTransactionId
+                );
 
         return ResponseEntity.ok(response);
     }
