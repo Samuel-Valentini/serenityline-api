@@ -25,13 +25,15 @@ public class RecurringTransactionController {
     private final RecurringTransactionListService recurringTransactionListService;
     private final RecurringTransactionHistoryReadService recurringTransactionHistoryReadService;
     private final RecurringTransactionPatchService recurringTransactionPatchService;
+    private final RecurringTransactionDeleteService recurringTransactionDeleteService;
 
     public RecurringTransactionController(
             RecurringTransactionCreationService recurringTransactionCreationService,
             RecurringTransactionReadService recurringTransactionReadService,
             RecurringTransactionListService recurringTransactionListService,
             RecurringTransactionHistoryReadService recurringTransactionHistoryReadService,
-            RecurringTransactionPatchService recurringTransactionPatchService
+            RecurringTransactionPatchService recurringTransactionPatchService,
+            RecurringTransactionDeleteService recurringTransactionDeleteService
     ) {
         this.recurringTransactionCreationService = Objects.requireNonNull(
                 recurringTransactionCreationService,
@@ -52,6 +54,10 @@ public class RecurringTransactionController {
         this.recurringTransactionPatchService = Objects.requireNonNull(
                 recurringTransactionPatchService,
                 "recurringTransactionPatchService"
+        );
+        this.recurringTransactionDeleteService = Objects.requireNonNull(
+                recurringTransactionDeleteService,
+                "recurringTransactionDeleteService"
         );
     }
 
@@ -125,5 +131,20 @@ public class RecurringTransactionController {
         );
 
         return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{recurringTransactionId}")
+    public ResponseEntity<Void> deleteRecurringTransaction(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID recurringTransactionId,
+            @RequestBody(required = false) JsonNode body
+    ) {
+        recurringTransactionDeleteService.deleteRecurringTransaction(
+                authenticatedUser.userId(),
+                recurringTransactionId,
+                body
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

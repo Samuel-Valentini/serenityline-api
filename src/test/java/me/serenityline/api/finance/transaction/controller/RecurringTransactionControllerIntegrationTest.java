@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -92,6 +93,10 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         }
 
         return new BigDecimal(value.toString());
+    }
+
+    private static LocalDate todayUtc() {
+        return LocalDate.now(Clock.systemUTC());
     }
 
     @Test
@@ -5025,6 +5030,391 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         assertThat(latestDetails.get("recurring_transaction_affects_account_balance")).isEqualTo(false);
         assertThat(latestDetails.get("recurring_transaction_affects_liquidity")).isEqualTo(true);
+    }
+
+    @Test
+    void ownerShouldDeleteRecurringTransactionBySettingEndDateToTodayAndKeepingFinalPaymentAmount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete recurring today");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria delete recurring today");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete today",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("finalPaymentAmount", "-50.00");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finalPaymentAmount").value(-50.0));
+
+        int ruleHistoryCountBeforeDelete = countRecurringTransactionRuleHistory(recurringTransactionId);
+        Map<String, Object> previousLatestRule = findLatestRuleHistoryRow(recurringTransactionId);
+        LocalDate today = todayUtc();
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId))
+                .isEqualTo(ruleHistoryCountBeforeDelete + 1);
+
+        Map<String, Object> latestRule = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(date(latestRule, "effective_from")).isEqualTo(today);
+        assertThat(date(latestRule, "effective_to")).isNull();
+        assertThat(date(latestRule, "recurring_transaction_end_date")).isEqualTo(today);
+        assertThat(decimal(latestRule, "final_payment_amount"))
+                .isEqualByComparingTo(new BigDecimal("-50.00"));
+
+        assertThat(date(previousLatestRule, "effective_to")).isNull();
+
+        Map<String, Object> recurringTransaction = findRecurringTransactionRow(recurringTransactionId);
+        assertThat(recurringTransaction).isNotNull();
+    }
+
+    @Test
+    void ownerShouldDeleteRecurringTransactionWithExplicitEndDate() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto delete recurring explicit end"
+        );
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria delete recurring explicit end"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete explicit end",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        String body = """
+                {
+                  "endDate": "2026-09-30"
+                }
+                """;
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNoContent());
+
+        Map<String, Object> latestRule = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(date(latestRule, "effective_from"))
+                .isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(date(latestRule, "effective_to"))
+                .isNull();
+        assertThat(date(latestRule, "recurring_transaction_end_date"))
+                .isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(decimal(latestRule, "final_payment_amount"))
+                .isNull();
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId))
+                .isEqualTo(2);
+    }
+
+    @Test
+    void ownerShouldDeleteRecurringTransactionWithFinalPaymentAmountOverride() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete recurring final override");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria delete recurring final override");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete final override",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        String body = """
+                {
+                  "endDate": "2026-09-30",
+                  "finalPaymentAmount": "-75.25"
+                }
+                """;
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNoContent());
+
+        Map<String, Object> latestRule = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(date(latestRule, "effective_from")).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(date(latestRule, "recurring_transaction_end_date")).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(decimal(latestRule, "final_payment_amount"))
+                .isEqualByComparingTo(new BigDecimal("-75.25"));
+    }
+
+    @Test
+    void ownerShouldDeleteRecurringTransactionAndClearFinalPaymentAmountWithBlankString() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete recurring clear final");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria delete recurring clear final");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete clear final",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("finalPaymentAmount", "-50.00");
+
+        Map<String, Object> patchBody = new LinkedHashMap<>();
+        patchBody.put("rule", rule);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(patchBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finalPaymentAmount").value(-50.0));
+
+        String deleteBody = """
+                {
+                  "endDate": "2026-09-30",
+                  "finalPaymentAmount": ""
+                }
+                """;
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(deleteBody))
+                .andExpect(status().isNoContent());
+
+        Map<String, Object> latestRule = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(date(latestRule, "recurring_transaction_end_date")).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(decimal(latestRule, "final_payment_amount")).isNull();
+    }
+
+    @Test
+    void deleteRecurringTransactionShouldNotModifyPreviousRuleEffectiveTo() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete does not close rule");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria delete does not close rule");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete does not close rule",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        Map<String, Object> previousLatestRule = findLatestRuleHistoryRow(recurringTransactionId);
+
+        String body = """
+                {
+                  "endDate": "2026-09-30"
+                }
+                """;
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNoContent());
+
+        List<Map<String, Object>> rows = findRuleHistoryRowsByCreatedAt(recurringTransactionId);
+
+        assertThat(rows).hasSize(2);
+
+        Map<String, Object> firstRule = rows.get(0);
+        Map<String, Object> secondRule = rows.get(1);
+
+        assertThat(firstRule.get("recurring_transaction_history_id"))
+                .isEqualTo(previousLatestRule.get("recurring_transaction_history_id"));
+        assertThat(date(firstRule, "effective_to")).isNull();
+
+        assertThat(date(secondRule, "effective_from")).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(date(secondRule, "recurring_transaction_end_date")).isEqualTo(LocalDate.of(2026, 9, 30));
+    }
+
+    @Test
+    void deleteRecurringTransactionShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenDeletingRecurringTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto delete other group");
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria delete other group"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                otherOwner,
+                otherAccount,
+                otherCategoryId,
+                financialPriorityId,
+                "Ricorrente delete other group",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+    }
+
+    @Test
+    void collaboratorShouldDeleteLinkedRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto delete collaborator linked");
+        grantAccountAccess(account, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria delete collaborator linked");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete collaborator linked",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        String body = """
+                {
+                  "endDate": "2026-09-30"
+                }
+                """;
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNoContent());
+
+        Map<String, Object> latestRule = findLatestRuleHistoryRow(recurringTransactionId);
+
+        assertThat(date(latestRule, "recurring_transaction_end_date")).isEqualTo(LocalDate.of(2026, 9, 30));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenDeletingHiddenRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto delete collaborator hidden");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria delete collaborator hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                hiddenAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete collaborator hidden",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void viewerCollaboratorShouldReceiveForbiddenWhenDeletingHiddenRecurringTransaction() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto delete viewer hidden");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria delete viewer hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                hiddenAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente delete viewer hidden",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.operationNotAllowed"));
+
+        assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
+    }
+
+    @Test
+    void deleteRecurringTransactionShouldRejectNonObjectBody() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(delete(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[]"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("validation.failed"));
     }
 
     private UserRef createUserWithNewGroup(String role) {
