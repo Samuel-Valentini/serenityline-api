@@ -97,7 +97,6 @@ public class RecurringTransactionHistory {
         validateEffectiveDates();
         validateDayOfUnit();
         validateEndDate();
-        validateFinalPaymentAmountRequiresEndDate();
     }
 
     public static RecurringTransactionHistory create(
@@ -222,14 +221,6 @@ public class RecurringTransactionHistory {
         if (recurringTransactionEndDate != null
                 && recurringTransactionEndDate.isBefore(effectiveFrom)) {
             throw new IllegalArgumentException("finance.recurringTransaction.endDateInvalid");
-        }
-    }
-
-    private void validateFinalPaymentAmountRequiresEndDate() {
-        if (finalPaymentAmount != null && recurringTransactionEndDate == null) {
-            throw new IllegalArgumentException(
-                    "finance.recurringTransaction.finalPaymentAmountRequiresEndDate"
-            );
         }
     }
 

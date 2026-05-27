@@ -556,12 +556,6 @@ CREATE TABLE recurring_transaction_history
         CHECK (
             recurring_transaction_end_date IS NULL
                 OR recurring_transaction_end_date >= effective_from
-            ),
-
-    CONSTRAINT chk_recurring_transaction_history_final_amount_requires_end
-        CHECK (
-            final_payment_amount IS NULL
-                OR recurring_transaction_end_date IS NOT NULL
             )
 );
 
