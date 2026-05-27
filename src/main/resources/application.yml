@@ -29,6 +29,8 @@ serenityline:
       key-base64: ${SENSITIVE_HASH_KEY_BASE64}
   frontend:
     base-url: ${FRONTEND_BASE_URL}
+  finance:
+    max-simulation-group-ids: 50
 
 springdoc:
   api-docs:

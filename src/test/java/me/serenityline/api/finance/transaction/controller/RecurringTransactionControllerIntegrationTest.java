@@ -19,8 +19,11 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -1161,6 +1164,322 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         assertThat(countAllRecurringRowsForUserGroup(owner.userGroupId())).isZero();
     }
 
+    @Test
+    void getRecurringTransactionShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldGetRecurringTransactionDetail() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring get owner");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria get owner");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionAmountIsAdjustable").value(false))
+                .andExpect(jsonPath("$.recurringTransactionFirstPaymentDate").value("2026-06-01"))
+                .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(false))
+                .andExpect(jsonPath("$.simulationGroupId").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionReminderEnabled").value(true))
+                .andExpect(jsonPath("$.recurringTransactionReminderDaysBefore").value(7))
+                .andExpect(jsonPath("$.effectiveFrom").value("2026-06-01"))
+                .andExpect(jsonPath("$.effectiveTo").doesNotExist())
+                .andExpect(jsonPath("$.dayOfUnit").value(1))
+                .andExpect(jsonPath("$.recurrenceInterval").value(1))
+                .andExpect(jsonPath("$.recurrenceUnit").value("MONTH"))
+                .andExpect(jsonPath("$.paymentDateAdjustmentPolicy").value("PREVIOUS_BUSINESS_DAY"))
+                .andExpect(jsonPath("$.paymentAmount").value(-800.0))
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Affitto casa"))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
+                .andExpect(jsonPath("$.financialPriorityId").value(financialPriorityId.toString()))
+                .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(true))
+                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true));
+    }
+
+    @Test
+    void getRecurringTransactionShouldReturnCurrentHistoryAndCurrentDetails() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring current state");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria current old");
+        UUID updatedCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria current new");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+        UUID updatedFinancialPriorityId = financialPriorityId("OPTIONAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        closeCurrentRecurringTransactionHistory(
+                recurringTransactionId,
+                LocalDate.of(2026, 7, 1)
+        );
+
+        insertRecurringTransactionHistory(
+                recurringTransactionId,
+                LocalDate.of(2026, 7, 1),
+                null,
+                1,
+                1,
+                "MONTH",
+                "NEXT_BUSINESS_DAY",
+                new BigDecimal("-900.00"),
+                null,
+                new BigDecimal("2400.00")
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                "Affitto aggiornato",
+                updatedCategoryId,
+                updatedFinancialPriorityId,
+                account,
+                LocalDate.of(2026, 7, 1),
+                owner.userGroupId()
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.effectiveFrom").value("2026-07-01"))
+                .andExpect(jsonPath("$.effectiveTo").doesNotExist())
+                .andExpect(jsonPath("$.paymentDateAdjustmentPolicy").value("NEXT_BUSINESS_DAY"))
+                .andExpect(jsonPath("$.paymentAmount").value(-900.0))
+                .andExpect(jsonPath("$.finalPaymentAmount").value(2400.0))
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Affitto aggiornato"))
+                .andExpect(jsonPath("$.categoryId").value(updatedCategoryId.toString()))
+                .andExpect(jsonPath("$.financialPriorityId").value(updatedFinancialPriorityId.toString()))
+                .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()));
+    }
+
+    @Test
+    void superCollaboratorShouldGetRecurringTransactionFromGroupAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring get super");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria get super");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()));
+    }
+
+    @Test
+    void viewerCollaboratorShouldGetRecurringTransactionEvenWhenAccountIsNotOperable() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring get viewer hidden");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria get viewer hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()));
+    }
+
+    @Test
+    void collaboratorShouldGetRecurringTransactionOnLinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring get collaborator linked");
+        grantAccountAccess(account, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria get collaborator linked");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenGettingRecurringTransactionOnHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto recurring get collaborator hidden");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria get collaborator hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(hiddenAccount, categoryId, financialPriorityId)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenCurrentDetailsMoveToHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto recurring get old linked");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto recurring get new hidden");
+
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria get move hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(linkedAccount, categoryId, financialPriorityId)
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                "Ricorrente spostata su conto nascosto",
+                categoryId,
+                financialPriorityId,
+                hiddenAccount,
+                LocalDate.of(2026, 7, 1),
+                owner.userGroupId()
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenGettingRecurringTransactionFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto recurring get other group");
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria get other group"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID otherRecurringTransactionId = createRecurringTransactionThroughApi(
+                otherOwner,
+                minimalRecurringTransactionRequest(otherAccount, otherCategoryId, financialPriorityId)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + otherRecurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+    }
+
+    @Test
+    void getRecurringTransactionShouldReturnNotFoundWhenRecurringTransactionDoesNotExist() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.notFound"));
+    }
+
+    @Test
+    void getRecurringTransactionShouldReturnBadRequestWhenRecurringTransactionIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void getRecurringTransactionShouldReturnNotFoundWhenCurrentHistoryIsMissing() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring missing history");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria missing history");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        jdbcTemplate.update("""
+                        DELETE FROM recurring_transaction_history
+                        WHERE recurring_transaction_id = ?
+                        """,
+                recurringTransactionId
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.historyNotFound"));
+    }
+
+    @Test
+    void getRecurringTransactionShouldReturnNotFoundWhenCurrentDetailsAreMissing() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring missing details");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria missing details");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        jdbcTemplate.update("""
+                        DELETE FROM recurring_transaction_details_history
+                        WHERE recurring_transaction_id = ?
+                        """,
+                recurringTransactionId
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.detailsNotFound"));
+    }
+
     private Map<String, Object> minimalRecurringTransactionRequest(
             AccountRef account,
             UUID categoryId,
@@ -1237,6 +1556,978 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         Map<String, Object> historyRow = findRecurringTransactionHistory(recurringTransactionId);
 
         assertThat(((Number) historyRow.get("day_of_unit")).intValue()).isEqualTo(expectedDayOfUnit);
+    }
+
+    @Test
+    void ownerShouldGetRecurringTransactionDetailWithAllOptionalFields() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring get full");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria get full");
+        UUID financialPriorityId = financialPriorityId("CRITICAL");
+
+        CreditCardRef creditCard = createCreditCard(owner.userGroupId(), account, "Carta get full");
+
+        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket get full");
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation get full");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        Map<String, Object> body = validRecurringTransactionRequest(account, categoryId, financialPriorityId);
+        body.put("recurringTransactionDescription", "  Ricorrente completa GET  ");
+        body.put("paymentAmount", new BigDecimal("-123.45"));
+        body.put("recurringTransactionAmountIsAdjustable", true);
+        body.put("recurringTransactionFirstPaymentDate", "2026-06-03");
+        body.put("recurrenceInterval", 2);
+        body.put("recurrenceUnit", "WEEK");
+        body.put("paymentDateAdjustmentPolicy", "NEXT_BUSINESS_DAY");
+        body.put("recurringTransactionEndDate", "2027-06-03");
+        body.put("finalPaymentAmount", new BigDecimal("2400.00"));
+        body.put("linkedCreditCardId", creditCard.creditCardId());
+        body.put("linkedBucketId", bucket.bucketId());
+        body.put("recurringTransactionAffectsAccountBalance", false);
+        body.put("recurringTransactionAffectsLiquidity", true);
+        body.put("recurringTransactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+        body.put("recurringTransactionReminderEnabled", false);
+        body.put("recurringTransactionReminderDaysBefore", 30);
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(owner, body);
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente completa GET"))
+                .andExpect(jsonPath("$.paymentAmount").value(-123.45))
+                .andExpect(jsonPath("$.recurringTransactionAmountIsAdjustable").value(true))
+                .andExpect(jsonPath("$.recurringTransactionFirstPaymentDate").value("2026-06-03"))
+                .andExpect(jsonPath("$.dayOfUnit").value(3))
+                .andExpect(jsonPath("$.recurrenceInterval").value(2))
+                .andExpect(jsonPath("$.recurrenceUnit").value("WEEK"))
+                .andExpect(jsonPath("$.paymentDateAdjustmentPolicy").value("NEXT_BUSINESS_DAY"))
+                .andExpect(jsonPath("$.recurringTransactionEndDate").value("2027-06-03"))
+                .andExpect(jsonPath("$.finalPaymentAmount").value(2400.0))
+                .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
+                .andExpect(jsonPath("$.financialPriorityId").value(financialPriorityId.toString()))
+                .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()))
+                .andExpect(jsonPath("$.linkedCreditCardId").value(creditCard.creditCardId().toString()))
+                .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()))
+                .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
+                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(true))
+                .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionReminderEnabled").value(false))
+                .andExpect(jsonPath("$.recurringTransactionReminderDaysBefore").value(30));
+    }
+
+    @Test
+    void collaboratorShouldGetRecurringTransactionWhenCurrentDetailsMoveToLinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto recurring old hidden");
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto recurring new linked");
+
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria move linked");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(hiddenAccount, categoryId, financialPriorityId)
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                "Ricorrente spostata su conto collegato",
+                categoryId,
+                financialPriorityId,
+                linkedAccount,
+                LocalDate.of(2026, 7, 1),
+                owner.userGroupId()
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente spostata su conto collegato"))
+                .andExpect(jsonPath("$.linkedAccountId").value(linkedAccount.accountId().toString()));
+    }
+
+    @Test
+    void getRecurringTransactionShouldReturnNotFoundWhenNoOpenCurrentHistoryExists() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring no open history");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria no open history");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(
+                owner,
+                minimalRecurringTransactionRequest(account, categoryId, financialPriorityId)
+        );
+
+        closeCurrentRecurringTransactionHistory(
+                recurringTransactionId,
+                LocalDate.of(2026, 7, 1)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.historyNotFound"));
+    }
+
+    @Test
+    void listRecurringTransactionsShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void ownerShouldListOnlyBaseRecurringTransactionsWhenNoSimulationGroupsAreProvided() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring list base");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list base");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation list base");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID baseOneId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Base uno",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        UUID baseTwoId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Base due",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        createSimulatedRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                simulationGroupId,
+                "Simulata esclusa",
+                LocalDate.of(2026, 8, 1),
+                new BigDecimal("-300.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(baseOneId.toString()))
+                .andExpect(jsonPath("$[0].recurringTransactionDescription").value("Base uno"))
+                .andExpect(jsonPath("$[1].recurringTransactionId").value(baseTwoId.toString()))
+                .andExpect(jsonPath("$[1].recurringTransactionDescription").value("Base due"));
+    }
+
+    @Test
+    void ownerShouldListBaseAndSelectedSimulationGroups() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring list simulations");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list simulations");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupOneId = createSimulationGroup(owner.userGroupId(), "Simulation list one");
+        UUID simulationGroupTwoId = createSimulationGroup(owner.userGroupId(), "Simulation list two");
+        UUID simulationGroupThreeId = createSimulationGroup(owner.userGroupId(), "Simulation list three");
+
+        linkSimulationGroupToAccount(simulationGroupOneId, account);
+        linkSimulationGroupToAccount(simulationGroupTwoId, account);
+        linkSimulationGroupToAccount(simulationGroupThreeId, account);
+
+        UUID baseId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Base inclusa",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        UUID simulationOneTransactionId = createSimulatedRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                simulationGroupOneId,
+                "Simulata uno inclusa",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        UUID simulationTwoTransactionId = createSimulatedRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                simulationGroupTwoId,
+                "Simulata due inclusa",
+                LocalDate.of(2026, 8, 1),
+                new BigDecimal("-200.00")
+        );
+
+        createSimulatedRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                simulationGroupThreeId,
+                "Simulata tre esclusa",
+                LocalDate.of(2026, 9, 1),
+                new BigDecimal("-300.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", simulationGroupOneId.toString(), simulationGroupTwoId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(baseId.toString()))
+                .andExpect(jsonPath("$[1].recurringTransactionId").value(simulationOneTransactionId.toString()))
+                .andExpect(jsonPath("$[2].recurringTransactionId").value(simulationTwoTransactionId.toString()));
+    }
+
+    @Test
+    void ownerShouldNotDuplicateResultsWhenSimulationGroupIdsContainDuplicates() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring duplicate simulations");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria duplicate simulations");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation duplicate");
+        linkSimulationGroupToAccount(simulationGroupId, account);
+
+        UUID baseId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Base duplicate",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        UUID simulatedId = createSimulatedRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                simulationGroupId,
+                "Simulata duplicate",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", simulationGroupId.toString(), simulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(baseId.toString()))
+                .andExpect(jsonPath("$[1].recurringTransactionId").value(simulatedId.toString()));
+    }
+
+    @Test
+    void ownerShouldFilterRecurringTransactionsByCurrentAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef accountOne = createAccount(owner.userGroupId(), "Conto recurring list account one");
+        AccountRef accountTwo = createAccount(owner.userGroupId(), "Conto recurring list account two");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list account");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID accountOneTransactionId = createBaseRecurringTransaction(
+                owner,
+                accountOne,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente conto uno",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        createBaseRecurringTransaction(
+                owner,
+                accountTwo,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente conto due",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", accountOne.accountId().toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(accountOneTransactionId.toString()))
+                .andExpect(jsonPath("$[0].linkedAccountId").value(accountOne.accountId().toString()));
+    }
+
+    @Test
+    void ownerShouldFilterByCurrentDetailsAccountNotOriginalAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef oldAccount = createAccount(owner.userGroupId(), "Conto recurring old account");
+        AccountRef currentAccount = createAccount(owner.userGroupId(), "Conto recurring current account");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria current account");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                oldAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente spostata",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                "Ricorrente spostata su conto corrente",
+                categoryId,
+                financialPriorityId,
+                currentAccount,
+                LocalDate.of(2026, 7, 1),
+                owner.userGroupId()
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", oldAccount.accountId().toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", currentAccount.accountId().toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$[0].linkedAccountId").value(currentAccount.accountId().toString()));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenFilteringByAccountFromAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto recurring other group filter");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", otherAccount.accountId().toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+    }
+
+    @Test
+    void listRecurringTransactionsShouldReturnBadRequestWhenAccountIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", "not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void listRecurringTransactionsShouldReturnBadRequestWhenSimulationGroupIdIsInvalid() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", "not-a-uuid")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenSimulationGroupDoesNotExist() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", UUID.randomUUID().toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenSimulationGroupBelongsToAnotherGroup() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        UUID otherSimulationGroupId = createSimulationGroup(otherOwner.userGroupId(), "Simulation other group");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", otherSimulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+    }
+
+    @Test
+    void ownerShouldReceiveNotFoundWhenSimulationGroupIsArchived() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID archivedSimulationGroupId = createArchivedSimulationGroup(owner.userGroupId(), "Simulation archived list");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", archivedSimulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+    }
+
+    @Test
+    void listRecurringTransactionsShouldRejectTooManySimulationGroups() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        String[] simulationGroupIdParams = IntStream.range(0, 51)
+                .mapToObj(index -> UUID.randomUUID().toString())
+                .toArray(String[]::new);
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", simulationGroupIdParams)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.recurringTransaction.tooManySimulationGroups"));
+    }
+
+    @Test
+    void listRecurringTransactionsShouldReturnEmptyArrayWhenNoRecurringTransactionsExist() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void listRecurringTransactionsShouldExcludeRowsWithoutOpenCurrentHistory() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring closed history list");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria closed history list");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente senza history corrente",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        closeCurrentRecurringTransactionHistory(
+                recurringTransactionId,
+                LocalDate.of(2026, 7, 1)
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void superCollaboratorShouldListGroupRecurringTransactions() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef superCollaborator = createUser(owner.userGroupId(), "SUPER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring list super");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list super");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente super",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(superCollaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()));
+    }
+
+    @Test
+    void viewerCollaboratorShouldListGroupRecurringTransactionsEvenWithoutAccountLink() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef viewer = createUser(owner.userGroupId(), "VIEWER_COLLABORATOR");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring list viewer");
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list viewer");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente viewer",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(viewer))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()));
+    }
+
+    @Test
+    void collaboratorShouldListOnlyRecurringTransactionsOnLinkedAccounts() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto recurring list collaborator linked");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto recurring list collaborator hidden");
+
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list collaborator");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID linkedRecurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                linkedAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente collaborator linked",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        createBaseRecurringTransaction(
+                owner,
+                hiddenAccount,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente collaborator hidden",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(linkedRecurringTransactionId.toString()))
+                .andExpect(jsonPath("$[0].linkedAccountId").value(linkedAccount.accountId().toString()));
+    }
+
+    @Test
+    void collaboratorShouldFilterListByLinkedAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccountOne = createAccount(owner.userGroupId(), "Conto recurring collaborator filter one");
+        AccountRef linkedAccountTwo = createAccount(owner.userGroupId(), "Conto recurring collaborator filter two");
+
+        grantAccountAccess(linkedAccountOne, collaborator);
+        grantAccountAccess(linkedAccountTwo, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria collaborator filter");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                linkedAccountOne,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente collaborator filter one",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        createBaseRecurringTransaction(
+                owner,
+                linkedAccountTwo,
+                categoryId,
+                financialPriorityId,
+                "Ricorrente collaborator filter two",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", linkedAccountOne.accountId().toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$[0].linkedAccountId").value(linkedAccountOne.accountId().toString()));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenFilteringByHiddenAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto recurring collaborator hidden filter");
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", hiddenAccount.accountId().toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+    }
+
+    @Test
+    void collaboratorShouldListBaseAndReadableSimulationGroups() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto recurring collaborator simulation linked");
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria collaborator simulation");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation collaborator readable");
+        linkSimulationGroupToAccount(simulationGroupId, linkedAccount);
+
+        UUID baseId = createBaseRecurringTransaction(
+                owner,
+                linkedAccount,
+                categoryId,
+                financialPriorityId,
+                "Base collaborator simulation",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        UUID simulatedId = createSimulatedRecurringTransaction(
+                owner,
+                linkedAccount,
+                categoryId,
+                financialPriorityId,
+                simulationGroupId,
+                "Simulata collaborator readable",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", simulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(baseId.toString()))
+                .andExpect(jsonPath("$[1].recurringTransactionId").value(simulatedId.toString()));
+    }
+
+    @Test
+    void collaboratorShouldReceiveNotFoundWhenSimulationGroupIsNotReadable() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto recurring collaborator simulation hidden");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation collaborator hidden");
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", simulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+    }
+
+    @Test
+    void ownerShouldNotSeeRecurringTransactionsFromAnotherGroupInList() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef otherOwner = createUserWithNewGroup("OWNER");
+
+        AccountRef otherAccount = createAccount(otherOwner.userGroupId(), "Conto recurring list other group");
+        UUID otherCategoryId = createActiveCategory(
+                otherOwner.userGroupId(),
+                otherOwner.userId(),
+                "Categoria list other group"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        createBaseRecurringTransaction(
+                otherOwner,
+                otherAccount,
+                otherCategoryId,
+                financialPriorityId,
+                "Ricorrente altro gruppo",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+        
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void ownerShouldListBaseAndSelectedSimulationGroupsFilteredByAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef accountOne = createAccount(owner.userGroupId(), "Conto recurring account simulation one");
+        AccountRef accountTwo = createAccount(owner.userGroupId(), "Conto recurring account simulation two");
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria account simulation");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupOneId = createSimulationGroup(owner.userGroupId(), "Simulation account one");
+        UUID simulationGroupTwoId = createSimulationGroup(owner.userGroupId(), "Simulation account two");
+
+        linkSimulationGroupToAccount(simulationGroupOneId, accountOne);
+        linkSimulationGroupToAccount(simulationGroupTwoId, accountTwo);
+
+        UUID baseAccountOneId = createBaseRecurringTransaction(
+                owner,
+                accountOne,
+                categoryId,
+                financialPriorityId,
+                "Base conto uno",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        createBaseRecurringTransaction(
+                owner,
+                accountTwo,
+                categoryId,
+                financialPriorityId,
+                "Base conto due esclusa",
+                LocalDate.of(2026, 6, 15),
+                new BigDecimal("-500.00")
+        );
+
+        UUID simulatedAccountOneId = createSimulatedRecurringTransaction(
+                owner,
+                accountOne,
+                categoryId,
+                financialPriorityId,
+                simulationGroupOneId,
+                "Simulata conto uno",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        createSimulatedRecurringTransaction(
+                owner,
+                accountTwo,
+                categoryId,
+                financialPriorityId,
+                simulationGroupTwoId,
+                "Simulata conto due esclusa",
+                LocalDate.of(2026, 7, 15),
+                new BigDecimal("-200.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("accountId", accountOne.accountId().toString())
+                        .param("simulationGroupIds", simulationGroupOneId.toString(), simulationGroupTwoId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(baseAccountOneId.toString()))
+                .andExpect(jsonPath("$[0].linkedAccountId").value(accountOne.accountId().toString()))
+                .andExpect(jsonPath("$[1].recurringTransactionId").value(simulatedAccountOneId.toString()))
+                .andExpect(jsonPath("$[1].linkedAccountId").value(accountOne.accountId().toString()));
+    }
+
+    @Test
+    void listRecurringTransactionsShouldReturnCurrentHistoryAndCurrentDetails() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring list current state");
+        UUID oldCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list old");
+        UUID newCategoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria list new");
+        UUID oldFinancialPriorityId = financialPriorityId("ESSENTIAL");
+        UUID newFinancialPriorityId = financialPriorityId("OPTIONAL");
+
+        UUID recurringTransactionId = createBaseRecurringTransaction(
+                owner,
+                account,
+                oldCategoryId,
+                oldFinancialPriorityId,
+                "Ricorrente vecchia",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        closeCurrentRecurringTransactionHistory(
+                recurringTransactionId,
+                LocalDate.of(2026, 7, 1)
+        );
+
+        insertRecurringTransactionHistory(
+                recurringTransactionId,
+                LocalDate.of(2026, 7, 1),
+                null,
+                1,
+                1,
+                "MONTH",
+                "NEXT_BUSINESS_DAY",
+                new BigDecimal("-900.00"),
+                null,
+                new BigDecimal("2400.00")
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                "Ricorrente aggiornata in lista",
+                newCategoryId,
+                newFinancialPriorityId,
+                account,
+                LocalDate.of(2026, 7, 1),
+                owner.userGroupId()
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$[0].recurringTransactionDescription").value("Ricorrente aggiornata in lista"))
+                .andExpect(jsonPath("$[0].effectiveFrom").value("2026-07-01"))
+                .andExpect(jsonPath("$[0].paymentDateAdjustmentPolicy").value("NEXT_BUSINESS_DAY"))
+                .andExpect(jsonPath("$[0].paymentAmount").value(-900.0))
+                .andExpect(jsonPath("$[0].finalPaymentAmount").value(2400.0))
+                .andExpect(jsonPath("$[0].categoryId").value(newCategoryId.toString()))
+                .andExpect(jsonPath("$[0].financialPriorityId").value(newFinancialPriorityId.toString()));
+    }
+
+    @Test
+    void listRecurringTransactionsShouldRejectPartiallyInvalidSimulationGroups() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID validSimulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation valid partial");
+        UUID invalidSimulationGroupId = UUID.randomUUID();
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", validSimulationGroupId.toString(), invalidSimulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.simulationGroup.notFound"));
+    }
+
+    @Test
+    void collaboratorShouldNotGetDuplicateRowsWhenSimulationGroupIsLinkedToMultipleAccessibleAccounts() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef accountOne = createAccount(owner.userGroupId(), "Conto recurring duplicate account one");
+        AccountRef accountTwo = createAccount(owner.userGroupId(), "Conto recurring duplicate account two");
+
+        grantAccountAccess(accountOne, collaborator);
+        grantAccountAccess(accountTwo, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria duplicate account");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation linked to multiple accounts");
+        linkSimulationGroupToAccount(simulationGroupId, accountOne);
+        linkSimulationGroupToAccount(simulationGroupId, accountTwo);
+
+        UUID simulatedRecurringTransactionId = createSimulatedRecurringTransaction(
+                owner,
+                accountOne,
+                categoryId,
+                financialPriorityId,
+                simulationGroupId,
+                "Simulata senza duplicati",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", simulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(simulatedRecurringTransactionId.toString()));
+    }
+
+    @Test
+    void collaboratorShouldExcludeSimulatedRecurringTransactionsOnHiddenAccountsEvenWhenSimulationGroupIsReadable() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+        UserRef collaborator = createUser(owner.userGroupId(), "COLLABORATOR");
+
+        AccountRef linkedAccount = createAccount(owner.userGroupId(), "Conto recurring readable simulation linked");
+        AccountRef hiddenAccount = createAccount(owner.userGroupId(), "Conto recurring readable simulation hidden");
+
+        grantAccountAccess(linkedAccount, collaborator);
+
+        UUID categoryId = createActiveCategory(owner.userGroupId(), owner.userId(), "Categoria readable simulation hidden");
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation readable with hidden tx");
+        linkSimulationGroupToAccount(simulationGroupId, linkedAccount);
+        linkSimulationGroupToAccount(simulationGroupId, hiddenAccount);
+
+        UUID baseLinkedId = createBaseRecurringTransaction(
+                owner,
+                linkedAccount,
+                categoryId,
+                financialPriorityId,
+                "Base visibile collaborator",
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("-800.00")
+        );
+
+        createSimulatedRecurringTransaction(
+                owner,
+                hiddenAccount,
+                categoryId,
+                financialPriorityId,
+                simulationGroupId,
+                "Simulata nascosta collaborator",
+                LocalDate.of(2026, 7, 1),
+                new BigDecimal("-100.00")
+        );
+
+        mockMvc.perform(get(RECURRING_TRANSACTIONS_PATH)
+                        .param("simulationGroupIds", simulationGroupId.toString())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(collaborator))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(baseLinkedId.toString()))
+                .andExpect(jsonPath("$[0].linkedAccountId").value(linkedAccount.accountId().toString()));
     }
 
     private UserRef createUserWithNewGroup(String role) {
@@ -1780,6 +3071,155 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         return jwtTokenService.createAccessToken(user)
                 .token();
+    }
+
+    private UUID createRecurringTransactionThroughApi(
+            UserRef authenticatedUser,
+            Map<String, Object> body
+    ) throws Exception {
+        MvcResult result = mockMvc.perform(post(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(authenticatedUser)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        return recurringTransactionIdFrom(result);
+    }
+
+    private void closeCurrentRecurringTransactionHistory(
+            UUID recurringTransactionId,
+            LocalDate effectiveTo
+    ) {
+        jdbcTemplate.update("""
+                        UPDATE recurring_transaction_history
+                        SET effective_to = ?
+                        WHERE recurring_transaction_id = ?
+                          AND effective_to IS NULL
+                        """,
+                effectiveTo,
+                recurringTransactionId
+        );
+    }
+
+    private void insertRecurringTransactionHistory(
+            UUID recurringTransactionId,
+            LocalDate effectiveFrom,
+            LocalDate effectiveTo,
+            int dayOfUnit,
+            int recurrenceInterval,
+            String recurrenceUnit,
+            String paymentDateAdjustmentPolicy,
+            BigDecimal paymentAmount,
+            LocalDate recurringTransactionEndDate,
+            BigDecimal finalPaymentAmount
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO recurring_transaction_history (
+                            recurring_transaction_id,
+                            effective_from,
+                            effective_to,
+                            day_of_unit,
+                            recurrence_interval,
+                            recurrence_unit,
+                            payment_date_adjustment_policy,
+                            payment_amount,
+                            recurring_transaction_end_date,
+                            final_payment_amount
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                recurringTransactionId,
+                effectiveFrom,
+                effectiveTo,
+                dayOfUnit,
+                recurrenceInterval,
+                recurrenceUnit,
+                paymentDateAdjustmentPolicy,
+                paymentAmount,
+                recurringTransactionEndDate,
+                finalPaymentAmount
+        );
+    }
+
+    private void insertRecurringTransactionDetailsHistory(
+            UUID recurringTransactionId,
+            String description,
+            UUID categoryId,
+            UUID financialPriorityId,
+            AccountRef linkedAccount,
+            LocalDate effectiveFrom,
+            UUID userGroupId
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO recurring_transaction_details_history (
+                            recurring_transaction_id,
+                            recurring_transaction_description,
+                            category_id,
+                            financial_priority_id,
+                            linked_account_id,
+                            recurring_transaction_affects_account_balance,
+                            recurring_transaction_affects_liquidity,
+                            recurring_transaction_details_effective_from,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, ?, ?, TRUE, TRUE, ?, ?)
+                        """,
+                recurringTransactionId,
+                description,
+                categoryId,
+                financialPriorityId,
+                linkedAccount.accountId(),
+                effectiveFrom,
+                userGroupId
+        );
+    }
+
+    private UUID createBaseRecurringTransaction(
+            UserRef authenticatedUser,
+            AccountRef account,
+            UUID categoryId,
+            UUID financialPriorityId,
+            String description,
+            LocalDate firstPaymentDate,
+            BigDecimal paymentAmount
+    ) throws Exception {
+        Map<String, Object> body = minimalRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+
+        body.put("recurringTransactionDescription", description);
+        body.put("recurringTransactionFirstPaymentDate", firstPaymentDate.toString());
+        body.put("paymentAmount", paymentAmount);
+
+        return createRecurringTransactionThroughApi(authenticatedUser, body);
+    }
+
+    private UUID createSimulatedRecurringTransaction(
+            UserRef authenticatedUser,
+            AccountRef account,
+            UUID categoryId,
+            UUID financialPriorityId,
+            UUID simulationGroupId,
+            String description,
+            LocalDate firstPaymentDate,
+            BigDecimal paymentAmount
+    ) throws Exception {
+        Map<String, Object> body = minimalRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+
+        body.put("recurringTransactionDescription", description);
+        body.put("recurringTransactionFirstPaymentDate", firstPaymentDate.toString());
+        body.put("paymentAmount", paymentAmount);
+        body.put("recurringTransactionIsSimulated", true);
+        body.put("simulationGroupId", simulationGroupId);
+
+        return createRecurringTransactionThroughApi(authenticatedUser, body);
     }
 
     private record UserRef(
