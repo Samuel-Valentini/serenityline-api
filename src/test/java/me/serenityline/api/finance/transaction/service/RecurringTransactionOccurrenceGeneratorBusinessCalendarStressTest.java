@@ -1,6 +1,7 @@
 package me.serenityline.api.finance.transaction.service;
 
 import me.serenityline.api.finance.calendar.BusinessCalendar;
+import me.serenityline.api.finance.calendar.PaymentAccountCurrencySnapshot;
 import me.serenityline.api.finance.calendar.PaymentBusinessCalendarProvider;
 import me.serenityline.api.finance.transaction.entity.PaymentDateAdjustmentPolicy;
 import me.serenityline.api.finance.transaction.entity.RecurrenceUnit;
@@ -62,6 +63,20 @@ class RecurringTransactionOccurrenceGeneratorBusinessCalendarStressTest {
                 new BigDecimal(paymentAmount),
                 recurringTransactionEndDate,
                 finalPaymentAmount == null ? null : new BigDecimal(finalPaymentAmount),
+                precedence
+        );
+    }
+
+    private static PaymentAccountCurrencySnapshot snapshot(
+            LocalDate effectiveFrom,
+            UUID accountId,
+            String currencyCode,
+            long precedence
+    ) {
+        return new PaymentAccountCurrencySnapshot(
+                effectiveFrom,
+                accountId,
+                currencyCode,
                 precedence
         );
     }
@@ -552,6 +567,179 @@ class RecurringTransactionOccurrenceGeneratorBusinessCalendarStressTest {
         assertThat(occurrences)
                 .extracting(RecurringTransactionOccurrence::finalOccurrence)
                 .containsExactly(false, false, true);
+    }
+
+    @Test
+    void shouldNotRequireCalendarWhenFinalOccurrencePolicyIsNone() {
+        PaymentBusinessCalendarProvider provider = new PaymentBusinessCalendarProvider() {
+            @Override
+            public BusinessCalendar calendarAt(LocalDate logicalDate) {
+                return null;
+            }
+
+            @Override
+            public int adjustmentWindowDays() {
+                return 0;
+            }
+        };
+
+        List<RecurringTransactionOccurrence> occurrences = generator.generateOccurrences(
+                UUID.randomUUID(),
+                LocalDate.of(2026, 8, 10),
+                List.of(rule(
+                        LocalDate.of(2026, 8, 10),
+                        null,
+                        10,
+                        1,
+                        RecurrenceUnit.MONTH,
+                        PaymentDateAdjustmentPolicy.NONE,
+                        "-100.00",
+                        LocalDate.of(2026, 8, 10),
+                        "-50.00",
+                        1
+                )),
+                LocalDate.of(2026, 8, 10),
+                LocalDate.of(2026, 8, 10),
+                provider
+        );
+
+        assertThat(occurrences).hasSize(1);
+        assertThat(occurrences.getFirst().logicalDate()).isEqualTo(LocalDate.of(2026, 8, 10));
+        assertThat(occurrences.getFirst().chargeDate()).isEqualTo(LocalDate.of(2026, 8, 10));
+        assertThat(occurrences.getFirst().amount()).isEqualByComparingTo(new BigDecimal("-50.00"));
+        assertThat(occurrences.getFirst().finalOccurrence()).isTrue();
+    }
+
+    @Test
+    void shouldNotGenerateOldFinalOccurrenceWhenLaterRuleClearsEndDateBeforeOldEndDate() {
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        List<RecurringTransactionOccurrence> occurrences = generator.generateOccurrences(
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 10),
+                List.of(
+                        rule(
+                                LocalDate.of(2026, 6, 10),
+                                null,
+                                10,
+                                1,
+                                RecurrenceUnit.MONTH,
+                                PaymentDateAdjustmentPolicy.NONE,
+                                "-100.00",
+                                LocalDate.of(2026, 9, 30),
+                                "-50.00",
+                                1
+                        ),
+                        rule(
+                                LocalDate.of(2026, 8, 1),
+                                null,
+                                10,
+                                1,
+                                RecurrenceUnit.MONTH,
+                                PaymentDateAdjustmentPolicy.NONE,
+                                "-100.00",
+                                null,
+                                null,
+                                2
+                        )
+                ),
+                LocalDate.of(2026, 8, 1),
+                LocalDate.of(2026, 10, 31)
+        );
+
+        assertThat(occurrences)
+                .extracting(RecurringTransactionOccurrence::logicalDate)
+                .containsExactly(
+                        LocalDate.of(2026, 8, 10),
+                        LocalDate.of(2026, 9, 10),
+                        LocalDate.of(2026, 10, 10)
+                );
+
+        assertThat(occurrences)
+                .extracting(RecurringTransactionOccurrence::finalOccurrence)
+                .containsExactly(false, false, false);
+    }
+
+    @Test
+    void shouldKeepHistoricalFinalOccurrenceWhenRecurringIsReopenedAfterEndDate() {
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        List<RecurringTransactionOccurrence> occurrences = generator.generateOccurrences(
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 10),
+                List.of(
+                        rule(
+                                LocalDate.of(2026, 6, 10),
+                                null,
+                                10,
+                                1,
+                                RecurrenceUnit.MONTH,
+                                PaymentDateAdjustmentPolicy.NONE,
+                                "-100.00",
+                                LocalDate.of(2026, 9, 30),
+                                "-50.00",
+                                1
+                        ),
+                        rule(
+                                LocalDate.of(2026, 12, 1),
+                                null,
+                                10,
+                                1,
+                                RecurrenceUnit.MONTH,
+                                PaymentDateAdjustmentPolicy.NONE,
+                                "-200.00",
+                                null,
+                                null,
+                                2
+                        )
+                ),
+                LocalDate.of(2026, 9, 1),
+                LocalDate.of(2026, 12, 31)
+        );
+
+        assertThat(occurrences)
+                .extracting(RecurringTransactionOccurrence::logicalDate)
+                .containsExactly(
+                        LocalDate.of(2026, 9, 10),
+                        LocalDate.of(2026, 9, 30),
+                        LocalDate.of(2026, 12, 10)
+                );
+
+        assertThat(occurrences)
+                .extracting(RecurringTransactionOccurrence::amount)
+                .containsExactly(
+                        new BigDecimal("-100.00"),
+                        new BigDecimal("-50.00"),
+                        new BigDecimal("-200.00")
+                );
+
+        assertThat(occurrences)
+                .extracting(RecurringTransactionOccurrence::finalOccurrence)
+                .containsExactly(false, true, false);
+    }
+
+    @Test
+    void shouldRejectBlankCurrencyCodeInSnapshot() {
+        assertThatThrownBy(() -> snapshot(
+                LocalDate.of(2026, 1, 1),
+                UUID.randomUUID(),
+                "   ",
+                1
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.account.currencyRequired");
+    }
+
+    @Test
+    void shouldRejectNonPositiveSnapshotPrecedence() {
+        assertThatThrownBy(() -> snapshot(
+                LocalDate.of(2026, 1, 1),
+                UUID.randomUUID(),
+                "EUR",
+                0
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.accountCurrency.precedenceInvalid");
     }
 
     private static final class WeekendAndFixedHolidayCalendar implements BusinessCalendar {

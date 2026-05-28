@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 @Component
-public class StrataCurrencyBusinessCalendarResolver {
+public class StrataCurrencyBusinessCalendarResolver implements CurrencyBusinessCalendarResolver {
 
     private static final int STRATA_ADJUSTMENT_WINDOW_DAYS = 14;
 
@@ -48,7 +48,7 @@ public class StrataCurrencyBusinessCalendarResolver {
 
             @Override
             public int adjustmentWindowDays() {
-                return STRATA_ADJUSTMENT_WINDOW_DAYS;
+                return StrataCurrencyBusinessCalendarResolver.this.adjustmentWindowDays();
             }
         };
     }
@@ -67,7 +67,7 @@ public class StrataCurrencyBusinessCalendarResolver {
 
             @Override
             public int adjustmentWindowDays() {
-                return STRATA_ADJUSTMENT_WINDOW_DAYS;
+                return StrataCurrencyBusinessCalendarResolver.this.adjustmentWindowDays();
             }
         };
     }
@@ -89,5 +89,10 @@ public class StrataCurrencyBusinessCalendarResolver {
                 HolidayCalendarId.of(calendarCode)
                         .resolve(ReferenceData.standard())
         );
+    }
+
+    @Override
+    public int adjustmentWindowDays() {
+        return STRATA_ADJUSTMENT_WINDOW_DAYS;
     }
 }
