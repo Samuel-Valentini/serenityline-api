@@ -25,6 +25,7 @@ public class RecurringTransactionOccurrenceService {
     private final RecurringTransactionDetailsHistoryRepository recurringTransactionDetailsHistoryRepository;
     private final RecurringTransactionRuleSnapshotMapper recurringTransactionRuleSnapshotMapper;
     private final RecurringTransactionAccountCurrencySnapshotMapper recurringTransactionAccountCurrencySnapshotMapper;
+    private final RecurringTransactionProjectedMovementAssembler recurringTransactionProjectedMovementAssembler;
     private final CurrencyBusinessCalendarResolver currencyBusinessCalendarResolver;
     private final RecurringTransactionOccurrenceGenerator recurringTransactionOccurrenceGenerator;
 
@@ -33,6 +34,7 @@ public class RecurringTransactionOccurrenceService {
             RecurringTransactionDetailsHistoryRepository recurringTransactionDetailsHistoryRepository,
             RecurringTransactionRuleSnapshotMapper recurringTransactionRuleSnapshotMapper,
             RecurringTransactionAccountCurrencySnapshotMapper recurringTransactionAccountCurrencySnapshotMapper,
+            RecurringTransactionProjectedMovementAssembler recurringTransactionProjectedMovementAssembler,
             CurrencyBusinessCalendarResolver currencyBusinessCalendarResolver,
             RecurringTransactionOccurrenceGenerator recurringTransactionOccurrenceGenerator
     ) {
@@ -52,6 +54,10 @@ public class RecurringTransactionOccurrenceService {
                 recurringTransactionAccountCurrencySnapshotMapper,
                 "recurringTransactionAccountCurrencySnapshotMapper"
         );
+        this.recurringTransactionProjectedMovementAssembler = Objects.requireNonNull(
+                recurringTransactionProjectedMovementAssembler,
+                "recurringTransactionProjectedMovementAssembler"
+        );
         this.currencyBusinessCalendarResolver = Objects.requireNonNull(
                 currencyBusinessCalendarResolver,
                 "currencyBusinessCalendarResolver"
@@ -64,6 +70,54 @@ public class RecurringTransactionOccurrenceService {
 
     @Transactional(readOnly = true)
     public List<RecurringTransactionOccurrence> generateOccurrences(
+            RecurringTransaction recurringTransaction,
+            LocalDate from,
+            LocalDate to
+    ) {
+        RecurringTransactionGenerationContext context = validateAndExtractContext(
+                recurringTransaction,
+                from,
+                to
+        );
+
+        RecurringTransactionGenerationData data = loadGenerationData(context);
+
+        return generateOccurrences(
+                context,
+                data,
+                from,
+                to
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<RecurringTransactionProjectedMovement> generateProjectedMovements(
+            RecurringTransaction recurringTransaction,
+            LocalDate from,
+            LocalDate to
+    ) {
+        RecurringTransactionGenerationContext context = validateAndExtractContext(
+                recurringTransaction,
+                from,
+                to
+        );
+
+        RecurringTransactionGenerationData data = loadGenerationData(context);
+
+        List<RecurringTransactionOccurrence> occurrences = generateOccurrences(
+                context,
+                data,
+                from,
+                to
+        );
+
+        return recurringTransactionProjectedMovementAssembler.assemble(
+                occurrences,
+                data.detailsHistoryRows()
+        );
+    }
+
+    private RecurringTransactionGenerationContext validateAndExtractContext(
             RecurringTransaction recurringTransaction,
             LocalDate from,
             LocalDate to
@@ -96,9 +150,19 @@ public class RecurringTransactionOccurrenceService {
                 "recurringTransactionFirstPaymentDate"
         );
 
+        return new RecurringTransactionGenerationContext(
+                recurringTransactionId,
+                userGroupId,
+                firstPaymentDate
+        );
+    }
+
+    private RecurringTransactionGenerationData loadGenerationData(
+            RecurringTransactionGenerationContext context
+    ) {
         List<RecurringTransactionHistory> ruleHistoryRows =
                 recurringTransactionHistoryRepository.findAllHistoryByRecurringTransactionId(
-                        recurringTransactionId
+                        context.recurringTransactionId()
                 );
 
         if (ruleHistoryRows.isEmpty()) {
@@ -108,19 +172,31 @@ public class RecurringTransactionOccurrenceService {
         List<RecurringTransactionDetailsHistory> detailsHistoryRows =
                 recurringTransactionDetailsHistoryRepository
                         .findAllHistoryWithLinkedAccountByRecurringTransactionIdAndUserGroupId(
-                                recurringTransactionId,
-                                userGroupId
+                                context.recurringTransactionId(),
+                                context.userGroupId()
                         );
 
         if (detailsHistoryRows.isEmpty()) {
             throw new IllegalStateException("finance.recurringTransaction.detailsHistoryRequired");
         }
 
+        return new RecurringTransactionGenerationData(
+                ruleHistoryRows,
+                detailsHistoryRows
+        );
+    }
+
+    private List<RecurringTransactionOccurrence> generateOccurrences(
+            RecurringTransactionGenerationContext context,
+            RecurringTransactionGenerationData data,
+            LocalDate from,
+            LocalDate to
+    ) {
         List<RecurringTransactionRuleSnapshot> ruleSnapshots =
-                recurringTransactionRuleSnapshotMapper.toSnapshots(ruleHistoryRows);
+                recurringTransactionRuleSnapshotMapper.toSnapshots(data.ruleHistoryRows());
 
         List<PaymentAccountCurrencySnapshot> accountCurrencySnapshots =
-                recurringTransactionAccountCurrencySnapshotMapper.toSnapshots(detailsHistoryRows);
+                recurringTransactionAccountCurrencySnapshotMapper.toSnapshots(data.detailsHistoryRows());
 
         PaymentBusinessCalendarProvider paymentBusinessCalendarProvider =
                 new AccountCurrencyPaymentBusinessCalendarProvider(
@@ -129,12 +205,25 @@ public class RecurringTransactionOccurrenceService {
                 );
 
         return recurringTransactionOccurrenceGenerator.generateOccurrences(
-                recurringTransactionId,
-                firstPaymentDate,
+                context.recurringTransactionId(),
+                context.firstPaymentDate(),
                 ruleSnapshots,
                 from,
                 to,
                 paymentBusinessCalendarProvider
         );
+    }
+
+    private record RecurringTransactionGenerationContext(
+            UUID recurringTransactionId,
+            UUID userGroupId,
+            LocalDate firstPaymentDate
+    ) {
+    }
+
+    private record RecurringTransactionGenerationData(
+            List<RecurringTransactionHistory> ruleHistoryRows,
+            List<RecurringTransactionDetailsHistory> detailsHistoryRows
+    ) {
     }
 }

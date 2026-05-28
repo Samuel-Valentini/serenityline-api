@@ -108,6 +108,101 @@ class RecurringTransactionOccurrenceServiceIntegrationTest extends IntegrationTe
                 );
     }
 
+    @Test
+    void shouldGenerateProjectedMovementsFromPersistedRecurringTransactionHistoryAndDetails() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID accountId = createAccount(
+                owner.userGroupId(),
+                "Conto projected movement integration",
+                "EUR"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria projected movement integration"
+        );
+
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        UUID recurringTransactionId = createWeeklyRecurringTransaction(
+                owner.userGroupId(),
+                accountId,
+                categoryId,
+                financialPriorityId,
+                LocalDate.of(2026, 1, 5),
+                new BigDecimal("-100.00")
+        );
+
+        RecurringTransaction recurringTransaction = recurringTransactionRepository
+                .findByRecurringTransactionIdAndUserGroup_UserGroupId(
+                        recurringTransactionId,
+                        owner.userGroupId()
+                )
+                .orElseThrow();
+
+        List<RecurringTransactionProjectedMovement> movements =
+                recurringTransactionOccurrenceService.generateProjectedMovements(
+                        recurringTransaction,
+                        LocalDate.of(2026, 1, 1),
+                        LocalDate.of(2026, 1, 20)
+                );
+
+        assertThat(movements)
+                .extracting(
+                        RecurringTransactionProjectedMovement::recurringTransactionId,
+                        RecurringTransactionProjectedMovement::logicalDate,
+                        RecurringTransactionProjectedMovement::chargeDate,
+                        RecurringTransactionProjectedMovement::amount,
+                        RecurringTransactionProjectedMovement::description,
+                        RecurringTransactionProjectedMovement::finalOccurrence,
+                        RecurringTransactionProjectedMovement::affectsAccountBalance,
+                        RecurringTransactionProjectedMovement::affectsLiquidity
+                )
+                .containsExactly(
+                        tuple(
+                                recurringTransactionId,
+                                LocalDate.of(2026, 1, 5),
+                                LocalDate.of(2026, 1, 5),
+                                new BigDecimal("-100.00"),
+                                "Ricorrente integration test",
+                                false,
+                                true,
+                                true
+                        ),
+                        tuple(
+                                recurringTransactionId,
+                                LocalDate.of(2026, 1, 12),
+                                LocalDate.of(2026, 1, 12),
+                                new BigDecimal("-100.00"),
+                                "Ricorrente integration test",
+                                false,
+                                true,
+                                true
+                        ),
+                        tuple(
+                                recurringTransactionId,
+                                LocalDate.of(2026, 1, 19),
+                                LocalDate.of(2026, 1, 19),
+                                new BigDecimal("-100.00"),
+                                "Ricorrente integration test",
+                                false,
+                                true,
+                                true
+                        )
+                );
+
+        assertThat(movements)
+                .allSatisfy(movement -> {
+                    assertThat(movement.linkedAccount().getAccountId()).isEqualTo(accountId);
+                    assertThat(movement.category()).isNotNull();
+                    assertThat(movement.financialPriority()).isNotNull();
+                    assertThat(movement.linkedCreditCard()).isNull();
+                    assertThat(movement.linkedBucket()).isNull();
+                });
+    }
+
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();

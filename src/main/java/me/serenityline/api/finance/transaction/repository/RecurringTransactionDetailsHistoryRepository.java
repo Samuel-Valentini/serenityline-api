@@ -63,6 +63,10 @@ public interface RecurringTransactionDetailsHistoryRepository
             SELECT details
             FROM RecurringTransactionDetailsHistory details
             JOIN FETCH details.linkedAccount linkedAccount
+            JOIN FETCH details.category category
+            JOIN FETCH details.financialPriority financialPriority
+            LEFT JOIN FETCH details.linkedCreditCard linkedCreditCard
+            LEFT JOIN FETCH details.linkedBucket linkedBucket
             WHERE details.recurringTransaction.recurringTransactionId = :recurringTransactionId
               AND details.userGroup.userGroupId = :userGroupId
             ORDER BY

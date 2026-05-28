@@ -1,9 +1,12 @@
 package me.serenityline.api.finance.transaction.service;
 
+import me.serenityline.api.finance.account.entity.Account;
 import me.serenityline.api.finance.calendar.BusinessCalendar;
 import me.serenityline.api.finance.calendar.CurrencyBusinessCalendarResolver;
 import me.serenityline.api.finance.calendar.PaymentAccountCurrencySnapshot;
 import me.serenityline.api.finance.calendar.PaymentBusinessCalendarProvider;
+import me.serenityline.api.finance.category.entity.Category;
+import me.serenityline.api.finance.financialpriority.entity.FinancialPriority;
 import me.serenityline.api.finance.transaction.entity.*;
 import me.serenityline.api.finance.transaction.repository.RecurringTransactionDetailsHistoryRepository;
 import me.serenityline.api.finance.transaction.repository.RecurringTransactionHistoryRepository;
@@ -46,6 +49,9 @@ class RecurringTransactionOccurrenceServiceTest {
 
     @Mock
     private RecurringTransactionOccurrenceGenerator recurringTransactionOccurrenceGenerator;
+
+    @Mock
+    private RecurringTransactionProjectedMovementAssembler recurringTransactionProjectedMovementAssembler;
 
     @InjectMocks
     private RecurringTransactionOccurrenceService service;
@@ -551,5 +557,126 @@ class RecurringTransactionOccurrenceServiceTest {
                 .hasMessage("finance.paymentCalendar.snapshotsRequired");
 
         verifyNoInteractions(recurringTransactionOccurrenceGenerator);
+    }
+
+    @Test
+    void shouldGenerateProjectedMovementsUsingOccurrencesAndDetailsHistory() {
+        UUID recurringTransactionId = UUID.randomUUID();
+        UUID userGroupId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+
+        LocalDate firstPaymentDate = LocalDate.of(2026, 1, 10);
+        LocalDate from = LocalDate.of(2026, 1, 1);
+        LocalDate to = LocalDate.of(2026, 1, 31);
+
+        RecurringTransaction recurringTransaction = recurringTransaction(
+                recurringTransactionId,
+                userGroupId,
+                firstPaymentDate
+        );
+
+        RecurringTransactionHistory ruleHistoryRow = mock(RecurringTransactionHistory.class);
+        RecurringTransactionDetailsHistory detailsHistoryRow =
+                mock(RecurringTransactionDetailsHistory.class);
+
+        List<RecurringTransactionHistory> ruleHistoryRows = List.of(ruleHistoryRow);
+        List<RecurringTransactionDetailsHistory> detailsHistoryRows = List.of(detailsHistoryRow);
+
+        List<RecurringTransactionRuleSnapshot> ruleSnapshots = List.of(
+                new RecurringTransactionRuleSnapshot(
+                        firstPaymentDate,
+                        null,
+                        (short) 10,
+                        (short) 1,
+                        RecurrenceUnit.MONTH,
+                        PaymentDateAdjustmentPolicy.NONE,
+                        new BigDecimal("-100.00"),
+                        null,
+                        null,
+                        1L
+                )
+        );
+
+        List<PaymentAccountCurrencySnapshot> accountCurrencySnapshots = List.of(
+                new PaymentAccountCurrencySnapshot(
+                        firstPaymentDate,
+                        accountId,
+                        "EUR",
+                        1L
+                )
+        );
+
+        List<RecurringTransactionOccurrence> occurrences = List.of(
+                new RecurringTransactionOccurrence(
+                        recurringTransactionId,
+                        LocalDate.of(2026, 1, 10),
+                        LocalDate.of(2026, 1, 10),
+                        new BigDecimal("-100.00"),
+                        false
+                )
+        );
+
+        List<RecurringTransactionProjectedMovement> expectedMovements = List.of(
+                new RecurringTransactionProjectedMovement(
+                        recurringTransactionId,
+                        LocalDate.of(2026, 1, 10),
+                        LocalDate.of(2026, 1, 10),
+                        new BigDecimal("-100.00"),
+                        false,
+                        "Movimento previsto",
+                        mock(Category.class),
+                        mock(FinancialPriority.class),
+                        mock(Account.class),
+                        null,
+                        null,
+                        true,
+                        true
+                )
+        );
+
+        when(recurringTransactionHistoryRepository.findAllHistoryByRecurringTransactionId(
+                recurringTransactionId
+        )).thenReturn(ruleHistoryRows);
+
+        when(recurringTransactionDetailsHistoryRepository
+                .findAllHistoryWithLinkedAccountByRecurringTransactionIdAndUserGroupId(
+                        recurringTransactionId,
+                        userGroupId
+                ))
+                .thenReturn(detailsHistoryRows);
+
+        when(recurringTransactionRuleSnapshotMapper.toSnapshots(ruleHistoryRows))
+                .thenReturn(ruleSnapshots);
+
+        when(recurringTransactionAccountCurrencySnapshotMapper.toSnapshots(detailsHistoryRows))
+                .thenReturn(accountCurrencySnapshots);
+
+        when(recurringTransactionOccurrenceGenerator.generateOccurrences(
+                eq(recurringTransactionId),
+                eq(firstPaymentDate),
+                same(ruleSnapshots),
+                eq(from),
+                eq(to),
+                any(PaymentBusinessCalendarProvider.class)
+        )).thenReturn(occurrences);
+
+        when(recurringTransactionProjectedMovementAssembler.assemble(
+                occurrences,
+                detailsHistoryRows
+        )).thenReturn(expectedMovements);
+
+        List<RecurringTransactionProjectedMovement> movements =
+                service.generateProjectedMovements(
+                        recurringTransaction,
+                        from,
+                        to
+                );
+
+        assertThat(movements).isSameAs(expectedMovements);
+
+        verify(recurringTransactionProjectedMovementAssembler).assemble(
+                occurrences,
+                detailsHistoryRows
+        );
     }
 }
