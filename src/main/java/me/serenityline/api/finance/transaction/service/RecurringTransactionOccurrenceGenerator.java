@@ -1,5 +1,8 @@
 package me.serenityline.api.finance.transaction.service;
 
+import me.serenityline.api.finance.calendar.BusinessCalendar;
+import me.serenityline.api.finance.calendar.PaymentBusinessCalendarProvider;
+import me.serenityline.api.finance.calendar.WeekendOnlyPaymentBusinessCalendarProvider;
 import me.serenityline.api.finance.transaction.entity.PaymentDateAdjustmentPolicy;
 import org.springframework.stereotype.Component;
 
@@ -13,8 +16,6 @@ import java.util.*;
 @Component
 public class RecurringTransactionOccurrenceGenerator {
 
-    private static final int WEEKEND_ADJUSTMENT_WINDOW_DAYS = 2;
-
     public List<RecurringTransactionOccurrence> generateOccurrences(
             UUID recurringTransactionId,
             LocalDate firstPaymentDate,
@@ -22,14 +23,39 @@ public class RecurringTransactionOccurrenceGenerator {
             LocalDate from,
             LocalDate to
     ) {
+        return generateOccurrences(
+                recurringTransactionId,
+                firstPaymentDate,
+                ruleHistory,
+                from,
+                to,
+                WeekendOnlyPaymentBusinessCalendarProvider.INSTANCE
+        );
+    }
+
+    public List<RecurringTransactionOccurrence> generateOccurrences(
+            UUID recurringTransactionId,
+            LocalDate firstPaymentDate,
+            List<RecurringTransactionRuleSnapshot> ruleHistory,
+            LocalDate from,
+            LocalDate to,
+            PaymentBusinessCalendarProvider calendarProvider
+    ) {
         Objects.requireNonNull(recurringTransactionId, "recurringTransactionId");
         Objects.requireNonNull(firstPaymentDate, "firstPaymentDate");
         Objects.requireNonNull(ruleHistory, "ruleHistory");
         Objects.requireNonNull(from, "from");
         Objects.requireNonNull(to, "to");
+        Objects.requireNonNull(calendarProvider, "calendarProvider");
 
         if (to.isBefore(from)) {
             throw new IllegalArgumentException("finance.calendar.dateRangeInvalid");
+        }
+
+        int adjustmentWindowDays = calendarProvider.adjustmentWindowDays();
+
+        if (adjustmentWindowDays < 0) {
+            throw new IllegalArgumentException("finance.calendar.adjustmentWindowInvalid");
         }
 
         if (ruleHistory.isEmpty()) {
@@ -46,12 +72,12 @@ public class RecurringTransactionOccurrenceGenerator {
 
         Map<LocalDate, RecurringTransactionOccurrence> occurrencesByLogicalDate = new LinkedHashMap<>();
 
-        LocalDate scanStart = from.minusDays(WEEKEND_ADJUSTMENT_WINDOW_DAYS);
+        LocalDate scanStart = from.minusDays(adjustmentWindowDays);
         if (scanStart.isBefore(firstPaymentDate)) {
             scanStart = firstPaymentDate;
         }
 
-        LocalDate scanEnd = to.plusDays(WEEKEND_ADJUSTMENT_WINDOW_DAYS);
+        LocalDate scanEnd = to.plusDays(adjustmentWindowDays);
 
         for (LocalDate logicalDate = scanStart; !logicalDate.isAfter(scanEnd); logicalDate = logicalDate.plusDays(1)) {
             Optional<PreparedRule> activeRule = activeRuleAt(preparedRules, logicalDate);
@@ -77,7 +103,8 @@ public class RecurringTransactionOccurrenceGenerator {
 
             LocalDate chargeDate = adjustPaymentDate(
                     logicalDate,
-                    rule.paymentDateAdjustmentPolicy()
+                    rule.paymentDateAdjustmentPolicy(),
+                    calendarProvider
             );
 
             if (chargeDate.isBefore(from) || chargeDate.isAfter(to)) {
@@ -101,7 +128,8 @@ public class RecurringTransactionOccurrenceGenerator {
                 preparedRules,
                 from,
                 to,
-                occurrencesByLogicalDate
+                occurrencesByLogicalDate,
+                calendarProvider
         );
 
         return occurrencesByLogicalDate.values()
@@ -223,7 +251,8 @@ public class RecurringTransactionOccurrenceGenerator {
             List<PreparedRule> preparedRules,
             LocalDate from,
             LocalDate to,
-            Map<LocalDate, RecurringTransactionOccurrence> occurrencesByLogicalDate
+            Map<LocalDate, RecurringTransactionOccurrence> occurrencesByLogicalDate,
+            PaymentBusinessCalendarProvider calendarProvider
     ) {
         Set<LocalDate> endDates = new HashSet<>();
 
@@ -242,13 +271,19 @@ public class RecurringTransactionOccurrenceGenerator {
 
             RecurringTransactionRuleSnapshot rule = activeRule.get().rule();
 
+            if (rule.recurringTransactionEndDate() == null
+                    || !rule.recurringTransactionEndDate().isEqual(endDate)) {
+                continue;
+            }
+
             if (rule.finalPaymentAmount() == null) {
                 continue;
             }
 
             LocalDate chargeDate = adjustPaymentDate(
                     endDate,
-                    rule.paymentDateAdjustmentPolicy()
+                    rule.paymentDateAdjustmentPolicy(),
+                    calendarProvider
             );
 
             if (chargeDate.isBefore(from) || chargeDate.isAfter(to)) {
@@ -377,38 +412,24 @@ public class RecurringTransactionOccurrenceGenerator {
 
     private LocalDate adjustPaymentDate(
             LocalDate date,
-            PaymentDateAdjustmentPolicy policy
+            PaymentDateAdjustmentPolicy policy,
+            PaymentBusinessCalendarProvider calendarProvider
     ) {
         return switch (policy) {
             case NONE -> date;
-            case PREVIOUS_BUSINESS_DAY -> previousBusinessDayIfNeeded(date);
-            case NEXT_BUSINESS_DAY -> nextBusinessDayIfNeeded(date);
+            case PREVIOUS_BUSINESS_DAY -> requireCalendarAt(calendarProvider, date).previousOrSame(date);
+            case NEXT_BUSINESS_DAY -> requireCalendarAt(calendarProvider, date).nextOrSame(date);
         };
     }
 
-    private LocalDate previousBusinessDayIfNeeded(LocalDate date) {
-        LocalDate adjusted = date;
-
-        while (isWeekend(adjusted)) {
-            adjusted = adjusted.minusDays(1);
-        }
-
-        return adjusted;
-    }
-
-    private LocalDate nextBusinessDayIfNeeded(LocalDate date) {
-        LocalDate adjusted = date;
-
-        while (isWeekend(adjusted)) {
-            adjusted = adjusted.plusDays(1);
-        }
-
-        return adjusted;
-    }
-
-    private boolean isWeekend(LocalDate date) {
-        DayOfWeek dayOfWeek = date.getDayOfWeek();
-        return dayOfWeek == DayOfWeek.SATURDAY || dayOfWeek == DayOfWeek.SUNDAY;
+    private BusinessCalendar requireCalendarAt(
+            PaymentBusinessCalendarProvider calendarProvider,
+            LocalDate date
+    ) {
+        return Objects.requireNonNull(
+                calendarProvider.calendarAt(date),
+                "calendarProvider.calendarAt(date)"
+        );
     }
 
     private boolean isAfterRecurringEndDate(
