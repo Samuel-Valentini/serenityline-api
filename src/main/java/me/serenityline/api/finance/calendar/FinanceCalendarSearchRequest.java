@@ -7,7 +7,7 @@ import java.util.UUID;
 public record FinanceCalendarSearchRequest(
         LocalDate from,
         LocalDate to,
-        UUID accountId,
+        List<UUID> accountIds,
         List<UUID> simulationGroupIds
 ) {
 }

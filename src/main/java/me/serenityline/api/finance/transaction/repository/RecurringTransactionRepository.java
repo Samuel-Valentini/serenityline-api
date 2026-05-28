@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -354,5 +355,135 @@ public interface RecurringTransactionRepository extends JpaRepository<RecurringT
             @Param("userGroupId") UUID userGroupId,
             @Param("accountId") UUID accountId,
             @Param("simulationGroupIds") List<UUID> simulationGroupIds
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            WHERE rt.user_group_id = :userGroupId
+              AND rt.recurring_transaction_is_simulated = FALSE
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_to IS NULL
+              )
+              AND EXISTS (
+                     SELECT 1
+                     FROM recurring_transaction_details_history rdth
+                     WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                       AND rdth.user_group_id = rt.user_group_id
+                       AND rdth.linked_account_id IN (:accountIds)
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findCalendarReadableBaseByUserGroupForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("accountIds") Collection<UUID> accountIds
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            WHERE rt.user_group_id = :userGroupId
+              AND (
+                    rt.recurring_transaction_is_simulated = FALSE
+                    OR rt.simulation_group_id IN (:simulationGroupIds)
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_to IS NULL
+              )
+              AND EXISTS (
+                     SELECT 1
+                     FROM recurring_transaction_details_history rdth
+                     WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                       AND rdth.user_group_id = rt.user_group_id
+                       AND rdth.linked_account_id IN (:accountIds)
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findCalendarReadableBaseAndSimulatedByUserGroupForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("accountIds") Collection<UUID> accountIds,
+            @Param("simulationGroupIds") Collection<UUID> simulationGroupIds
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            WHERE rt.user_group_id = :userGroupId
+                AND rt.recurring_transaction_is_simulated = FALSE
+                AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                        AND rth.effective_to IS NULL
+                )
+                AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_details_history rdth
+                    JOIN accounts_users au
+                        ON au.account_id = rdth.linked_account_id
+                        AND au.user_group_id = rdth.user_group_id
+                    WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                        AND rdth.user_group_id = rt.user_group_id
+                        AND au.user_id = :userId
+                        AND rdth.linked_account_id IN (:accountIds)
+                )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findCalendarReadableBaseByLinkedUserAccessForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("accountIds") Collection<UUID> accountIds
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            WHERE rt.user_group_id = :userGroupId
+                AND (
+                    rt.recurring_transaction_is_simulated = FALSE
+                    OR rt.simulation_group_id IN (:simulationGroupIds)
+                )
+                AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                        AND rth.effective_to IS NULL
+                )
+                AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_details_history rdth
+                    JOIN accounts_users au
+                        ON au.account_id = rdth.linked_account_id
+                        AND au.user_group_id = rdth.user_group_id
+                    WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                        AND rdth.user_group_id = rt.user_group_id
+                        AND au.user_id = :userId
+                        AND rdth.linked_account_id IN (:accountIds)
+                )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findCalendarReadableBaseAndSimulatedByLinkedUserAccessForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("accountIds") Collection<UUID> accountIds,
+            @Param("simulationGroupIds") Collection<UUID> simulationGroupIds
     );
 }

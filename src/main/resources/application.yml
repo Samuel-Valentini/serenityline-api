@@ -34,6 +34,7 @@ serenityline:
     calendar:
       max-range-days: 1830
       max-recurring-transactions: 500
+      max-account-ids: 50
 
 springdoc:
   api-docs:

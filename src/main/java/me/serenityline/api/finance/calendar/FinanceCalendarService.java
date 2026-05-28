@@ -75,6 +75,10 @@ public class FinanceCalendarService {
                 request.simulationGroupIds()
         );
 
+        List<UUID> accountIds = normalizeAccountIds(
+                request.accountIds()
+        );
+
         User currentUser = userRepository.findById(currentUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
 
@@ -86,10 +90,10 @@ public class FinanceCalendarService {
         boolean canReadAllGroupRecurringTransactions =
                 recurringTransactionAccessService.canReadAllGroupRecurringTransactions(currentUser);
 
-        recurringTransactionAccessService.assertReadableAccountFilter(
+        assertReadableAccountFilters(
                 currentUser,
                 userGroupId,
-                request.accountId()
+                accountIds
         );
 
         assertReadableSimulationGroups(
@@ -104,7 +108,7 @@ public class FinanceCalendarService {
                 userGroupId,
                 request.from(),
                 request.to(),
-                request.accountId(),
+                accountIds,
                 simulationGroupIds,
                 canReadAllGroupTransactions
         );
@@ -112,7 +116,7 @@ public class FinanceCalendarService {
         List<RecurringTransaction> recurringTransactions = findReadableRecurringTransactions(
                 currentUser,
                 userGroupId,
-                request.accountId(),
+                accountIds,
                 simulationGroupIds,
                 canReadAllGroupRecurringTransactions
         );
@@ -163,15 +167,17 @@ public class FinanceCalendarService {
                 : readableProjectedAccountIds(
                 currentUser,
                 userGroupId,
-                request.accountId(),
+                accountIds,
                 canReadAllGroupRecurringTransactions
         );
+
+        Set<UUID> requestedAccountIdSet = Set.copyOf(accountIds);
 
         List<RecurringTransactionProjectedMovement> visibleProjectedMovements =
                 projectedMovements.stream()
                         .filter(projectedMovement -> canReadProjectedMovementAccount(
                                 projectedMovement,
-                                request.accountId(),
+                                requestedAccountIdSet,
                                 canReadAllGroupRecurringTransactions,
                                 readableRecurringAccountIds
                         ))
@@ -211,6 +217,66 @@ public class FinanceCalendarService {
     }
 
     private List<Transaction> findPersistedTransactions(
+            User currentUser,
+            UUID userGroupId,
+            LocalDate from,
+            LocalDate to,
+            List<UUID> accountIds,
+            List<UUID> simulationGroupIds,
+            boolean canReadAllGroupTransactions
+    ) {
+        if (accountIds.isEmpty()) {
+            return findPersistedTransactionsForAccount(
+                    currentUser,
+                    userGroupId,
+                    from,
+                    to,
+                    null,
+                    simulationGroupIds,
+                    canReadAllGroupTransactions
+            );
+        }
+
+        if (canReadAllGroupTransactions) {
+            if (simulationGroupIds.isEmpty()) {
+                return transactionRepository.findBaseGroupTransactionsInRangeForAccounts(
+                        userGroupId,
+                        from,
+                        to,
+                        accountIds
+                );
+            }
+
+            return transactionRepository.findBaseAndSimulatedGroupTransactionsInRangeForAccounts(
+                    userGroupId,
+                    from,
+                    to,
+                    accountIds,
+                    simulationGroupIds
+            );
+        }
+
+        if (simulationGroupIds.isEmpty()) {
+            return transactionRepository.findBaseLinkedUserTransactionsInRangeForAccounts(
+                    userGroupId,
+                    currentUser.getUserId(),
+                    from,
+                    to,
+                    accountIds
+            );
+        }
+
+        return transactionRepository.findBaseAndSimulatedLinkedUserTransactionsInRangeForAccounts(
+                userGroupId,
+                currentUser.getUserId(),
+                from,
+                to,
+                accountIds,
+                simulationGroupIds
+        );
+    }
+
+    private List<Transaction> findPersistedTransactionsForAccount(
             User currentUser,
             UUID userGroupId,
             LocalDate from,
@@ -261,6 +327,54 @@ public class FinanceCalendarService {
     private List<RecurringTransaction> findReadableRecurringTransactions(
             User currentUser,
             UUID userGroupId,
+            List<UUID> accountIds,
+            List<UUID> simulationGroupIds,
+            boolean canReadAllGroupRecurringTransactions
+    ) {
+        if (accountIds.isEmpty()) {
+            return findReadableRecurringTransactionsForAccount(
+                    currentUser,
+                    userGroupId,
+                    null,
+                    simulationGroupIds,
+                    canReadAllGroupRecurringTransactions
+            );
+        }
+
+        if (canReadAllGroupRecurringTransactions) {
+            if (simulationGroupIds.isEmpty()) {
+                return recurringTransactionRepository.findCalendarReadableBaseByUserGroupForAccounts(
+                        userGroupId,
+                        accountIds
+                );
+            }
+
+            return recurringTransactionRepository.findCalendarReadableBaseAndSimulatedByUserGroupForAccounts(
+                    userGroupId,
+                    accountIds,
+                    simulationGroupIds
+            );
+        }
+
+        if (simulationGroupIds.isEmpty()) {
+            return recurringTransactionRepository.findCalendarReadableBaseByLinkedUserAccessForAccounts(
+                    userGroupId,
+                    currentUser.getUserId(),
+                    accountIds
+            );
+        }
+
+        return recurringTransactionRepository.findCalendarReadableBaseAndSimulatedByLinkedUserAccessForAccounts(
+                userGroupId,
+                currentUser.getUserId(),
+                accountIds,
+                simulationGroupIds
+        );
+    }
+
+    private List<RecurringTransaction> findReadableRecurringTransactionsForAccount(
+            User currentUser,
+            UUID userGroupId,
             UUID accountId,
             List<UUID> simulationGroupIds,
             boolean canReadAllGroupRecurringTransactions
@@ -301,7 +415,7 @@ public class FinanceCalendarService {
             User currentUser,
             UUID userGroupId,
             List<UUID> simulationGroupIds,
-            boolean canReadAllGroupTransactions
+            boolean canReadAllGroupSimulationGroups
     ) {
         if (simulationGroupIds.isEmpty()) {
             return;
@@ -309,7 +423,7 @@ public class FinanceCalendarService {
 
         List<UUID> foundIds;
 
-        if (canReadAllGroupTransactions) {
+        if (canReadAllGroupSimulationGroups) {
             foundIds = simulationGroupRepository.findActiveIdsByUserGroupId(
                     simulationGroupIds,
                     userGroupId
@@ -330,15 +444,15 @@ public class FinanceCalendarService {
     private Set<UUID> readableProjectedAccountIds(
             User currentUser,
             UUID userGroupId,
-            UUID requestedAccountId,
+            List<UUID> requestedAccountIds,
             boolean canReadAllGroupRecurringTransactions
     ) {
         if (canReadAllGroupRecurringTransactions) {
             return Set.of();
         }
 
-        if (requestedAccountId != null) {
-            return Set.of(requestedAccountId);
+        if (!requestedAccountIds.isEmpty()) {
+            return Set.copyOf(requestedAccountIds);
         }
 
         return Set.copyOf(accountUserRepository.findVisibleAccountIdsForUser(
@@ -512,7 +626,7 @@ public class FinanceCalendarService {
 
     private boolean canReadProjectedMovementAccount(
             RecurringTransactionProjectedMovement projectedMovement,
-            UUID accountId,
+            Set<UUID> requestedAccountIds,
             boolean canReadAllGroupRecurringTransactions,
             Set<UUID> readableAccountIds
     ) {
@@ -524,11 +638,58 @@ public class FinanceCalendarService {
 
         UUID projectedAccountId = linkedAccount.getAccountId();
 
-        if (accountId != null && !accountId.equals(projectedAccountId)) {
+        if (!requestedAccountIds.isEmpty() && !requestedAccountIds.contains(projectedAccountId)) {
             return false;
         }
 
         return canReadAllGroupRecurringTransactions || readableAccountIds.contains(projectedAccountId);
+    }
+
+    private List<UUID> normalizeAccountIds(
+            List<UUID> accountIds
+    ) {
+        if (accountIds == null || accountIds.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashSet<UUID> normalized = new LinkedHashSet<>();
+
+        for (UUID accountId : accountIds) {
+            if (accountId == null) {
+                throw new IllegalArgumentException("finance.account.idRequired");
+            }
+
+            normalized.add(accountId);
+        }
+
+        if (normalized.size() > financeCalendarProperties.getMaxAccountIds()) {
+            throw new IllegalArgumentException("finance.calendar.accountIdsTooMany");
+        }
+
+        return List.copyOf(normalized);
+    }
+
+    private void assertReadableAccountFilters(
+            User currentUser,
+            UUID userGroupId,
+            List<UUID> accountIds
+    ) {
+        if (accountIds.isEmpty()) {
+            recurringTransactionAccessService.assertReadableAccountFilter(
+                    currentUser,
+                    userGroupId,
+                    null
+            );
+            return;
+        }
+
+        for (UUID accountId : accountIds) {
+            recurringTransactionAccessService.assertReadableAccountFilter(
+                    currentUser,
+                    userGroupId,
+                    accountId
+            );
+        }
     }
 
     private record RecurringTransactionProjectionContext(

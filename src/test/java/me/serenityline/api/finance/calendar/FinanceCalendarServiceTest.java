@@ -81,7 +81,21 @@ class FinanceCalendarServiceTest {
         return new FinanceCalendarSearchRequest(
                 from,
                 to,
-                accountId,
+                accountId == null ? null : List.of(accountId),
+                simulationGroupIds
+        );
+    }
+
+    private static FinanceCalendarSearchRequest requestForAccounts(
+            LocalDate from,
+            LocalDate to,
+            List<UUID> accountIds,
+            List<UUID> simulationGroupIds
+    ) {
+        return new FinanceCalendarSearchRequest(
+                from,
+                to,
+                accountIds,
                 simulationGroupIds
         );
     }
@@ -277,6 +291,10 @@ class FinanceCalendarServiceTest {
     void setUp() {
         lenient().when(financeCalendarProperties.getMaxRangeDays())
                 .thenReturn(1830L);
+
+        lenient().when(financeCalendarProperties.getMaxAccountIds())
+                .thenReturn(50);
+
         lenient().when(financeProperties.getMaxSimulationGroupIds())
                 .thenReturn(50);
 
@@ -898,18 +916,19 @@ class FinanceCalendarServiceTest {
                 eq(userGroupId),
                 eq(currentUserId)
         )).thenReturn(List.of(simulationGroupId));
-        when(transactionRepository.findBaseAndSimulatedLinkedUserTransactionsInRange(
+        when(transactionRepository.findBaseAndSimulatedLinkedUserTransactionsInRangeForAccounts(
                 userGroupId,
                 currentUserId,
                 from,
                 to,
-                accountId,
+                List.of(accountId),
                 List.of(simulationGroupId)
         )).thenReturn(List.of());
-        when(recurringTransactionRepository.findCalendarReadableBaseAndSimulatedByLinkedUserAccess(
+
+        when(recurringTransactionRepository.findCalendarReadableBaseAndSimulatedByLinkedUserAccessForAccounts(
                 userGroupId,
                 currentUserId,
-                accountId,
+                List.of(accountId),
                 List.of(simulationGroupId)
         )).thenReturn(List.of());
         when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
@@ -949,17 +968,18 @@ class FinanceCalendarServiceTest {
                 .thenReturn(false);
         when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(collaborator))
                 .thenReturn(false);
-        when(transactionRepository.findBaseLinkedUserTransactionsInRange(
+        when(transactionRepository.findBaseLinkedUserTransactionsInRangeForAccounts(
                 userGroupId,
                 currentUserId,
                 from,
                 to,
-                accountId
+                List.of(accountId)
         )).thenReturn(List.of());
-        when(recurringTransactionRepository.findCalendarReadableBaseByLinkedUserAccess(
+
+        when(recurringTransactionRepository.findCalendarReadableBaseByLinkedUserAccessForAccounts(
                 userGroupId,
                 currentUserId,
-                accountId
+                List.of(accountId)
         )).thenReturn(List.of());
         when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
                 .thenReturn(List.of());
@@ -1035,10 +1055,17 @@ class FinanceCalendarServiceTest {
                 .thenReturn(true);
         when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(owner))
                 .thenReturn(true);
-        when(transactionRepository.findBaseGroupTransactionsInRange(userGroupId, from, to, requestedAccountId))
-                .thenReturn(List.of());
-        when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(userGroupId, requestedAccountId))
-                .thenReturn(List.of(firstRecurringTransaction, secondRecurringTransaction));
+        when(transactionRepository.findBaseGroupTransactionsInRangeForAccounts(
+                userGroupId,
+                from,
+                to,
+                List.of(requestedAccountId)
+        )).thenReturn(List.of());
+
+        when(recurringTransactionRepository.findCalendarReadableBaseByUserGroupForAccounts(
+                userGroupId,
+                List.of(requestedAccountId)
+        )).thenReturn(List.of(firstRecurringTransaction, secondRecurringTransaction));
         when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(anyList(), eq(from), eq(to)))
                 .thenReturn(List.of(firstProjectedMovement, secondProjectedMovement));
         stubNoConfirmedKeys(
@@ -1727,15 +1754,16 @@ class FinanceCalendarServiceTest {
                 .thenReturn(true);
         when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(owner))
                 .thenReturn(true);
-        when(transactionRepository.findBaseGroupTransactionsInRange(
+        when(transactionRepository.findBaseGroupTransactionsInRangeForAccounts(
                 userGroupId,
                 from,
                 to,
-                requestedAccountId
+                List.of(requestedAccountId)
         )).thenReturn(List.of());
-        when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(
+
+        when(recurringTransactionRepository.findCalendarReadableBaseByUserGroupForAccounts(
                 userGroupId,
-                requestedAccountId
+                List.of(requestedAccountId)
         )).thenReturn(List.of(recurringTransaction));
         when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
                 anyList(),
@@ -1759,14 +1787,14 @@ class FinanceCalendarServiceTest {
         assertThat(result)
                 .containsExactly(calendarMovement);
 
-        verify(recurringTransactionRepository).findCalendarReadableBaseByUserGroup(
+        verify(recurringTransactionRepository).findCalendarReadableBaseByUserGroupForAccounts(
                 userGroupId,
-                requestedAccountId
+                List.of(requestedAccountId)
         );
 
         verify(recurringTransactionRepository, never()).findCalendarReadableBaseByUserGroup(
-                userGroupId,
-                null
+                any(),
+                any()
         );
     }
 
@@ -1813,18 +1841,18 @@ class FinanceCalendarServiceTest {
         when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(collaborator))
                 .thenReturn(false);
 
-        when(transactionRepository.findBaseLinkedUserTransactionsInRange(
+        when(transactionRepository.findBaseLinkedUserTransactionsInRangeForAccounts(
                 userGroupId,
                 currentUserId,
                 from,
                 to,
-                accountId
+                List.of(accountId)
         )).thenReturn(List.of());
 
-        when(recurringTransactionRepository.findCalendarReadableBaseByLinkedUserAccess(
+        when(recurringTransactionRepository.findCalendarReadableBaseByLinkedUserAccessForAccounts(
                 userGroupId,
                 currentUserId,
-                accountId
+                List.of(accountId)
         )).thenReturn(List.of(recurringTransaction));
 
         when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
@@ -2010,7 +2038,7 @@ class FinanceCalendarServiceTest {
                 to,
                 null
         )).thenReturn(List.of());
-        
+
         RecurringTransaction duplicatedRecurringTransaction = recurringTransaction(
                 recurringTransactionId,
                 firstPaymentDate,
@@ -2175,6 +2203,187 @@ class FinanceCalendarServiceTest {
 
         verify(accountUserRepository, never())
                 .findVisibleAccountIdsForUser(any(), any());
+    }
+
+    @Test
+    void ownerShouldUseSingleRepositoryQueryForMultipleAccountIds() {
+        UUID currentUserId = UUID.randomUUID();
+        UUID userGroupId = UUID.randomUUID();
+        UUID firstAccountId = UUID.randomUUID();
+        UUID secondAccountId = UUID.randomUUID();
+
+        UUID firstRecurringTransactionId = UUID.randomUUID();
+        UUID secondRecurringTransactionId = UUID.randomUUID();
+
+        LocalDate from = LocalDate.of(2026, 6, 1);
+        LocalDate to = LocalDate.of(2026, 6, 30);
+
+        User owner = user(currentUserId, userGroupId);
+
+        RecurringTransaction firstRecurringTransaction = recurringTransaction(
+                firstRecurringTransactionId,
+                LocalDate.of(2026, 1, 1),
+                false,
+                null
+        );
+
+        RecurringTransaction secondRecurringTransaction = recurringTransaction(
+                secondRecurringTransactionId,
+                LocalDate.of(2026, 1, 1),
+                false,
+                null
+        );
+
+        when(userRepository.findById(currentUserId))
+                .thenReturn(Optional.of(owner));
+        when(transactionAccessService.canReadAllGroupTransactions(owner))
+                .thenReturn(true);
+        when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(owner))
+                .thenReturn(true);
+
+        when(transactionRepository.findBaseGroupTransactionsInRangeForAccounts(
+                userGroupId,
+                from,
+                to,
+                List.of(firstAccountId, secondAccountId)
+        )).thenReturn(List.of());
+
+        when(recurringTransactionRepository.findCalendarReadableBaseByUserGroupForAccounts(
+                userGroupId,
+                List.of(firstAccountId, secondAccountId)
+        )).thenReturn(List.of(firstRecurringTransaction, secondRecurringTransaction));
+
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+                anyList(),
+                eq(from),
+                eq(to)
+        )).thenReturn(List.of());
+
+        List<FinanceCalendarMovement> result = service.getCalendarMovements(
+                currentUserId,
+                requestForAccounts(
+                        from,
+                        to,
+                        List.of(firstAccountId, secondAccountId),
+                        null
+                )
+        );
+
+        assertThat(result).isEmpty();
+
+        verify(recurringTransactionAccessService)
+                .assertReadableAccountFilter(owner, userGroupId, firstAccountId);
+        verify(recurringTransactionAccessService)
+                .assertReadableAccountFilter(owner, userGroupId, secondAccountId);
+
+        verify(transactionRepository).findBaseGroupTransactionsInRangeForAccounts(
+                userGroupId,
+                from,
+                to,
+                List.of(firstAccountId, secondAccountId)
+        );
+
+        verify(recurringTransactionRepository).findCalendarReadableBaseByUserGroupForAccounts(
+                userGroupId,
+                List.of(firstAccountId, secondAccountId)
+        );
+
+        verify(transactionRepository, never()).findBaseGroupTransactionsInRange(
+                any(),
+                any(),
+                any(),
+                any()
+        );
+
+        verify(recurringTransactionRepository, never()).findCalendarReadableBaseByUserGroup(
+                any(),
+                any()
+        );
+    }
+
+    @Test
+    void collaboratorShouldUseSingleRepositoryQueryForMultipleAccountIds() {
+        UUID currentUserId = UUID.randomUUID();
+        UUID userGroupId = UUID.randomUUID();
+        UUID firstAccountId = UUID.randomUUID();
+        UUID secondAccountId = UUID.randomUUID();
+
+        LocalDate from = LocalDate.of(2026, 6, 1);
+        LocalDate to = LocalDate.of(2026, 6, 30);
+
+        User collaborator = user(currentUserId, userGroupId);
+
+        when(userRepository.findById(currentUserId))
+                .thenReturn(Optional.of(collaborator));
+        when(transactionAccessService.canReadAllGroupTransactions(collaborator))
+                .thenReturn(false);
+        when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(collaborator))
+                .thenReturn(false);
+
+        when(transactionRepository.findBaseLinkedUserTransactionsInRangeForAccounts(
+                userGroupId,
+                currentUserId,
+                from,
+                to,
+                List.of(firstAccountId, secondAccountId)
+        )).thenReturn(List.of());
+
+        when(recurringTransactionRepository.findCalendarReadableBaseByLinkedUserAccessForAccounts(
+                userGroupId,
+                currentUserId,
+                List.of(firstAccountId, secondAccountId)
+        )).thenReturn(List.of());
+
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+                List.of(),
+                from,
+                to
+        )).thenReturn(List.of());
+
+        List<FinanceCalendarMovement> result = service.getCalendarMovements(
+                currentUserId,
+                requestForAccounts(
+                        from,
+                        to,
+                        List.of(firstAccountId, secondAccountId),
+                        null
+                )
+        );
+
+        assertThat(result).isEmpty();
+
+        verify(recurringTransactionAccessService)
+                .assertReadableAccountFilter(collaborator, userGroupId, firstAccountId);
+        verify(recurringTransactionAccessService)
+                .assertReadableAccountFilter(collaborator, userGroupId, secondAccountId);
+
+        verify(transactionRepository).findBaseLinkedUserTransactionsInRangeForAccounts(
+                userGroupId,
+                currentUserId,
+                from,
+                to,
+                List.of(firstAccountId, secondAccountId)
+        );
+
+        verify(recurringTransactionRepository).findCalendarReadableBaseByLinkedUserAccessForAccounts(
+                userGroupId,
+                currentUserId,
+                List.of(firstAccountId, secondAccountId)
+        );
+
+        verify(transactionRepository, never()).findBaseLinkedUserTransactionsInRange(
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        );
+
+        verify(recurringTransactionRepository, never()).findCalendarReadableBaseByLinkedUserAccess(
+                any(),
+                any(),
+                any()
+        );
     }
 
 

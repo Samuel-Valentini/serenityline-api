@@ -7,6 +7,7 @@ public class FinanceCalendarProperties {
 
     private long maxRangeDays = 1830L;
     private int maxRecurringTransactions = 500;
+    private int maxAccountIds = 50;
 
     public long getMaxRangeDays() {
         return maxRangeDays;
@@ -30,5 +31,13 @@ public class FinanceCalendarProperties {
         }
 
         this.maxRecurringTransactions = maxRecurringTransactions;
+    }
+
+    public int getMaxAccountIds() {
+        return maxAccountIds;
+    }
+
+    public void setMaxAccountIds(int maxAccountIds) {
+        this.maxAccountIds = maxAccountIds;
     }
 }
