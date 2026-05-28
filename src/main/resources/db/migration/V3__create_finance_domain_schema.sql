@@ -566,6 +566,12 @@ CREATE INDEX idx_recurring_transaction_history_lookup
                                       recurring_transaction_history_created_at DESC
         );
 
+CREATE INDEX idx_recurring_transaction_history_open
+    ON recurring_transaction_history (
+                                      recurring_transaction_id
+        )
+    WHERE effective_to IS NULL;
+
 CREATE TABLE recurring_transaction_details_history
 (
     recurring_transaction_details_history_id         UUID PRIMARY KEY      DEFAULT gen_random_uuid(),
@@ -641,6 +647,19 @@ CREATE INDEX idx_recurring_transaction_details_history_bucket_id
 CREATE INDEX idx_recurring_transaction_details_history_user_group_id
     ON recurring_transaction_details_history (user_group_id);
 
+CREATE INDEX idx_recurring_transaction_details_history_group_account
+    ON recurring_transaction_details_history (
+                                              user_group_id,
+                                              linked_account_id,
+                                              recurring_transaction_id
+        );
+
+CREATE INDEX idx_recurring_transaction_details_history_group_recurring
+    ON recurring_transaction_details_history (
+                                              user_group_id,
+                                              recurring_transaction_id
+        );
+
 CREATE TABLE recurring_transactions_users
 (
     recurring_transaction_user_id        UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
@@ -689,6 +708,8 @@ CREATE TABLE transactions
     simulation_group_id                 UUID,
     transaction_is_user_entered         BOOLEAN        NOT NULL DEFAULT TRUE,
     recurring_transaction_id            UUID,
+    recurring_transaction_logical_date  DATE,
+    recurring_transaction_confirmed_at  TIMESTAMPTZ,
     transaction_reminder_enabled        BOOLEAN        NOT NULL DEFAULT TRUE,
     transaction_reminder_days_before    SMALLINT       NOT NULL DEFAULT 7,
     transaction_created_at              TIMESTAMPTZ    NOT NULL DEFAULT now(),
@@ -758,11 +779,15 @@ CREATE TABLE transactions
             (
                 transaction_is_user_entered = TRUE
                     AND recurring_transaction_id IS NULL
+                    AND recurring_transaction_logical_date IS NULL
+                    AND recurring_transaction_confirmed_at IS NULL
                 )
                 OR
             (
                 transaction_is_user_entered = FALSE
                     AND recurring_transaction_id IS NOT NULL
+                    AND recurring_transaction_logical_date IS NOT NULL
+                    AND recurring_transaction_confirmed_at IS NOT NULL
                     AND transaction_is_confirmed = TRUE
                 )
             ),
@@ -799,10 +824,15 @@ CREATE INDEX idx_transactions_recurring_transaction_id
     ON transactions (recurring_transaction_id)
     WHERE recurring_transaction_id IS NOT NULL;
 
-CREATE UNIQUE INDEX uq_transactions_recurring_occurrence
-    ON transactions (recurring_transaction_id, transaction_charge_date)
+CREATE UNIQUE INDEX uq_transactions_recurring_logical_occurrence
+    ON transactions (
+                     user_group_id,
+                     recurring_transaction_id,
+                     recurring_transaction_logical_date
+        )
     WHERE recurring_transaction_id IS NOT NULL
-        AND transaction_is_user_entered = FALSE;
+        AND transaction_is_user_entered = FALSE
+        AND transaction_is_confirmed = TRUE;
 
 CREATE TABLE transactions_users
 (

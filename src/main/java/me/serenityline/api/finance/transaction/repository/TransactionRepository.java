@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -79,4 +80,131 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("accountId") UUID accountId,
             @Param("simulationGroupId") UUID simulationGroupId
     );
+
+    @Query(value = """
+            SELECT t.*
+            FROM transactions t
+            WHERE t.user_group_id = :userGroupId
+                AND t.transaction_charge_date >= :from
+                AND t.transaction_charge_date <= :to
+                AND (:accountId IS NULL OR t.account_id = :accountId)
+                AND t.transaction_is_simulated = FALSE
+            ORDER BY
+                t.transaction_charge_date ASC,
+                t.transaction_created_at ASC,
+                t.transaction_id ASC
+            """, nativeQuery = true)
+    List<Transaction> findBaseGroupTransactionsInRange(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to,
+            @Param("accountId") UUID accountId
+    );
+
+    @Query(value = """
+            SELECT t.*
+            FROM transactions t
+            WHERE t.user_group_id = :userGroupId
+                AND t.transaction_charge_date >= :from
+                AND t.transaction_charge_date <= :to
+                AND (:accountId IS NULL OR t.account_id = :accountId)
+                AND (
+                    t.transaction_is_simulated = FALSE
+                    OR t.simulation_group_id IN (:simulationGroupIds)
+                )
+            ORDER BY
+                t.transaction_charge_date ASC,
+                t.transaction_created_at ASC,
+                t.transaction_id ASC
+            """, nativeQuery = true)
+    List<Transaction> findBaseAndSimulatedGroupTransactionsInRange(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to,
+            @Param("accountId") UUID accountId,
+            @Param("simulationGroupIds") List<UUID> simulationGroupIds
+    );
+
+    @Query(value = """
+            SELECT t.*
+            FROM transactions t
+            JOIN accounts_users au
+                ON au.account_id = t.account_id
+                AND au.user_group_id = t.user_group_id
+            WHERE t.user_group_id = :userGroupId
+                AND au.user_id = :userId
+                AND t.transaction_charge_date >= :from
+                AND t.transaction_charge_date <= :to
+                AND (:accountId IS NULL OR t.account_id = :accountId)
+                AND t.transaction_is_simulated = FALSE
+            ORDER BY
+                t.transaction_charge_date ASC,
+                t.transaction_created_at ASC,
+                t.transaction_id ASC
+            """, nativeQuery = true)
+    List<Transaction> findBaseLinkedUserTransactionsInRange(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to,
+            @Param("accountId") UUID accountId
+    );
+
+    @Query(value = """
+            SELECT t.*
+            FROM transactions t
+            JOIN accounts_users au
+                ON au.account_id = t.account_id
+                AND au.user_group_id = t.user_group_id
+            WHERE t.user_group_id = :userGroupId
+                AND au.user_id = :userId
+                AND t.transaction_charge_date >= :from
+                AND t.transaction_charge_date <= :to
+                AND (:accountId IS NULL OR t.account_id = :accountId)
+                AND (
+                    t.transaction_is_simulated = FALSE
+                    OR t.simulation_group_id IN (:simulationGroupIds)
+                )
+            ORDER BY
+                t.transaction_charge_date ASC,
+                t.transaction_created_at ASC,
+                t.transaction_id ASC
+            """, nativeQuery = true)
+    List<Transaction> findBaseAndSimulatedLinkedUserTransactionsInRange(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to,
+            @Param("accountId") UUID accountId,
+            @Param("simulationGroupIds") List<UUID> simulationGroupIds
+    );
+
+    @Query(value = """
+            SELECT
+                t.recurring_transaction_id AS "recurringTransactionId",
+                t.recurring_transaction_logical_date AS "recurringTransactionLogicalDate"
+            FROM transactions t
+            WHERE t.user_group_id = :userGroupId
+                AND t.recurring_transaction_id IN (:recurringTransactionIds)
+                AND t.transaction_is_user_entered = FALSE
+                AND t.transaction_is_confirmed = TRUE
+                AND t.recurring_transaction_id IS NOT NULL
+                AND t.recurring_transaction_logical_date >= :from
+                AND t.recurring_transaction_logical_date <= :to
+            """, nativeQuery = true)
+    List<ConfirmedRecurringOccurrenceKeyView> findConfirmedRecurringOccurrenceKeysForRecurringTransactions(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("recurringTransactionIds") Collection<UUID> recurringTransactionIds,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to
+    );
+
+    interface ConfirmedRecurringOccurrenceKeyView {
+
+        UUID getRecurringTransactionId();
+
+        LocalDate getRecurringTransactionLogicalDate();
+    }
+
 }
+

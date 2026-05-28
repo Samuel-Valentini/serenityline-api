@@ -78,6 +78,12 @@ public class Transaction {
     @JoinColumn(name = "recurring_transaction_id")
     private RecurringTransaction recurringTransaction;
 
+    @Column(name = "recurring_transaction_logical_date")
+    private LocalDate recurringTransactionLogicalDate;
+
+    @Column(name = "recurring_transaction_confirmed_at")
+    private OffsetDateTime recurringTransactionConfirmedAt;
+
     @Column(name = "transaction_reminder_enabled", nullable = false)
     private boolean transactionReminderEnabled;
 
@@ -112,6 +118,8 @@ public class Transaction {
             SimulationGroup simulationGroup,
             boolean transactionIsUserEntered,
             RecurringTransaction recurringTransaction,
+            LocalDate recurringTransactionLogicalDate,
+            OffsetDateTime recurringTransactionConfirmedAt,
             Boolean transactionReminderEnabled,
             Short transactionReminderDaysBefore,
             UserGroup userGroup
@@ -136,6 +144,8 @@ public class Transaction {
         this.simulationGroup = simulationGroup;
         this.transactionIsUserEntered = transactionIsUserEntered;
         this.recurringTransaction = recurringTransaction;
+        this.recurringTransactionLogicalDate = recurringTransactionLogicalDate;
+        this.recurringTransactionConfirmedAt = recurringTransactionConfirmedAt;
         this.transactionReminderEnabled = transactionReminderEnabled == null
                 ? DEFAULT_REMINDER_ENABLED
                 : transactionReminderEnabled;
@@ -179,6 +189,8 @@ public class Transaction {
                 simulationGroup,
                 true,
                 null,
+                null,
+                null,
                 transactionReminderEnabled,
                 transactionReminderDaysBefore,
                 userGroup
@@ -198,6 +210,8 @@ public class Transaction {
             boolean transactionIsSimulated,
             SimulationGroup simulationGroup,
             RecurringTransaction recurringTransaction,
+            LocalDate recurringTransactionLogicalDate,
+            OffsetDateTime recurringTransactionConfirmedAt,
             Boolean transactionReminderEnabled,
             Short transactionReminderDaysBefore,
             UserGroup userGroup
@@ -217,6 +231,8 @@ public class Transaction {
                 simulationGroup,
                 false,
                 Objects.requireNonNull(recurringTransaction, "recurringTransaction"),
+                Objects.requireNonNull(recurringTransactionLogicalDate, "recurringTransactionLogicalDate"),
+                Objects.requireNonNull(recurringTransactionConfirmedAt, "recurringTransactionConfirmedAt"),
                 transactionReminderEnabled,
                 transactionReminderDaysBefore,
                 userGroup
@@ -351,15 +367,35 @@ public class Transaction {
     }
 
     private void validateRecurringConsistency() {
-        if (transactionIsUserEntered && recurringTransaction != null) {
-            throw new IllegalArgumentException("finance.transaction.recurringTransactionNotAllowed");
+        if (transactionIsUserEntered) {
+            if (recurringTransaction != null) {
+                throw new IllegalArgumentException("finance.transaction.recurringTransactionNotAllowed");
+            }
+
+            if (recurringTransactionLogicalDate != null) {
+                throw new IllegalArgumentException("finance.transaction.recurringLogicalDateNotAllowed");
+            }
+
+            if (recurringTransactionConfirmedAt != null) {
+                throw new IllegalArgumentException("finance.transaction.recurringConfirmedAtNotAllowed");
+            }
+
+            return;
         }
 
-        if (!transactionIsUserEntered && recurringTransaction == null) {
+        if (recurringTransaction == null) {
             throw new IllegalArgumentException("finance.transaction.recurringTransactionRequired");
         }
 
-        if (!transactionIsUserEntered && !transactionIsConfirmed) {
+        if (recurringTransactionLogicalDate == null) {
+            throw new IllegalArgumentException("finance.transaction.recurringLogicalDateRequired");
+        }
+
+        if (recurringTransactionConfirmedAt == null) {
+            throw new IllegalArgumentException("finance.transaction.recurringConfirmedAtRequired");
+        }
+
+        if (!transactionIsConfirmed) {
             throw new IllegalArgumentException("finance.transaction.recurringTransactionMustBeConfirmed");
         }
     }
@@ -473,6 +509,14 @@ public class Transaction {
 
     public RecurringTransaction getRecurringTransaction() {
         return recurringTransaction;
+    }
+
+    public LocalDate getRecurringTransactionLogicalDate() {
+        return recurringTransactionLogicalDate;
+    }
+
+    public OffsetDateTime getRecurringTransactionConfirmedAt() {
+        return recurringTransactionConfirmedAt;
     }
 
     public boolean isTransactionReminderEnabled() {

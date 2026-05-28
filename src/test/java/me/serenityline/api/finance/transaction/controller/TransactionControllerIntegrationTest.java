@@ -8,6 +8,7 @@ import me.serenityline.api.user.entity.User;
 import me.serenityline.api.user.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,11 +17,13 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -124,6 +127,8 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(row.get("transaction_created_at")).isNotNull();
         assertThat(row.get("transaction_updated_at")).isNotNull();
         assertThat(row.get("user_group_id")).isEqualTo(owner.userGroupId());
+        assertThat(row.get("recurring_transaction_logical_date")).isNull();
+        assertThat(row.get("recurring_transaction_confirmed_at")).isNull();
 
         assertThat(countTransactionUsers(
                 transactionId,
@@ -1048,6 +1053,8 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.simulationGroupId").doesNotExist())
                 .andExpect(jsonPath("$.transactionIsUserEntered").value(true))
                 .andExpect(jsonPath("$.recurringTransactionId").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionLogicalDate").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionConfirmedAt").doesNotExist())
                 .andExpect(jsonPath("$.transactionReminderEnabled").value(true))
                 .andExpect(jsonPath("$.transactionReminderDaysBefore").value(7))
                 .andExpect(jsonPath("$.transactionCreatedAt").exists())
@@ -1111,6 +1118,8 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
                 .andExpect(jsonPath("$.transactionIsUserEntered").value(true))
                 .andExpect(jsonPath("$.recurringTransactionId").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionLogicalDate").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionConfirmedAt").doesNotExist())
                 .andExpect(jsonPath("$.transactionReminderEnabled").value(false))
                 .andExpect(jsonPath("$.transactionReminderDaysBefore").value(3))
                 .andExpect(jsonPath("$.transactionCreatedAt").exists())
@@ -1482,6 +1491,8 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
                 .andExpect(jsonPath("$.transactionIsUserEntered").value(false))
                 .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionLogicalDate").value("2026-07-15"))
+                .andExpect(jsonPath("$.recurringTransactionConfirmedAt").exists())
                 .andExpect(jsonPath("$.transactionReminderEnabled").value(true))
                 .andExpect(jsonPath("$.transactionReminderDaysBefore").value(7));
     }
@@ -2163,6 +2174,8 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.simulationGroupId").doesNotExist())
                 .andExpect(jsonPath("$.transactionIsUserEntered").value(true))
                 .andExpect(jsonPath("$.recurringTransactionId").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionLogicalDate").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionConfirmedAt").doesNotExist())
                 .andExpect(jsonPath("$.transactionReminderEnabled").value(false))
                 .andExpect(jsonPath("$.transactionReminderDaysBefore").value(2))
                 .andExpect(jsonPath("$.transactionCreatedAt").exists())
@@ -2203,6 +2216,8 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 LocalDate.of(2026, 6, 15)
         );
 
+        Map<String, Object> before = findTransaction(transactionId);
+
         Map<String, Object> body = validTransactionUpdateRequest(
                 account,
                 categoryId,
@@ -2223,13 +2238,24 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionChargeDate").value("2026-06-16"))
                 .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
                 .andExpect(jsonPath("$.transactionIsUserEntered").value(false))
-                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()));
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionLogicalDate").value("2026-06-15"))
+                .andExpect(jsonPath("$.recurringTransactionConfirmedAt").exists());
 
-        Map<String, Object> row = findTransaction(transactionId);
+        Map<String, Object> after = findTransaction(transactionId);
 
-        assertThat(row.get("transaction_is_user_entered")).isEqualTo(false);
-        assertThat(row.get("recurring_transaction_id")).isEqualTo(recurringTransactionId);
-        assertThat(row.get("transaction_is_confirmed")).isEqualTo(true);
+        assertThat(after.get("transaction_is_user_entered")).isEqualTo(false);
+        assertThat(after.get("recurring_transaction_id")).isEqualTo(recurringTransactionId);
+        assertThat(after.get("transaction_is_confirmed")).isEqualTo(true);
+
+        assertThat(((java.sql.Date) after.get("transaction_charge_date")).toLocalDate())
+                .isEqualTo(LocalDate.of(2026, 6, 16));
+
+        assertThat(after.get("recurring_transaction_logical_date"))
+                .isEqualTo(before.get("recurring_transaction_logical_date"));
+
+        assertThat(after.get("recurring_transaction_confirmed_at"))
+                .isEqualTo(before.get("recurring_transaction_confirmed_at"));
     }
 
     @Test
@@ -3256,9 +3282,12 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(after.get("transaction_id")).isEqualTo(before.get("transaction_id"));
         assertThat(after.get("transaction_is_user_entered")).isEqualTo(before.get("transaction_is_user_entered"));
         assertThat(after.get("recurring_transaction_id")).isEqualTo(before.get("recurring_transaction_id"));
+        assertThat(after.get("recurring_transaction_logical_date")).isEqualTo(before.get("recurring_transaction_logical_date"));
+        assertThat(after.get("recurring_transaction_confirmed_at")).isEqualTo(before.get("recurring_transaction_confirmed_at"));
         assertThat(after.get("user_group_id")).isEqualTo(before.get("user_group_id"));
         assertThat(after.get("transaction_created_at")).isEqualTo(before.get("transaction_created_at"));
         assertThat(after.get("transaction_updated_at")).isNotEqualTo(before.get("transaction_updated_at"));
+
     }
 
     @Test
@@ -3766,6 +3795,243 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.code").value("finance.transaction.notFound"));
 
         assertThat(countTransactionById(transactionId)).isEqualTo(1L);
+    }
+
+    @Test
+    void userEnteredTransactionShouldAcceptNullRecurringLogicalDateAndConfirmedAt() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto user entered recurring metadata null"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria user entered recurring metadata null"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                validTransactionRequest(account, categoryId)
+        );
+
+        Map<String, Object> row = findTransaction(transactionId);
+
+        assertThat(row.get("transaction_is_user_entered")).isEqualTo(true);
+        assertThat(row.get("recurring_transaction_id")).isNull();
+        assertThat(row.get("recurring_transaction_logical_date")).isNull();
+        assertThat(row.get("recurring_transaction_confirmed_at")).isNull();
+    }
+
+    @Test
+    void userEnteredTransactionShouldRejectRecurringLogicalDate() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto user entered rejects logical date"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria user entered rejects logical date"
+        );
+
+        assertThatThrownBy(() -> insertRawUserEnteredTransactionWithRecurringMetadata(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                LocalDate.of(2026, 6, 10),
+                null
+        )).isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(countTransactionsForUserGroup(owner.userGroupId())).isZero();
+    }
+
+    @Test
+    void userEnteredTransactionShouldRejectRecurringConfirmedAt() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto user entered rejects confirmed at"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria user entered rejects confirmed at"
+        );
+
+        assertThatThrownBy(() -> insertRawUserEnteredTransactionWithRecurringMetadata(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                null,
+                OffsetDateTime.parse("2026-06-10T09:00:00Z")
+        )).isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(countTransactionsForUserGroup(owner.userGroupId())).isZero();
+    }
+
+    @Test
+    void confirmedRecurringOccurrenceShouldRequireRecurringLogicalDate() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto recurring requires logical date"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria recurring requires logical date"
+        );
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        assertThatThrownBy(() -> insertRawConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 10),
+                null,
+                OffsetDateTime.parse("2026-06-10T09:00:00Z")
+        )).isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(countTransactionsForUserGroup(owner.userGroupId())).isZero();
+    }
+
+    @Test
+    void confirmedRecurringOccurrenceShouldRequireRecurringConfirmedAt() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto recurring requires confirmed at"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria recurring requires confirmed at"
+        );
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        assertThatThrownBy(() -> insertRawConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 10),
+                LocalDate.of(2026, 6, 10),
+                null
+        )).isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(countTransactionsForUserGroup(owner.userGroupId())).isZero();
+    }
+
+    @Test
+    void confirmedRecurringOccurrenceShouldAllowChargeDateDifferentFromLogicalDate() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto recurring moved charge date"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria recurring moved charge date"
+        );
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        LocalDate logicalDate = LocalDate.of(2026, 6, 10);
+        LocalDate chargeDate = LocalDate.of(2026, 6, 12);
+        OffsetDateTime confirmedAt = OffsetDateTime.parse("2026-06-10T09:00:00Z");
+
+        UUID transactionId = insertRawConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                chargeDate,
+                logicalDate,
+                confirmedAt
+        );
+
+        Map<String, Object> row = findTransaction(transactionId);
+
+        assertThat(row.get("transaction_is_user_entered")).isEqualTo(false);
+        assertThat(row.get("transaction_is_confirmed")).isEqualTo(true);
+        assertThat(row.get("recurring_transaction_id")).isEqualTo(recurringTransactionId);
+        assertThat(((java.sql.Date) row.get("transaction_charge_date")).toLocalDate())
+                .isEqualTo(chargeDate);
+        assertThat(((java.sql.Date) row.get("recurring_transaction_logical_date")).toLocalDate())
+                .isEqualTo(logicalDate);
+        assertThat(row.get("recurring_transaction_confirmed_at")).isNotNull();
+    }
+
+    @Test
+    void confirmedRecurringOccurrenceShouldRejectDuplicateLogicalOccurrenceEvenWithDifferentChargeDate() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto duplicate logical occurrence"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria duplicate logical occurrence"
+        );
+
+        UUID recurringTransactionId = createRecurringTransaction(
+                owner.userGroupId(),
+                LocalDate.of(2026, 6, 1)
+        );
+
+        LocalDate logicalDate = LocalDate.of(2026, 6, 15);
+
+        insertRawConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 15),
+                logicalDate,
+                OffsetDateTime.parse("2026-06-15T09:00:00Z")
+        );
+
+        assertThatThrownBy(() -> insertRawConfirmedRecurringOccurrence(
+                owner.userGroupId(),
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 17),
+                logicalDate,
+                OffsetDateTime.parse("2026-06-17T09:00:00Z")
+        )).isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(countTransactionsForUserGroup(owner.userGroupId())).isEqualTo(1L);
     }
 
     private UserRef createUserWithNewGroup(String role) {
@@ -4281,47 +4547,6 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         return recurringTransactionId;
     }
 
-    private UUID createConfirmedRecurringOccurrence(
-            UUID userGroupId,
-            AccountRef account,
-            UUID categoryId,
-            UUID recurringTransactionId
-    ) {
-        UUID transactionId = UUID.randomUUID();
-
-        jdbcTemplate.update("""
-                        INSERT INTO transactions (
-                            transaction_id,
-                            transaction_description,
-                            transaction_amount,
-                            transaction_affects_account_balance,
-                            transaction_affects_liquidity,
-                            category_id,
-                            transaction_charge_date,
-                            transaction_is_confirmed,
-                            account_id,
-                            transaction_is_simulated,
-                            transaction_is_user_entered,
-                            recurring_transaction_id,
-                            transaction_reminder_enabled,
-                            transaction_reminder_days_before,
-                            user_group_id
-                        )
-                        VALUES (?, ?, ?, TRUE, TRUE, ?, ?, TRUE, ?, FALSE, FALSE, ?, TRUE, 7, ?)
-                        """,
-                transactionId,
-                "Occorrenza ricorrente confermata",
-                new BigDecimal("-99.90"),
-                categoryId,
-                LocalDate.of(2026, 7, 15),
-                account.accountId(),
-                recurringTransactionId,
-                userGroupId
-        );
-
-        return transactionId;
-    }
-
     private Map<String, Object> transactionRequest(
             AccountRef account,
             UUID categoryId,
@@ -4362,42 +4587,33 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
             UUID userGroupId,
             AccountRef account,
             UUID categoryId,
+            UUID recurringTransactionId
+    ) {
+        return createConfirmedRecurringOccurrence(
+                userGroupId,
+                account,
+                categoryId,
+                recurringTransactionId,
+                LocalDate.of(2026, 7, 15)
+        );
+    }
+
+    private UUID createConfirmedRecurringOccurrence(
+            UUID userGroupId,
+            AccountRef account,
+            UUID categoryId,
             UUID recurringTransactionId,
             LocalDate chargeDate
     ) {
-        UUID transactionId = UUID.randomUUID();
-
-        jdbcTemplate.update("""
-                        INSERT INTO transactions (
-                            transaction_id,
-                            transaction_description,
-                            transaction_amount,
-                            transaction_affects_account_balance,
-                            transaction_affects_liquidity,
-                            category_id,
-                            transaction_charge_date,
-                            transaction_is_confirmed,
-                            account_id,
-                            transaction_is_simulated,
-                            transaction_is_user_entered,
-                            recurring_transaction_id,
-                            transaction_reminder_enabled,
-                            transaction_reminder_days_before,
-                            user_group_id
-                        )
-                        VALUES (?, ?, ?, TRUE, TRUE, ?, ?, TRUE, ?, FALSE, FALSE, ?, TRUE, 7, ?)
-                        """,
-                transactionId,
-                "Occorrenza ricorrente confermata",
-                new BigDecimal("-99.90"),
+        return insertRawConfirmedRecurringOccurrence(
+                userGroupId,
+                account,
                 categoryId,
-                chargeDate,
-                account.accountId(),
                 recurringTransactionId,
-                userGroupId
+                chargeDate,
+                chargeDate,
+                OffsetDateTime.parse(chargeDate + "T09:00:00Z")
         );
-
-        return transactionId;
     }
 
     private Map<String, Object> validTransactionUpdateRequest(
@@ -4475,6 +4691,94 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         );
 
         return count == null ? 0L : count;
+    }
+
+    private void insertRawUserEnteredTransactionWithRecurringMetadata(
+            UUID userGroupId,
+            AccountRef account,
+            UUID categoryId,
+            LocalDate recurringTransactionLogicalDate,
+            OffsetDateTime recurringTransactionConfirmedAt
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO transactions (
+                            transaction_id,
+                            transaction_description,
+                            transaction_amount,
+                            transaction_affects_account_balance,
+                            transaction_affects_liquidity,
+                            category_id,
+                            transaction_charge_date,
+                            transaction_is_confirmed,
+                            account_id,
+                            transaction_is_simulated,
+                            transaction_is_user_entered,
+                            recurring_transaction_logical_date,
+                            recurring_transaction_confirmed_at,
+                            transaction_reminder_enabled,
+                            transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, TRUE, TRUE, ?, ?, FALSE, ?, FALSE, TRUE, ?, ?, TRUE, 7, ?)
+                        """,
+                UUID.randomUUID(),
+                "Transazione manuale con metadata recurring non validi",
+                new BigDecimal("-10.00"),
+                categoryId,
+                LocalDate.of(2026, 6, 10),
+                account.accountId(),
+                recurringTransactionLogicalDate,
+                recurringTransactionConfirmedAt,
+                userGroupId
+        );
+    }
+
+    private UUID insertRawConfirmedRecurringOccurrence(
+            UUID userGroupId,
+            AccountRef account,
+            UUID categoryId,
+            UUID recurringTransactionId,
+            LocalDate chargeDate,
+            LocalDate recurringTransactionLogicalDate,
+            OffsetDateTime recurringTransactionConfirmedAt
+    ) {
+        UUID transactionId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                        INSERT INTO transactions (
+                            transaction_id,
+                            transaction_description,
+                            transaction_amount,
+                            transaction_affects_account_balance,
+                            transaction_affects_liquidity,
+                            category_id,
+                            transaction_charge_date,
+                            transaction_is_confirmed,
+                            account_id,
+                            transaction_is_simulated,
+                            transaction_is_user_entered,
+                            recurring_transaction_id,
+                            recurring_transaction_logical_date,
+                            recurring_transaction_confirmed_at,
+                            transaction_reminder_enabled,
+                            transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, TRUE, TRUE, ?, ?, TRUE, ?, FALSE, FALSE, ?, ?, ?, TRUE, 7, ?)
+                        """,
+                transactionId,
+                "Occorrenza ricorrente confermata",
+                new BigDecimal("-99.90"),
+                categoryId,
+                chargeDate,
+                account.accountId(),
+                recurringTransactionId,
+                recurringTransactionLogicalDate,
+                recurringTransactionConfirmedAt,
+                userGroupId
+        );
+
+        return transactionId;
     }
 
     private record UserRef(

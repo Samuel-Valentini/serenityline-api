@@ -2,6 +2,8 @@ package me.serenityline.api.finance.account.repository;
 
 import me.serenityline.api.finance.account.entity.AccountUser;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -25,5 +27,16 @@ public interface AccountUserRepository extends JpaRepository<AccountUser, UUID> 
     Optional<AccountUser> findByAccount_AccountIdAndUser_UserId(
             UUID accountId,
             UUID userId
+    );
+
+    @Query("""
+            SELECT au.account.accountId
+            FROM AccountUser au
+            WHERE au.userGroup.userGroupId = :userGroupId
+                AND au.user.userId = :userId
+            """)
+    List<UUID> findVisibleAccountIdsForUser(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId
     );
 }
