@@ -31,6 +31,9 @@ serenityline:
     base-url: ${FRONTEND_BASE_URL}
   finance:
     max-simulation-group-ids: 50
+    calendar:
+      max-range-days: 1830
+      max-recurring-transactions: 500
 
 springdoc:
   api-docs:

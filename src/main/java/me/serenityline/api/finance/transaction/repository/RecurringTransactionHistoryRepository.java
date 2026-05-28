@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -55,5 +56,21 @@ public interface RecurringTransactionHistoryRepository extends JpaRepository<Rec
             """, nativeQuery = true)
     List<RecurringTransactionHistory> findAllHistoryByRecurringTransactionId(
             @Param("recurringTransactionId") UUID recurringTransactionId
+    );
+
+    @Query("""
+            SELECT history
+            FROM RecurringTransactionHistory history
+            JOIN FETCH history.recurringTransaction recurringTransaction
+            WHERE recurringTransaction.recurringTransactionId IN :recurringTransactionIds
+              AND recurringTransaction.userGroup.userGroupId = :userGroupId
+            ORDER BY
+                recurringTransaction.recurringTransactionId ASC,
+                history.recurringTransactionHistoryCreatedAt ASC,
+                history.recurringTransactionHistoryId ASC
+            """)
+    List<RecurringTransactionHistory> findAllHistoryByRecurringTransactionIdsAndUserGroupId(
+            @Param("recurringTransactionIds") Collection<UUID> recurringTransactionIds,
+            @Param("userGroupId") UUID userGroupId
     );
 }

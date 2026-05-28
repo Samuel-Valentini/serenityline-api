@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -75,6 +76,27 @@ public interface RecurringTransactionDetailsHistoryRepository
             """)
     List<RecurringTransactionDetailsHistory> findAllHistoryWithLinkedAccountByRecurringTransactionIdAndUserGroupId(
             @Param("recurringTransactionId") UUID recurringTransactionId,
+            @Param("userGroupId") UUID userGroupId
+    );
+
+    @Query("""
+            SELECT details
+            FROM RecurringTransactionDetailsHistory details
+            JOIN FETCH details.recurringTransaction recurringTransaction
+            JOIN FETCH details.linkedAccount linkedAccount
+            JOIN FETCH details.category category
+            JOIN FETCH details.financialPriority financialPriority
+            LEFT JOIN FETCH details.linkedCreditCard linkedCreditCard
+            LEFT JOIN FETCH details.linkedBucket linkedBucket
+            WHERE recurringTransaction.recurringTransactionId IN :recurringTransactionIds
+              AND details.userGroup.userGroupId = :userGroupId
+            ORDER BY
+                recurringTransaction.recurringTransactionId ASC,
+                details.recurringTransactionDetailsHistoryCreatedAt ASC,
+                details.recurringTransactionDetailsHistoryId ASC
+            """)
+    List<RecurringTransactionDetailsHistory> findAllHistoryWithDetailsByRecurringTransactionIdsAndUserGroupId(
+            @Param("recurringTransactionIds") Collection<UUID> recurringTransactionIds,
             @Param("userGroupId") UUID userGroupId
     );
 }
