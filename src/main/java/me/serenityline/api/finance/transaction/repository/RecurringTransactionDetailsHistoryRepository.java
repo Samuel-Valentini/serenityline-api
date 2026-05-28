@@ -58,4 +58,19 @@ public interface RecurringTransactionDetailsHistoryRepository
             @Param("recurringTransactionId") UUID recurringTransactionId,
             @Param("userGroupId") UUID userGroupId
     );
+
+    @Query("""
+            SELECT details
+            FROM RecurringTransactionDetailsHistory details
+            JOIN FETCH details.linkedAccount linkedAccount
+            WHERE details.recurringTransaction.recurringTransactionId = :recurringTransactionId
+              AND details.userGroup.userGroupId = :userGroupId
+            ORDER BY
+                details.recurringTransactionDetailsHistoryCreatedAt ASC,
+                details.recurringTransactionDetailsHistoryId ASC
+            """)
+    List<RecurringTransactionDetailsHistory> findAllHistoryWithLinkedAccountByRecurringTransactionIdAndUserGroupId(
+            @Param("recurringTransactionId") UUID recurringTransactionId,
+            @Param("userGroupId") UUID userGroupId
+    );
 }
