@@ -2,6 +2,7 @@ package me.serenityline.api.finance.calendar;
 
 import me.serenityline.api.common.error.ResourceNotFoundException;
 import me.serenityline.api.finance.account.entity.Account;
+import me.serenityline.api.finance.account.repository.AccountRepository;
 import me.serenityline.api.finance.account.repository.AccountUserRepository;
 import me.serenityline.api.finance.category.entity.Category;
 import me.serenityline.api.finance.common.FinanceProperties;
@@ -69,6 +70,9 @@ class FinanceCalendarServiceTest {
 
     @Mock
     private AccountUserRepository accountUserRepository;
+
+    @Mock
+    private AccountRepository accountRepository;
 
     private FinanceCalendarService service;
 
@@ -309,7 +313,8 @@ class FinanceCalendarServiceTest {
                 recurringTransactionProjectedMovementBatchService,
                 financeCalendarMovementMapper,
                 financeCalendarProperties,
-                financeProperties
+                financeProperties,
+                accountRepository
         );
     }
 
@@ -513,7 +518,7 @@ class FinanceCalendarServiceTest {
                 .thenReturn(List.of(transaction));
         when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(userGroupId, null))
                 .thenReturn(List.of(recurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(anyList(), eq(from), eq(to)))
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(anyList(), eq(from), eq(to)))
                 .thenReturn(List.of(projectedMovement));
         stubNoConfirmedKeys(
                 userGroupId,
@@ -542,7 +547,7 @@ class FinanceCalendarServiceTest {
                 ArgumentCaptor.forClass(List.class);
 
         verify(recurringTransactionProjectedMovementBatchService)
-                .generateProjectedMovements(seedsCaptor.capture(), eq(from), eq(to));
+                .generateProjectedMovementsAcrossRange(seedsCaptor.capture(), eq(from), eq(to));
 
         assertThat(seedsCaptor.getValue())
                 .singleElement()
@@ -612,7 +617,7 @@ class FinanceCalendarServiceTest {
                 eq(logicalDate),
                 eq(logicalDate)
         )).thenReturn(List.of(confirmedKey));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(anyList(), eq(from), eq(to)))
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(anyList(), eq(from), eq(to)))
                 .thenReturn(List.of(projectedMovement));
         when(financeCalendarMovementMapper.fromPersistedTransaction(confirmedTransaction))
                 .thenReturn(persistedCalendarMovement);
@@ -702,7 +707,7 @@ class FinanceCalendarServiceTest {
                 .thenReturn(List.of(confirmedTransaction));
         when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(userGroupId, null))
                 .thenReturn(List.of(recurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(anyList(), eq(from), eq(to)))
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(anyList(), eq(from), eq(to)))
                 .thenReturn(List.of(projectedMovement));
         stubNoConfirmedKeys(
                 userGroupId,
@@ -781,7 +786,7 @@ class FinanceCalendarServiceTest {
                 null,
                 List.of(firstSimulationGroupId, secondSimulationGroupId)
         )).thenReturn(List.of(simulatedRecurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(anyList(), eq(from), eq(to)))
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(anyList(), eq(from), eq(to)))
                 .thenReturn(List.of(projectedMovement));
         stubNoConfirmedKeys(
                 userGroupId,
@@ -845,8 +850,6 @@ class FinanceCalendarServiceTest {
                 null,
                 List.of(simulationGroupId)
         )).thenReturn(List.of());
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
-                .thenReturn(List.of());
 
         List<FinanceCalendarMovement> result = service.getCalendarMovements(
                 currentUserId,
@@ -931,8 +934,6 @@ class FinanceCalendarServiceTest {
                 List.of(accountId),
                 List.of(simulationGroupId)
         )).thenReturn(List.of());
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
-                .thenReturn(List.of());
 
         List<FinanceCalendarMovement> result = service.getCalendarMovements(
                 currentUserId,
@@ -981,8 +982,6 @@ class FinanceCalendarServiceTest {
                 currentUserId,
                 List.of(accountId)
         )).thenReturn(List.of());
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
-                .thenReturn(List.of());
 
         List<FinanceCalendarMovement> result = service.getCalendarMovements(
                 currentUserId,
@@ -1066,7 +1065,7 @@ class FinanceCalendarServiceTest {
                 userGroupId,
                 List.of(requestedAccountId)
         )).thenReturn(List.of(firstRecurringTransaction, secondRecurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(anyList(), eq(from), eq(to)))
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(anyList(), eq(from), eq(to)))
                 .thenReturn(List.of(firstProjectedMovement, secondProjectedMovement));
         stubNoConfirmedKeys(
                 userGroupId,
@@ -1119,8 +1118,6 @@ class FinanceCalendarServiceTest {
                 .thenReturn(List.of(transaction));
         when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(userGroupId, null))
                 .thenReturn(List.of());
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
-                .thenReturn(List.of());
         when(financeCalendarMovementMapper.fromPersistedTransaction(transaction))
                 .thenReturn(persistedCalendarMovement);
 
@@ -1152,8 +1149,6 @@ class FinanceCalendarServiceTest {
         when(transactionRepository.findBaseGroupTransactionsInRange(userGroupId, from, to, null))
                 .thenReturn(List.of());
         when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(userGroupId, null))
-                .thenReturn(List.of());
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
                 .thenReturn(List.of());
 
         verify(transactionRepository, never())
@@ -1238,7 +1233,7 @@ class FinanceCalendarServiceTest {
                 .thenReturn(List.of());
         when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(userGroupId, null))
                 .thenReturn(List.of(recurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(anyList(), eq(from), eq(to)))
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(anyList(), eq(from), eq(to)))
                 .thenReturn(List.of(unexpectedMovement));
 
         assertThatThrownBy(() -> service.getCalendarMovements(
@@ -1287,8 +1282,6 @@ class FinanceCalendarServiceTest {
         when(transactionRepository.findBaseGroupTransactionsInRange(userGroupId, from, to, null))
                 .thenReturn(List.of(secondTransaction, firstTransaction));
         when(recurringTransactionRepository.findCalendarReadableBaseByUserGroup(userGroupId, null))
-                .thenReturn(List.of());
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(List.of(), from, to))
                 .thenReturn(List.of());
         when(financeCalendarMovementMapper.fromPersistedTransaction(secondTransaction))
                 .thenReturn(secondMovement);
@@ -1354,7 +1347,7 @@ class FinanceCalendarServiceTest {
                 null
         )).thenReturn(List.of(recurringTransaction));
 
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -1478,7 +1471,7 @@ class FinanceCalendarServiceTest {
                 null
         )).thenReturn(List.of(firstRecurringTransaction, secondRecurringTransaction));
 
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -1574,7 +1567,7 @@ class FinanceCalendarServiceTest {
                 null
         )).thenReturn(List.of(recurringTransaction));
 
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -1673,7 +1666,7 @@ class FinanceCalendarServiceTest {
                 null
         )).thenReturn(List.of(recurringTransaction));
 
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -1765,7 +1758,7 @@ class FinanceCalendarServiceTest {
                 userGroupId,
                 List.of(requestedAccountId)
         )).thenReturn(List.of(recurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -1855,7 +1848,7 @@ class FinanceCalendarServiceTest {
                 List.of(accountId)
         )).thenReturn(List.of(recurringTransaction));
 
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -1940,7 +1933,7 @@ class FinanceCalendarServiceTest {
                 userGroupId,
                 null
         )).thenReturn(List.of(recurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -2050,7 +2043,7 @@ class FinanceCalendarServiceTest {
                 userGroupId,
                 null
         )).thenReturn(List.of(recurringTransaction, duplicatedRecurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -2068,7 +2061,7 @@ class FinanceCalendarServiceTest {
                 ArgumentCaptor.forClass(List.class);
 
         verify(recurringTransactionProjectedMovementBatchService)
-                .generateProjectedMovements(seedsCaptor.capture(), eq(from), eq(to));
+                .generateProjectedMovementsAcrossRange(seedsCaptor.capture(), eq(from), eq(to));
 
         assertThat(seedsCaptor.getValue())
                 .singleElement()
@@ -2108,12 +2101,6 @@ class FinanceCalendarServiceTest {
                 userGroupId,
                 currentUserId,
                 null
-        )).thenReturn(List.of());
-
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
-                List.of(),
-                from,
-                to
         )).thenReturn(List.of());
 
         List<FinanceCalendarMovement> result = service.getCalendarMovements(
@@ -2179,7 +2166,7 @@ class FinanceCalendarServiceTest {
                 userGroupId,
                 null
         )).thenReturn(List.of(recurringTransaction));
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -2253,7 +2240,7 @@ class FinanceCalendarServiceTest {
                 List.of(firstAccountId, secondAccountId)
         )).thenReturn(List.of(firstRecurringTransaction, secondRecurringTransaction));
 
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(from),
                 eq(to)
@@ -2332,12 +2319,6 @@ class FinanceCalendarServiceTest {
                 userGroupId,
                 currentUserId,
                 List.of(firstAccountId, secondAccountId)
-        )).thenReturn(List.of());
-
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
-                List.of(),
-                from,
-                to
         )).thenReturn(List.of());
 
         List<FinanceCalendarMovement> result = service.getCalendarMovements(

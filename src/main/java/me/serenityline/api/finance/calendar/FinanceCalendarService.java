@@ -2,6 +2,7 @@ package me.serenityline.api.finance.calendar;
 
 import me.serenityline.api.common.error.ResourceNotFoundException;
 import me.serenityline.api.finance.account.entity.Account;
+import me.serenityline.api.finance.account.repository.AccountRepository;
 import me.serenityline.api.finance.account.repository.AccountUserRepository;
 import me.serenityline.api.finance.common.FinanceProperties;
 import me.serenityline.api.finance.simulation.entity.SimulationGroup;
@@ -16,7 +17,9 @@ import me.serenityline.api.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -34,6 +37,7 @@ public class FinanceCalendarService {
     private final FinanceCalendarMovementMapper financeCalendarMovementMapper;
     private final FinanceCalendarProperties financeCalendarProperties;
     private final FinanceProperties financeProperties;
+    private final AccountRepository accountRepository;
 
     public FinanceCalendarService(
             UserRepository userRepository,
@@ -46,7 +50,8 @@ public class FinanceCalendarService {
             RecurringTransactionProjectedMovementBatchService recurringTransactionProjectedMovementBatchService,
             FinanceCalendarMovementMapper financeCalendarMovementMapper,
             FinanceCalendarProperties financeCalendarProperties,
-            FinanceProperties financeProperties
+            FinanceProperties financeProperties,
+            AccountRepository accountRepository
     ) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.transactionRepository = Objects.requireNonNull(transactionRepository, "transactionRepository");
@@ -59,6 +64,7 @@ public class FinanceCalendarService {
         this.financeCalendarMovementMapper = Objects.requireNonNull(financeCalendarMovementMapper, "financeCalendarMovementMapper");
         this.financeCalendarProperties = Objects.requireNonNull(financeCalendarProperties, "financeCalendarProperties");
         this.financeProperties = Objects.requireNonNull(financeProperties, "financeProperties");
+        this.accountRepository = Objects.requireNonNull(accountRepository, "accountRepository");
     }
 
     @Transactional(readOnly = true)
@@ -71,43 +77,39 @@ public class FinanceCalendarService {
 
         validateRange(request.from(), request.to());
 
-        List<UUID> simulationGroupIds = normalizeSimulationGroupIds(
+        CalendarRequestContext context = buildCalendarRequestContext(
+                currentUserId,
+                request.accountIds(),
                 request.simulationGroupIds()
         );
 
-        List<UUID> accountIds = normalizeAccountIds(
-                request.accountIds()
+        return getCalendarMovementsInternal(
+                context.currentUser(),
+                context.userGroupId(),
+                request.from(),
+                request.to(),
+                context.accountIds(),
+                context.simulationGroupIds(),
+                context.canReadAllGroupTransactions(),
+                context.canReadAllGroupRecurringTransactions()
         );
+    }
 
-        User currentUser = userRepository.findById(currentUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
-
-        UUID userGroupId = currentUser.getUserGroup().getUserGroupId();
-
-        boolean canReadAllGroupTransactions =
-                transactionAccessService.canReadAllGroupTransactions(currentUser);
-
-        boolean canReadAllGroupRecurringTransactions =
-                recurringTransactionAccessService.canReadAllGroupRecurringTransactions(currentUser);
-
-        assertReadableAccountFilters(
-                currentUser,
-                userGroupId,
-                accountIds
-        );
-
-        assertReadableSimulationGroups(
-                currentUser,
-                userGroupId,
-                simulationGroupIds,
-                canReadAllGroupTransactions
-        );
-
+    private List<FinanceCalendarMovement> getCalendarMovementsInternal(
+            User currentUser,
+            UUID userGroupId,
+            LocalDate from,
+            LocalDate to,
+            List<UUID> accountIds,
+            List<UUID> simulationGroupIds,
+            boolean canReadAllGroupTransactions,
+            boolean canReadAllGroupRecurringTransactions
+    ) {
         List<Transaction> persistedTransactions = findPersistedTransactions(
                 currentUser,
                 userGroupId,
-                request.from(),
-                request.to(),
+                from,
+                to,
                 accountIds,
                 simulationGroupIds,
                 canReadAllGroupTransactions
@@ -151,10 +153,10 @@ public class FinanceCalendarService {
                         .toList();
 
         List<RecurringTransactionProjectedMovement> projectedMovements =
-                recurringTransactionProjectedMovementBatchService.generateProjectedMovements(
+                recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
                         seeds,
-                        request.from(),
-                        request.to()
+                        from,
+                        to
                 );
 
         assertProjectedMovementsHaveReadableRecurringContext(
@@ -275,6 +277,7 @@ public class FinanceCalendarService {
                 simulationGroupIds
         );
     }
+
 
     private List<Transaction> findPersistedTransactionsForAccount(
             User currentUser,
@@ -692,6 +695,473 @@ public class FinanceCalendarService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public List<FinanceCalendarDailyBalance> getDailyBalances(
+            UUID currentUserId,
+            FinanceCalendarSearchRequest request
+    ) {
+        Objects.requireNonNull(currentUserId, "currentUserId");
+        Objects.requireNonNull(request, "request");
+
+        validateRange(request.from(), request.to());
+
+        CalendarRequestContext context = buildCalendarRequestContext(
+                currentUserId,
+                request.accountIds(),
+                request.simulationGroupIds()
+        );
+
+        List<Account> readableAccounts = findReadableAccounts(
+                context.currentUser(),
+                context.userGroupId(),
+                context.accountIds(),
+                context.canReadAllGroupTransactions()
+        );
+
+        if (readableAccounts.isEmpty()) {
+            return calculateDailyBalances(
+                    List.of(),
+                    List.of(),
+                    request.from(),
+                    request.to()
+            );
+        }
+
+        LocalDate calculationFrom = readableAccounts.stream()
+                .map(Account::getOpeningBalanceDate)
+                .min(LocalDate::compareTo)
+                .orElse(request.from());
+
+        List<FinanceCalendarMovement> movements = calculationFrom.isAfter(request.to())
+                ? List.of()
+                : getCalendarMovementsInternal(
+                context.currentUser(),
+                context.userGroupId(),
+                calculationFrom,
+                request.to(),
+                context.accountIds(),
+                context.simulationGroupIds(),
+                context.canReadAllGroupTransactions(),
+                context.canReadAllGroupRecurringTransactions()
+        );
+
+        return calculateDailyBalances(
+                readableAccounts,
+                movements,
+                request.from(),
+                request.to()
+        );
+    }
+
+    private CalendarRequestContext buildCalendarRequestContext(
+            UUID currentUserId,
+            List<UUID> rawAccountIds,
+            List<UUID> rawSimulationGroupIds
+    ) {
+        List<UUID> simulationGroupIds = normalizeSimulationGroupIds(
+                rawSimulationGroupIds
+        );
+
+        List<UUID> accountIds = normalizeAccountIds(
+                rawAccountIds
+        );
+
+        User currentUser = userRepository.findById(currentUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("user.notFound"));
+
+        UUID userGroupId = currentUser.getUserGroup().getUserGroupId();
+
+        boolean canReadAllGroupTransactions =
+                transactionAccessService.canReadAllGroupTransactions(currentUser);
+
+        boolean canReadAllGroupRecurringTransactions =
+                recurringTransactionAccessService.canReadAllGroupRecurringTransactions(currentUser);
+
+        assertReadableAccountFilters(
+                currentUser,
+                userGroupId,
+                accountIds
+        );
+
+        assertReadableSimulationGroups(
+                currentUser,
+                userGroupId,
+                simulationGroupIds,
+                canReadAllGroupTransactions
+        );
+
+        return new CalendarRequestContext(
+                currentUser,
+                userGroupId,
+                accountIds,
+                simulationGroupIds,
+                canReadAllGroupTransactions,
+                canReadAllGroupRecurringTransactions
+        );
+    }
+
+    private List<Account> findReadableAccounts(
+            User currentUser,
+            UUID userGroupId,
+            List<UUID> accountIds,
+            boolean canReadAllGroupTransactions
+    ) {
+        if (accountIds.isEmpty()) {
+            if (canReadAllGroupTransactions) {
+                return accountRepository.findAllByUserGroup_UserGroupIdOrderByAccountNameAsc(
+                        userGroupId
+                );
+            }
+
+            return accountRepository.findAllVisibleToLinkedUser(
+                    userGroupId,
+                    currentUser.getUserId()
+            );
+        }
+
+        if (canReadAllGroupTransactions) {
+            return accountRepository.findAllByUserGroup_UserGroupIdAndAccountIdInOrderByAccountNameAsc(
+                    userGroupId,
+                    accountIds
+            );
+        }
+
+        return accountRepository.findAllVisibleToLinkedUserByIds(
+                userGroupId,
+                currentUser.getUserId(),
+                accountIds
+        );
+    }
+
+    private List<FinanceCalendarDailyBalance> calculateDailyBalances(
+            List<Account> accounts,
+            List<FinanceCalendarMovement> movements,
+            LocalDate responseFrom,
+            LocalDate responseTo
+    ) {
+        Map<UUID, Account> accountById = accounts.stream()
+                .collect(Collectors.toMap(
+                        Account::getAccountId,
+                        account -> account,
+                        (first, second) -> first,
+                        LinkedHashMap::new
+                ));
+
+        Map<UUID, Integer> accountOrderById = new HashMap<>();
+
+        for (int index = 0; index < accounts.size(); index++) {
+            accountOrderById.put(accounts.get(index).getAccountId(), index);
+        }
+
+        Map<LocalDate, List<Account>> accountsByOpeningDate =
+                accounts.stream()
+                        .collect(Collectors.groupingBy(
+                                Account::getOpeningBalanceDate,
+                                HashMap::new,
+                                Collectors.toList()
+                        ));
+
+        Map<LocalDate, List<FinanceCalendarMovement>> movementsByChargeDate =
+                movements.stream()
+                        .collect(Collectors.groupingBy(
+                                FinanceCalendarMovement::chargeDate,
+                                HashMap::new,
+                                Collectors.toList()
+                        ));
+
+        Map<UUID, AccountDailyBalanceState> stateByAccountId = new LinkedHashMap<>();
+
+        openAccountsBeforeDate(
+                accounts,
+                stateByAccountId,
+                responseFrom
+        );
+
+        movements.stream()
+                .filter(movement -> movement.chargeDate().isBefore(responseFrom))
+                .forEach(movement -> applyMovementToDailyState(
+                        accountById,
+                        stateByAccountId,
+                        movement,
+                        movement.chargeDate()
+                ));
+
+        int resultCapacity = Math.toIntExact(
+                ChronoUnit.DAYS.between(responseFrom, responseTo) + 1
+        );
+
+        List<FinanceCalendarDailyBalance> result = new ArrayList<>(resultCapacity);
+
+        LocalDate currentDate = responseFrom;
+
+        while (!currentDate.isAfter(responseTo)) {
+            openAccountsForDate(
+                    accountsByOpeningDate,
+                    stateByAccountId,
+                    currentDate
+            );
+
+            for (FinanceCalendarMovement movement : movementsByChargeDate.getOrDefault(
+                    currentDate,
+                    List.of()
+            )) {
+                applyMovementToDailyState(
+                        accountById,
+                        stateByAccountId,
+                        movement,
+                        currentDate
+                );
+            }
+
+            result.add(toDailyBalance(
+                    currentDate,
+                    stateByAccountId,
+                    accountOrderById
+            ));
+
+            currentDate = currentDate.plusDays(1);
+        }
+
+        return result;
+    }
+
+    private void openAccountsForDate(
+            Map<LocalDate, List<Account>> accountsByOpeningDate,
+            Map<UUID, AccountDailyBalanceState> stateByAccountId,
+            LocalDate date
+    ) {
+        List<Account> accountsToOpen = accountsByOpeningDate.get(date);
+
+        if (accountsToOpen == null || accountsToOpen.isEmpty()) {
+            return;
+        }
+
+        for (Account account : accountsToOpen) {
+            openAccountIfAbsent(
+                    account,
+                    stateByAccountId
+            );
+        }
+    }
+
+    private void applyMovementToDailyState(
+            Map<UUID, Account> accountById,
+            Map<UUID, AccountDailyBalanceState> stateByAccountId,
+            FinanceCalendarMovement movement,
+            LocalDate currentDate
+    ) {
+        Account account = accountById.get(movement.accountId());
+
+        if (account == null) {
+            throw new IllegalStateException("finance.calendar.dailyBalanceAccountContextMissing");
+        }
+
+        if (currentDate.isBefore(account.getOpeningBalanceDate())) {
+            return;
+        }
+
+        AccountDailyBalanceState state = stateByAccountId.computeIfAbsent(
+                account.getAccountId(),
+                ignored -> new AccountDailyBalanceState(
+                        account.getAccountId(),
+                        account.getCurrency(),
+                        account.getOpeningBalance(),
+                        account.getOpeningBalance(),
+                        new LinkedHashMap<>()
+                )
+        );
+
+        if (movement.affectsAccountBalance()) {
+            state.accountBalance = state.accountBalance.add(movement.amount());
+        }
+
+        if (movement.affectsSerenityline()) {
+            state.serenityline = state.serenityline.add(movement.amount());
+        }
+
+        BigDecimal bucketDelta = bucketDelta(movement);
+
+        if (bucketDelta.compareTo(BigDecimal.ZERO) != 0) {
+            state.bucketBalancesByBucketId.merge(
+                    movement.bucketId(),
+                    bucketDelta,
+                    BigDecimal::add
+            );
+        }
+    }
+
+    private FinanceCalendarDailyBalance toDailyBalance(
+            LocalDate date,
+            Map<UUID, AccountDailyBalanceState> stateByAccountId,
+            Map<UUID, Integer> accountOrderById
+    ) {
+        List<AccountDailyBalanceState> orderedStates = stateByAccountId.values()
+                .stream()
+                .sorted(Comparator.comparingInt(
+                        state -> accountOrderById.getOrDefault(
+                                state.accountId,
+                                Integer.MAX_VALUE
+                        )
+                ))
+                .toList();
+
+        List<FinanceCalendarAccountDailyBalance> accounts = orderedStates.stream()
+                .map(this::toAccountDailyBalance)
+                .toList();
+
+        List<FinanceCalendarBucketDailyBalance> buckets =
+                aggregateBucketsByCurrency(orderedStates);
+
+        List<FinanceCalendarCurrencyDailyBalance> totalsByCurrency =
+                aggregateTotalsByCurrency(orderedStates);
+
+        return new FinanceCalendarDailyBalance(
+                date,
+                accounts,
+                buckets,
+                totalsByCurrency
+        );
+    }
+
+    private FinanceCalendarAccountDailyBalance toAccountDailyBalance(
+            AccountDailyBalanceState state
+    ) {
+        List<FinanceCalendarAccountBucketDailyBalance> buckets =
+                state.bucketBalancesByBucketId.entrySet()
+                        .stream()
+                        .filter(entry -> entry.getValue().compareTo(BigDecimal.ZERO) != 0)
+                        .sorted(Map.Entry.comparingByKey())
+                        .map(entry -> new FinanceCalendarAccountBucketDailyBalance(
+                                entry.getKey(),
+                                entry.getValue()
+                        ))
+                        .toList();
+
+        BigDecimal endOfDayBucketsBalance = buckets.stream()
+                .map(FinanceCalendarAccountBucketDailyBalance::endOfDayBucketBalance)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        return new FinanceCalendarAccountDailyBalance(
+                state.accountId,
+                state.currency,
+                state.accountBalance,
+                state.serenityline,
+                endOfDayBucketsBalance,
+                buckets
+        );
+    }
+
+    private List<FinanceCalendarBucketDailyBalance> aggregateBucketsByCurrency(
+            List<AccountDailyBalanceState> states
+    ) {
+        Map<BucketCurrencyKey, BigDecimal> balances = new HashMap<>();
+
+        for (AccountDailyBalanceState state : states) {
+            for (Map.Entry<UUID, BigDecimal> entry : state.bucketBalancesByBucketId.entrySet()) {
+                if (entry.getValue().compareTo(BigDecimal.ZERO) == 0) {
+                    continue;
+                }
+
+                balances.merge(
+                        new BucketCurrencyKey(entry.getKey(), state.currency),
+                        entry.getValue(),
+                        BigDecimal::add
+                );
+            }
+        }
+
+        return balances.entrySet()
+                .stream()
+                .filter(entry -> entry.getValue().compareTo(BigDecimal.ZERO) != 0)
+                .sorted(Comparator
+                        .comparing((Map.Entry<BucketCurrencyKey, BigDecimal> entry) -> entry.getKey().currency())
+                        .thenComparing(entry -> entry.getKey().bucketId()))
+                .map(entry -> new FinanceCalendarBucketDailyBalance(
+                        entry.getKey().bucketId(),
+                        entry.getKey().currency(),
+                        entry.getValue()
+                ))
+                .toList();
+    }
+
+    private List<FinanceCalendarCurrencyDailyBalance> aggregateTotalsByCurrency(
+            List<AccountDailyBalanceState> states
+    ) {
+        Map<String, CurrencyDailyBalanceAccumulator> totalsByCurrency = new TreeMap<>();
+
+        for (AccountDailyBalanceState state : states) {
+            CurrencyDailyBalanceAccumulator accumulator =
+                    totalsByCurrency.computeIfAbsent(
+                            state.currency,
+                            ignored -> new CurrencyDailyBalanceAccumulator()
+                    );
+
+            accumulator.accountBalance = accumulator.accountBalance.add(state.accountBalance);
+            accumulator.serenityline = accumulator.serenityline.add(state.serenityline);
+
+            BigDecimal bucketBalance = state.bucketBalancesByBucketId.values()
+                    .stream()
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            accumulator.bucketsBalance = accumulator.bucketsBalance.add(bucketBalance);
+        }
+
+        return totalsByCurrency.entrySet()
+                .stream()
+                .map(entry -> new FinanceCalendarCurrencyDailyBalance(
+                        entry.getKey(),
+                        entry.getValue().accountBalance,
+                        entry.getValue().serenityline,
+                        entry.getValue().bucketsBalance
+                ))
+                .toList();
+    }
+
+    private BigDecimal bucketDelta(FinanceCalendarMovement movement) {
+        if (movement.bucketId() == null) {
+            return BigDecimal.ZERO;
+        }
+
+        if (!movement.affectsAccountBalance() && movement.affectsSerenityline()) {
+            return movement.amount().negate();
+        }
+
+        return movement.amount();
+    }
+
+    private void openAccountsBeforeDate(
+            List<Account> accounts,
+            Map<UUID, AccountDailyBalanceState> stateByAccountId,
+            LocalDate date
+    ) {
+        for (Account account : accounts) {
+            if (!account.getOpeningBalanceDate().isBefore(date)) {
+                continue;
+            }
+
+            openAccountIfAbsent(
+                    account,
+                    stateByAccountId
+            );
+        }
+    }
+
+    private void openAccountIfAbsent(
+            Account account,
+            Map<UUID, AccountDailyBalanceState> stateByAccountId
+    ) {
+        stateByAccountId.putIfAbsent(
+                account.getAccountId(),
+                new AccountDailyBalanceState(
+                        account.getAccountId(),
+                        account.getCurrency(),
+                        account.getOpeningBalance(),
+                        account.getOpeningBalance(),
+                        new LinkedHashMap<>()
+                )
+        );
+    }
+
     private record RecurringTransactionProjectionContext(
             boolean simulated,
             UUID simulationGroupId
@@ -702,5 +1172,54 @@ public class FinanceCalendarService {
             UUID recurringTransactionId,
             LocalDate logicalDate
     ) {
+    }
+
+    private record CalendarRequestContext(
+            User currentUser,
+            UUID userGroupId,
+            List<UUID> accountIds,
+            List<UUID> simulationGroupIds,
+            boolean canReadAllGroupTransactions,
+            boolean canReadAllGroupRecurringTransactions
+    ) {
+    }
+
+    private record BucketCurrencyKey(
+            UUID bucketId,
+            String currency
+    ) {
+    }
+
+    private static final class AccountDailyBalanceState {
+
+        private final UUID accountId;
+        private final String currency;
+        private final Map<UUID, BigDecimal> bucketBalancesByBucketId;
+        private BigDecimal accountBalance;
+        private BigDecimal serenityline;
+
+        private AccountDailyBalanceState(
+                UUID accountId,
+                String currency,
+                BigDecimal accountBalance,
+                BigDecimal serenityline,
+                Map<UUID, BigDecimal> bucketBalancesByBucketId
+        ) {
+            this.accountId = Objects.requireNonNull(accountId, "accountId");
+            this.currency = Objects.requireNonNull(currency, "currency");
+            this.accountBalance = Objects.requireNonNull(accountBalance, "accountBalance");
+            this.serenityline = Objects.requireNonNull(serenityline, "serenityline");
+            this.bucketBalancesByBucketId = Objects.requireNonNull(
+                    bucketBalancesByBucketId,
+                    "bucketBalancesByBucketId"
+            );
+        }
+    }
+
+    private static final class CurrencyDailyBalanceAccumulator {
+
+        private BigDecimal accountBalance = BigDecimal.ZERO;
+        private BigDecimal serenityline = BigDecimal.ZERO;
+        private BigDecimal bucketsBalance = BigDecimal.ZERO;
     }
 }

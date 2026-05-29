@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -83,4 +84,23 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
             @Param("accountId") UUID accountId
     );
 
+    List<Account> findAllByUserGroup_UserGroupIdAndAccountIdInOrderByAccountNameAsc(
+            UUID userGroupId,
+            Collection<UUID> accountIds
+    );
+
+    @Query("""
+            select account
+            from Account account
+            join AccountUser accountUser on accountUser.account = account
+            where account.userGroup.userGroupId = :userGroupId
+              and accountUser.user.userId = :userId
+              and account.accountId in :accountIds
+            order by lower(account.accountName), account.accountName
+            """)
+    List<Account> findAllVisibleToLinkedUserByIds(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("accountIds") Collection<UUID> accountIds
+    );
 }
