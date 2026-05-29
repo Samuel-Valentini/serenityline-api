@@ -210,6 +210,116 @@ class FinanceCalendarControllerEndToEndIntegrationTest extends IntegrationTestSu
                         .value(not(hasItem(excludedAccountId.toString()))));
     }
 
+    @Test
+    void ownerShouldGetDailyBalancesEndToEndWithJwtDbServiceRepositoriesAndBuckets() throws Exception {
+        UUID userGroupId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+
+        UUID accountId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        UUID bucketId = UUID.randomUUID();
+
+        givenUserGroup(userGroupId, unique("E2E daily balances group"));
+        givenUser(ownerId, userGroupId, "OWNER", uniqueEmail("daily-balances-owner-e2e"));
+
+        givenCategory(categoryId, userGroupId, ownerId, "Daily balances category");
+
+        givenAccount(
+                accountId,
+                userGroupId,
+                "Conto Daily Balance",
+                new BigDecimal("1000.00"),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        givenBucket(
+                bucketId,
+                userGroupId,
+                accountId,
+                "Fondo emergenza"
+        );
+
+        givenTransaction(
+                accountId,
+                userGroupId,
+                categoryId,
+                null,
+                LocalDate.of(2026, 6, 1),
+                new BigDecimal("100.00"),
+                true,
+                true,
+                false,
+                null,
+                "Entrata storica"
+        );
+
+        givenTransaction(
+                accountId,
+                userGroupId,
+                categoryId,
+                null,
+                LocalDate.of(2026, 6, 10),
+                new BigDecimal("-50.00"),
+                true,
+                true,
+                false,
+                null,
+                "Spesa del giorno"
+        );
+
+        givenTransaction(
+                accountId,
+                userGroupId,
+                categoryId,
+                bucketId,
+                LocalDate.of(2026, 6, 11),
+                new BigDecimal("-300.00"),
+                false,
+                true,
+                false,
+                null,
+                "Accantonamento fondo emergenza"
+        );
+
+        String accessToken = accessTokenFor(ownerId);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-10")
+                        .param("to", "2026-06-11")
+                        .param("accountIds", accountId.toString()))
+                .andExpect(status().isOk())
+
+                .andExpect(jsonPath("$[0].date").value("2026-06-10"))
+                .andExpect(jsonPath("$[0].accounts[0].accountId").value(accountId.toString()))
+                .andExpect(jsonPath("$[0].accounts[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[0].accounts[0].endOfDayAccountBalance").value(1050.00))
+                .andExpect(jsonPath("$[0].accounts[0].endOfDaySerenityline").value(1050.00))
+                .andExpect(jsonPath("$[0].accounts[0].endOfDayBucketsBalance").value(0))
+                .andExpect(jsonPath("$[0].accounts[0].buckets").isEmpty())
+                .andExpect(jsonPath("$[0].buckets").isEmpty())
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].endOfDayAccountsBalance").value(1050.00))
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].endOfDaySerenityline").value(1050.00))
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].endOfDayBucketsBalance").value(0))
+
+                .andExpect(jsonPath("$[1].date").value("2026-06-11"))
+                .andExpect(jsonPath("$[1].accounts[0].accountId").value(accountId.toString()))
+                .andExpect(jsonPath("$[1].accounts[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[1].accounts[0].endOfDayAccountBalance").value(1050.00))
+                .andExpect(jsonPath("$[1].accounts[0].endOfDaySerenityline").value(750.00))
+                .andExpect(jsonPath("$[1].accounts[0].endOfDayBucketsBalance").value(300.00))
+                .andExpect(jsonPath("$[1].accounts[0].buckets[0].bucketId").value(bucketId.toString()))
+                .andExpect(jsonPath("$[1].accounts[0].buckets[0].endOfDayBucketBalance").value(300.00))
+                .andExpect(jsonPath("$[1].buckets[0].bucketId").value(bucketId.toString()))
+                .andExpect(jsonPath("$[1].buckets[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[1].buckets[0].endOfDayBucketBalance").value(300.00))
+                .andExpect(jsonPath("$[1].totalsByCurrency[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[1].totalsByCurrency[0].endOfDayAccountsBalance").value(1050.00))
+                .andExpect(jsonPath("$[1].totalsByCurrency[0].endOfDaySerenityline").value(750.00))
+                .andExpect(jsonPath("$[1].totalsByCurrency[0].endOfDayBucketsBalance").value(300.00));
+    }
+
     private String accessTokenFor(UUID userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow();
@@ -421,5 +531,117 @@ class FinanceCalendarControllerEndToEndIntegrationTest extends IntegrationTestSu
         );
 
         return recurringTransactionId;
+    }
+
+    private void givenAccount(
+            UUID accountId,
+            UUID userGroupId,
+            String name,
+            BigDecimal openingBalance,
+            LocalDate openingBalanceDate
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO accounts (
+                            account_id,
+                            user_group_id,
+                            account_name,
+                            currency,
+                            opening_balance,
+                            opening_balance_date
+                        )
+                        VALUES (?, ?, ?, 'EUR', ?, ?)
+                        """,
+                accountId,
+                userGroupId,
+                name,
+                openingBalance,
+                openingBalanceDate
+        );
+    }
+
+    private void givenBucket(
+            UUID bucketId,
+            UUID userGroupId,
+            UUID accountId,
+            String name
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO buckets (
+                            bucket_id,
+                            user_group_id,
+                            bucket_name
+                        )
+                        VALUES (?, ?, ?)
+                        """,
+                bucketId,
+                userGroupId,
+                name
+        );
+
+        jdbcTemplate.update("""
+                        INSERT INTO buckets_accounts (
+                            bucket_id,
+                            account_id,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?)
+                        """,
+                bucketId,
+                accountId,
+                userGroupId
+        );
+    }
+
+    private UUID givenTransaction(
+            UUID accountId,
+            UUID userGroupId,
+            UUID categoryId,
+            UUID bucketId,
+            LocalDate chargeDate,
+            BigDecimal amount,
+            boolean affectsAccountBalance,
+            boolean affectsSerenityline,
+            boolean simulated,
+            UUID simulationGroupId,
+            String description
+    ) {
+        UUID transactionId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                        INSERT INTO transactions (
+                            transaction_id,
+                            transaction_description,
+                            transaction_amount,
+                            transaction_affects_account_balance,
+                            transaction_affects_serenityline,
+                            category_id,
+                            transaction_charge_date,
+                            transaction_is_confirmed,
+                            account_id,
+                            bucket_id,
+                            transaction_is_simulated,
+                            simulation_group_id,
+                            transaction_is_user_entered,
+                            transaction_reminder_enabled,
+                            transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, true, ?, ?, ?, ?, true, true, 7, ?)
+                        """,
+                transactionId,
+                description,
+                amount,
+                affectsAccountBalance,
+                affectsSerenityline,
+                categoryId,
+                chargeDate,
+                accountId,
+                bucketId,
+                simulated,
+                simulationGroupId,
+                userGroupId
+        );
+
+        return transactionId;
     }
 }

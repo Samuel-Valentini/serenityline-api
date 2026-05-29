@@ -64,4 +64,37 @@ public class FinanceCalendarController {
 
         return ResponseEntity.ok(response);
     }
+
+    @GetMapping("/daily-balances")
+    public ResponseEntity<List<FinanceCalendarDailyBalanceResponse>> getDailyBalances(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate from,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate to,
+            @RequestParam(required = false)
+            List<UUID> accountIds,
+            @RequestParam(required = false)
+            List<UUID> simulationGroupIds
+    ) {
+        FinanceCalendarSearchRequest request = new FinanceCalendarSearchRequest(
+                from,
+                to,
+                accountIds,
+                simulationGroupIds
+        );
+
+        List<FinanceCalendarDailyBalanceResponse> response =
+                financeCalendarService.getDailyBalances(
+                                authenticatedUser.userId(),
+                                request
+                        )
+                        .stream()
+                        .map(FinanceCalendarDailyBalanceResponse::from)
+                        .toList();
+
+        return ResponseEntity.ok(response);
+    }
 }

@@ -510,6 +510,310 @@ class FinanceCalendarControllerIntegrationTest extends IntegrationTestSupport {
         );
     }
 
+    @Test
+    void getDailyBalancesShouldRequireAuthentication() throws Exception {
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(financeCalendarService);
+    }
+
+    @Test
+    void ownerShouldGetDailyBalances() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID accountId = UUID.randomUUID();
+        UUID bucketId = UUID.randomUUID();
+        UUID simulationGroupId = UUID.randomUUID();
+
+        FinanceCalendarDailyBalance dailyBalance = new FinanceCalendarDailyBalance(
+                LocalDate.of(2026, 6, 10),
+                List.of(new FinanceCalendarAccountDailyBalance(
+                        accountId,
+                        "EUR",
+                        new BigDecimal("1500.25"),
+                        new BigDecimal("900.25"),
+                        new BigDecimal("600.00"),
+                        List.of(new FinanceCalendarAccountBucketDailyBalance(
+                                bucketId,
+                                new BigDecimal("600.00")
+                        ))
+                )),
+                List.of(new FinanceCalendarBucketDailyBalance(
+                        bucketId,
+                        "EUR",
+                        new BigDecimal("600.00")
+                )),
+                List.of(new FinanceCalendarCurrencyDailyBalance(
+                        "EUR",
+                        new BigDecimal("1500.25"),
+                        new BigDecimal("900.25"),
+                        new BigDecimal("600.00")
+                ))
+        );
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenReturn(List.of(dailyBalance));
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountIds", accountId.toString())
+                        .param("simulationGroupIds", simulationGroupId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].date").value("2026-06-10"))
+                .andExpect(jsonPath("$[0].accounts[0].accountId").value(accountId.toString()))
+                .andExpect(jsonPath("$[0].accounts[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[0].accounts[0].endOfDayAccountBalance").value(1500.25))
+                .andExpect(jsonPath("$[0].accounts[0].endOfDaySerenityline").value(900.25))
+                .andExpect(jsonPath("$[0].accounts[0].endOfDayBucketsBalance").value(600.00))
+                .andExpect(jsonPath("$[0].accounts[0].buckets[0].bucketId").value(bucketId.toString()))
+                .andExpect(jsonPath("$[0].accounts[0].buckets[0].endOfDayBucketBalance").value(600.00))
+                .andExpect(jsonPath("$[0].buckets[0].bucketId").value(bucketId.toString()))
+                .andExpect(jsonPath("$[0].buckets[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[0].buckets[0].endOfDayBucketBalance").value(600.00))
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].currency").value("EUR"))
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].endOfDayAccountsBalance").value(1500.25))
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].endOfDaySerenityline").value(900.25))
+                .andExpect(jsonPath("$[0].totalsByCurrency[0].endOfDayBucketsBalance").value(600.00));
+
+        ArgumentCaptor<FinanceCalendarSearchRequest> requestCaptor =
+                ArgumentCaptor.forClass(FinanceCalendarSearchRequest.class);
+
+        verify(financeCalendarService).getDailyBalances(
+                eq(owner.userId()),
+                requestCaptor.capture()
+        );
+
+        FinanceCalendarSearchRequest capturedRequest = requestCaptor.getValue();
+
+        assertThat(capturedRequest.from()).isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(capturedRequest.to()).isEqualTo(LocalDate.of(2026, 6, 30));
+        assertThat(capturedRequest.accountIds()).containsExactly(accountId);
+        assertThat(capturedRequest.simulationGroupIds()).containsExactly(simulationGroupId);
+    }
+
+    @Test
+    void getDailyBalancesShouldPassNullFiltersWhenOptionalParamsAreMissing() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenReturn(List.of());
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isOk())
+                .andExpect(content().json("[]"));
+
+        ArgumentCaptor<FinanceCalendarSearchRequest> requestCaptor =
+                ArgumentCaptor.forClass(FinanceCalendarSearchRequest.class);
+
+        verify(financeCalendarService).getDailyBalances(
+                eq(owner.userId()),
+                requestCaptor.capture()
+        );
+
+        FinanceCalendarSearchRequest capturedRequest = requestCaptor.getValue();
+
+        assertThat(capturedRequest.from()).isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(capturedRequest.to()).isEqualTo(LocalDate.of(2026, 6, 30));
+        assertThat(capturedRequest.accountIds()).isNull();
+        assertThat(capturedRequest.simulationGroupIds()).isNull();
+    }
+
+    @Test
+    void getDailyBalancesShouldDelegateMissingFromValidationToService() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenThrow(new IllegalArgumentException("finance.calendar.fromRequired"));
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.calendar.fromRequired"));
+    }
+
+    @Test
+    void getDailyBalancesShouldRejectInvalidAccountIdBeforeCallingService() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountIds", "not-a-uuid"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(financeCalendarService);
+    }
+
+    @Test
+    void getDailyBalancesShouldDelegateMissingToValidationToService() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenThrow(new IllegalArgumentException("finance.calendar.toRequired"));
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-01"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.calendar.toRequired"));
+    }
+
+    @Test
+    void getDailyBalancesShouldDelegateInvalidDateRangeValidationToService() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenThrow(new IllegalArgumentException("finance.calendar.dateRangeInvalid"));
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-30")
+                        .param("to", "2026-06-01"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.calendar.dateRangeInvalid"));
+    }
+
+    @Test
+    void getDailyBalancesShouldDelegateTooLargeRangeValidationToService() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenThrow(new IllegalArgumentException("finance.calendar.dateRangeTooLarge"));
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-01-01")
+                        .param("to", "2027-12-31"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.calendar.dateRangeTooLarge"));
+    }
+
+    @Test
+    void getDailyBalancesShouldRejectInvalidDateBeforeCallingService() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "not-a-date")
+                        .param("to", "2026-06-30"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(financeCalendarService);
+    }
+
+    @Test
+    void getDailyBalancesShouldRejectInvalidSimulationGroupIdBeforeCallingService() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("simulationGroupIds", "not-a-uuid"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(financeCalendarService);
+    }
+
+    @Test
+    void getDailyBalancesShouldBindMultipleAccountIdsAndSimulationGroupIds() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID firstAccountId = UUID.randomUUID();
+        UUID secondAccountId = UUID.randomUUID();
+        UUID firstSimulationGroupId = UUID.randomUUID();
+        UUID secondSimulationGroupId = UUID.randomUUID();
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenReturn(List.of());
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountIds", firstAccountId.toString(), secondAccountId.toString())
+                        .param("simulationGroupIds", firstSimulationGroupId.toString(), secondSimulationGroupId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(content().json("[]"));
+
+        ArgumentCaptor<FinanceCalendarSearchRequest> requestCaptor =
+                ArgumentCaptor.forClass(FinanceCalendarSearchRequest.class);
+
+        verify(financeCalendarService).getDailyBalances(
+                eq(owner.userId()),
+                requestCaptor.capture()
+        );
+
+        assertThat(requestCaptor.getValue().accountIds())
+                .containsExactly(firstAccountId, secondAccountId);
+
+        assertThat(requestCaptor.getValue().simulationGroupIds())
+                .containsExactly(firstSimulationGroupId, secondSimulationGroupId);
+    }
+
+    @Test
+    void getDailyBalancesShouldReturnNotFoundWhenServiceRejectsUnreadableResource() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        when(financeCalendarService.getDailyBalances(
+                eq(owner.userId()),
+                any(FinanceCalendarSearchRequest.class)
+        )).thenThrow(new ResourceNotFoundException("finance.account.notFound"));
+
+        String accessToken = accessTokenFor(owner);
+
+        mockMvc.perform(get(CALENDAR_PATH + "/daily-balances")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", "2026-06-01")
+                        .param("to", "2026-06-30")
+                        .param("accountIds", UUID.randomUUID().toString()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("finance.account.notFound"));
+    }
 
     private UserRef createUserWithNewGroup(String role) {
         UUID userGroupId = UUID.randomUUID();

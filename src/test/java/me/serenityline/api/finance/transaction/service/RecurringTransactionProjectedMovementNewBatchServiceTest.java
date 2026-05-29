@@ -711,6 +711,59 @@ class RecurringTransactionProjectedMovementNewBatchServiceTest {
         );
     }
 
+    @Test
+    void generateProjectedMovementsAcrossRangeShouldRejectTooManySeeds() {
+        UUID userGroupId = UUID.randomUUID();
+
+        LocalDate firstPaymentDate = LocalDate.of(2026, 1, 1);
+
+        givenMaxRecurringTransactions(1);
+
+        assertThatThrownBy(() -> service.generateProjectedMovementsAcrossRange(
+                List.of(
+                        seed(UUID.randomUUID(), userGroupId, firstPaymentDate),
+                        seed(UUID.randomUUID(), userGroupId, firstPaymentDate)
+                ),
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 31)
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.recurringTransaction.batchTooLarge");
+
+        verifyNoInteractions(
+                recurringTransactionHistoryRepository,
+                recurringTransactionDetailsHistoryRepository,
+                recurringTransactionOccurrenceGenerator,
+                recurringTransactionProjectedMovementAssembler
+        );
+    }
+
+    @Test
+    void generateProjectedMovementsAcrossRangeShouldRejectInvalidDateOrder() {
+        UUID userGroupId = UUID.randomUUID();
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.generateProjectedMovementsAcrossRange(
+                List.of(seed(
+                        recurringTransactionId,
+                        userGroupId,
+                        LocalDate.of(2026, 1, 1)
+                )),
+                LocalDate.of(2026, 2, 1),
+                LocalDate.of(2026, 1, 31)
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.calendar.dateRangeInvalid");
+
+        verifyNoInteractions(
+                financeCalendarProperties,
+                recurringTransactionHistoryRepository,
+                recurringTransactionDetailsHistoryRepository,
+                recurringTransactionOccurrenceGenerator,
+                recurringTransactionProjectedMovementAssembler
+        );
+    }
+
     private RecurringTransactionProjectedMovementSeed seed(
             UUID recurringTransactionId,
             UUID userGroupId,
