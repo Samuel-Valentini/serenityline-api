@@ -156,7 +156,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.linkedCreditCardId").doesNotExist())
                 .andExpect(jsonPath("$.linkedBucketId").doesNotExist())
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(true))
-                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true))
                 .andExpect(jsonPath("$.recurringTransactionDetailsEffectiveFrom").value("2026-06-01"))
                 .andReturn();
 
@@ -193,7 +193,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         assertThat(detailsRow.get("linked_credit_card_id")).isNull();
         assertThat(detailsRow.get("linked_bucket_id")).isNull();
         assertThat(detailsRow.get("recurring_transaction_affects_account_balance")).isEqualTo(true);
-        assertThat(detailsRow.get("recurring_transaction_affects_liquidity")).isEqualTo(true);
+        assertThat(detailsRow.get("recurring_transaction_affects_serenityline")).isEqualTo(true);
         assertThat(asLocalDate(detailsRow.get("recurring_transaction_details_effective_from")))
                 .isEqualTo(LocalDate.of(2026, 6, 1));
         assertThat(detailsRow.get("user_group_id")).isEqualTo(owner.userGroupId());
@@ -240,7 +240,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         body.put("linkedCreditCardId", creditCard.creditCardId());
         body.put("linkedBucketId", bucket.bucketId());
         body.put("recurringTransactionAffectsAccountBalance", false);
-        body.put("recurringTransactionAffectsLiquidity", true);
+        body.put("recurringtransactionAffectsSerenityline", true);
         body.put("recurringTransactionIsSimulated", true);
         body.put("simulationGroupId", simulationGroupId);
         body.put("recurringTransactionReminderEnabled", false);
@@ -271,7 +271,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.linkedCreditCardId").value(creditCard.creditCardId().toString()))
                 .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()))
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
-                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true))
                 .andReturn();
 
         UUID recurringTransactionId = recurringTransactionIdFrom(result);
@@ -296,7 +296,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         assertThat(detailsRow.get("linked_credit_card_id")).isEqualTo(creditCard.creditCardId());
         assertThat(detailsRow.get("linked_bucket_id")).isEqualTo(bucket.bucketId());
         assertThat(detailsRow.get("recurring_transaction_affects_account_balance")).isEqualTo(false);
-        assertThat(detailsRow.get("recurring_transaction_affects_liquidity")).isEqualTo(true);
+        assertThat(detailsRow.get("recurring_transaction_affects_serenityline")).isEqualTo(true);
     }
 
     @Test
@@ -1015,7 +1015,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         Map<String, Object> body = validRecurringTransactionRequest(account, categoryId, financialPriorityId);
         body.put("recurringTransactionAffectsAccountBalance", false);
-        body.put("recurringTransactionAffectsLiquidity", false);
+        body.put("recurringtransactionAffectsSerenityline", false);
 
         mockMvc.perform(post(RECURRING_TRANSACTIONS_PATH)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
@@ -1246,7 +1246,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.financialPriorityId").value(financialPriorityId.toString()))
                 .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()))
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(true))
-                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true));
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true));
     }
 
     @Test
@@ -1559,7 +1559,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         body.put("linkedCreditCardId", null);
         body.put("linkedBucketId", null);
         body.put("recurringTransactionAffectsAccountBalance", true);
-        body.put("recurringTransactionAffectsLiquidity", true);
+        body.put("recurringtransactionAffectsSerenityline", true);
         body.put("recurringTransactionIsSimulated", false);
         body.put("simulationGroupId", null);
         body.put("recurringTransactionReminderEnabled", true);
@@ -1628,7 +1628,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         body.put("linkedCreditCardId", creditCard.creditCardId());
         body.put("linkedBucketId", bucket.bucketId());
         body.put("recurringTransactionAffectsAccountBalance", false);
-        body.put("recurringTransactionAffectsLiquidity", true);
+        body.put("recurringtransactionAffectsSerenityline", true);
         body.put("recurringTransactionIsSimulated", true);
         body.put("simulationGroupId", simulationGroupId);
         body.put("recurringTransactionReminderEnabled", false);
@@ -1656,7 +1656,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.linkedCreditCardId").value(creditCard.creditCardId().toString()))
                 .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()))
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
-                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true))
                 .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(true))
                 .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
                 .andExpect(jsonPath("$.recurringTransactionReminderEnabled").value(false))
@@ -2650,7 +2650,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.detailsHistory[0].financialPriorityId").value(oldFinancialPriorityId.toString()))
                 .andExpect(jsonPath("$.detailsHistory[0].linkedAccountId").value(account.accountId().toString()))
                 .andExpect(jsonPath("$.detailsHistory[0].recurringTransactionAffectsAccountBalance").value(true))
-                .andExpect(jsonPath("$.detailsHistory[0].recurringTransactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.detailsHistory[0].recurringtransactionAffectsSerenityline").value(true))
                 .andExpect(jsonPath("$.detailsHistory[1].effectiveFrom").value("2026-07-01"))
                 .andExpect(jsonPath("$.detailsHistory[1].recurringTransactionDescription").value("Ricorrente history aggiornata"))
                 .andExpect(jsonPath("$.detailsHistory[1].categoryId").value(newCategoryId.toString()))
@@ -2676,7 +2676,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         body.put("linkedCreditCardId", creditCard.creditCardId());
         body.put("linkedBucketId", bucket.bucketId());
         body.put("recurringTransactionAffectsAccountBalance", false);
-        body.put("recurringTransactionAffectsLiquidity", true);
+        body.put("recurringtransactionAffectsSerenityline", true);
 
         UUID recurringTransactionId = createRecurringTransactionThroughApi(owner, body);
 
@@ -2687,7 +2687,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.detailsHistory[0].linkedCreditCardId").value(creditCard.creditCardId().toString()))
                 .andExpect(jsonPath("$.detailsHistory[0].linkedBucketId").value(bucket.bucketId().toString()))
                 .andExpect(jsonPath("$.detailsHistory[0].recurringTransactionAffectsAccountBalance").value(false))
-                .andExpect(jsonPath("$.detailsHistory[0].recurringTransactionAffectsLiquidity").value(true));
+                .andExpect(jsonPath("$.detailsHistory[0].recurringtransactionAffectsSerenityline").value(true));
     }
 
     @Test
@@ -3594,7 +3594,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         details.put("categoryId", newCategoryId);
         details.put("financialPriorityId", newFinancialPriorityId);
         details.put("recurringTransactionAffectsAccountBalance", false);
-        details.put("recurringTransactionAffectsLiquidity", true);
+        details.put("recurringtransactionAffectsSerenityline", true);
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("details", details);
@@ -3608,7 +3608,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.categoryId").value(newCategoryId.toString()))
                 .andExpect(jsonPath("$.financialPriorityId").value(newFinancialPriorityId.toString()))
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
-                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true));
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true));
 
         assertThat(countRecurringTransactionRuleHistory(recurringTransactionId)).isEqualTo(1);
         assertThat(countRecurringTransactionDetailsHistory(recurringTransactionId, owner.userGroupId())).isEqualTo(2);
@@ -3864,7 +3864,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("recurringTransactionAffectsAccountBalance", false);
-        details.put("recurringTransactionAffectsLiquidity", false);
+        details.put("recurringtransactionAffectsSerenityline", false);
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("details", details);
@@ -4994,7 +4994,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         Map<String, Object> firstDetails = new LinkedHashMap<>();
         firstDetails.put("recurringTransactionAffectsAccountBalance", false);
-        firstDetails.put("recurringTransactionAffectsLiquidity", true);
+        firstDetails.put("recurringtransactionAffectsSerenityline", true);
 
         Map<String, Object> firstBody = new LinkedHashMap<>();
         firstBody.put("details", firstDetails);
@@ -5005,10 +5005,10 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                         .content(json(firstBody)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
-                .andExpect(jsonPath("$.recurringTransactionAffectsLiquidity").value(true));
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true));
 
         Map<String, Object> secondDetails = new LinkedHashMap<>();
-        secondDetails.put("recurringTransactionAffectsLiquidity", false);
+        secondDetails.put("recurringtransactionAffectsSerenityline", false);
 
         Map<String, Object> secondBody = new LinkedHashMap<>();
         secondBody.put("details", secondDetails);
@@ -5029,7 +5029,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         );
 
         assertThat(latestDetails.get("recurring_transaction_affects_account_balance")).isEqualTo(false);
-        assertThat(latestDetails.get("recurring_transaction_affects_liquidity")).isEqualTo(true);
+        assertThat(latestDetails.get("recurring_transaction_affects_serenityline")).isEqualTo(true);
     }
 
     @Test
@@ -6046,7 +6046,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                             financial_priority_id,
                             linked_account_id,
                             recurring_transaction_affects_account_balance,
-                            recurring_transaction_affects_liquidity,
+                            recurring_transaction_affects_serenityline,
                             recurring_transaction_details_effective_from,
                             user_group_id
                         )

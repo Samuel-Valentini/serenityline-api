@@ -158,7 +158,7 @@ class RecurringTransactionOccurrenceServiceIntegrationTest extends IntegrationTe
                         RecurringTransactionProjectedMovement::description,
                         RecurringTransactionProjectedMovement::finalOccurrence,
                         RecurringTransactionProjectedMovement::affectsAccountBalance,
-                        RecurringTransactionProjectedMovement::affectsLiquidity
+                        RecurringTransactionProjectedMovement::affectsSerenityline
                 )
                 .containsExactly(
                         tuple(
@@ -391,7 +391,7 @@ class RecurringTransactionOccurrenceServiceIntegrationTest extends IntegrationTe
                             linked_credit_card_id,
                             linked_bucket_id,
                             recurring_transaction_affects_account_balance,
-                            recurring_transaction_affects_liquidity,
+                            recurring_transaction_affects_serenityline,
                             recurring_transaction_details_effective_from,
                             user_group_id
                         )

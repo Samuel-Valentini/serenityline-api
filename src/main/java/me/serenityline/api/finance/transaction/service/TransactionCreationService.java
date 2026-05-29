@@ -114,7 +114,7 @@ public class TransactionCreationService {
                 request.transactionDescription(),
                 request.transactionAmount(),
                 request.transactionAffectsAccountBalance(),
-                request.transactionAffectsLiquidity(),
+                request.transactionAffectsSerenityline(),
                 category,
                 request.transactionChargeDate(),
                 request.transactionIsConfirmed(),

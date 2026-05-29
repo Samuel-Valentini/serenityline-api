@@ -18,7 +18,7 @@ import java.util.UUID;
 public class RecurringTransactionDetailsHistory {
 
     private static final boolean DEFAULT_AFFECTS_ACCOUNT_BALANCE = true;
-    private static final boolean DEFAULT_AFFECTS_LIQUIDITY = true;
+    private static final boolean DEFAULT_AFFECTS_SERENITYLINE = true;
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -55,8 +55,8 @@ public class RecurringTransactionDetailsHistory {
     @Column(name = "recurring_transaction_affects_account_balance", nullable = false)
     private boolean recurringTransactionAffectsAccountBalance;
 
-    @Column(name = "recurring_transaction_affects_liquidity", nullable = false)
-    private boolean recurringTransactionAffectsLiquidity;
+    @Column(name = "recurring_transaction_affects_serenityline", nullable = false)
+    private boolean recurringTransactionAffectsSerenityline;
 
     @Column(name = "recurring_transaction_details_effective_from", nullable = false)
     private LocalDate recurringTransactionDetailsEffectiveFrom;
@@ -80,7 +80,7 @@ public class RecurringTransactionDetailsHistory {
             CreditCard linkedCreditCard,
             Bucket linkedBucket,
             Boolean recurringTransactionAffectsAccountBalance,
-            Boolean recurringTransactionAffectsLiquidity,
+            Boolean recurringTransactionAffectsSerenityline,
             LocalDate recurringTransactionDetailsEffectiveFrom,
             UserGroup userGroup
     ) {
@@ -103,9 +103,9 @@ public class RecurringTransactionDetailsHistory {
         this.recurringTransactionAffectsAccountBalance = recurringTransactionAffectsAccountBalance == null
                 ? DEFAULT_AFFECTS_ACCOUNT_BALANCE
                 : recurringTransactionAffectsAccountBalance;
-        this.recurringTransactionAffectsLiquidity = recurringTransactionAffectsLiquidity == null
-                ? DEFAULT_AFFECTS_LIQUIDITY
-                : recurringTransactionAffectsLiquidity;
+        this.recurringTransactionAffectsSerenityline = recurringTransactionAffectsSerenityline == null
+                ? DEFAULT_AFFECTS_SERENITYLINE
+                : recurringTransactionAffectsSerenityline;
         this.recurringTransactionDetailsEffectiveFrom = Objects.requireNonNull(
                 recurringTransactionDetailsEffectiveFrom,
                 "recurringTransactionDetailsEffectiveFrom"
@@ -126,7 +126,7 @@ public class RecurringTransactionDetailsHistory {
             CreditCard linkedCreditCard,
             Bucket linkedBucket,
             Boolean recurringTransactionAffectsAccountBalance,
-            Boolean recurringTransactionAffectsLiquidity,
+            Boolean recurringTransactionAffectsSerenityline,
             LocalDate recurringTransactionDetailsEffectiveFrom,
             UserGroup userGroup
     ) {
@@ -139,7 +139,7 @@ public class RecurringTransactionDetailsHistory {
                 linkedCreditCard,
                 linkedBucket,
                 recurringTransactionAffectsAccountBalance,
-                recurringTransactionAffectsLiquidity,
+                recurringTransactionAffectsSerenityline,
                 recurringTransactionDetailsEffectiveFrom,
                 userGroup
         );
@@ -168,7 +168,7 @@ public class RecurringTransactionDetailsHistory {
 
     private void validateAffectsSomething() {
         if (!recurringTransactionAffectsAccountBalance
-                && !recurringTransactionAffectsLiquidity) {
+                && !recurringTransactionAffectsSerenityline) {
             throw new IllegalArgumentException(
                     "finance.recurringTransaction.affectsSomethingRequired"
             );
@@ -252,8 +252,8 @@ public class RecurringTransactionDetailsHistory {
         return recurringTransactionAffectsAccountBalance;
     }
 
-    public boolean isRecurringTransactionAffectsLiquidity() {
-        return recurringTransactionAffectsLiquidity;
+    public boolean isRecurringTransactionAffectsSerenityline() {
+        return recurringTransactionAffectsSerenityline;
     }
 
     public LocalDate getRecurringTransactionDetailsEffectiveFrom() {

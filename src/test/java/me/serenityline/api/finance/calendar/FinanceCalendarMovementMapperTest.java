@@ -61,7 +61,7 @@ class FinanceCalendarMovementMapperTest {
         when(transaction.getTransactionDescription()).thenReturn(" Transazione persistita ");
         when(transaction.getTransactionAmount()).thenReturn(new BigDecimal("-100.00"));
         when(transaction.isTransactionAffectsAccountBalance()).thenReturn(true);
-        when(transaction.isTransactionAffectsLiquidity()).thenReturn(false);
+        when(transaction.isTransactionAffectsSerenityline()).thenReturn(false);
         when(transaction.getCategory()).thenReturn(category);
         when(transaction.getAccount()).thenReturn(account);
         when(transaction.getCreditCard()).thenReturn(creditCard);
@@ -83,7 +83,7 @@ class FinanceCalendarMovementMapperTest {
         assertThat(movement.description()).isEqualTo("Transazione persistita");
         assertThat(movement.amount()).isEqualByComparingTo(new BigDecimal("-100.00"));
         assertThat(movement.affectsAccountBalance()).isTrue();
-        assertThat(movement.affectsLiquidity()).isFalse();
+        assertThat(movement.affectsSerenityline()).isFalse();
         assertThat(movement.categoryId()).isEqualTo(categoryId);
         assertThat(movement.financialPriorityId()).isNull();
         assertThat(movement.accountId()).isEqualTo(accountId);
@@ -155,7 +155,7 @@ class FinanceCalendarMovementMapperTest {
         assertThat(movement.description()).isEqualTo("Movimento ricorrente previsto");
         assertThat(movement.amount()).isEqualByComparingTo(new BigDecimal("-80.00"));
         assertThat(movement.affectsAccountBalance()).isFalse();
-        assertThat(movement.affectsLiquidity()).isTrue();
+        assertThat(movement.affectsSerenityline()).isTrue();
         assertThat(movement.categoryId()).isEqualTo(categoryId);
         assertThat(movement.financialPriorityId()).isEqualTo(financialPriorityId);
         assertThat(movement.accountId()).isEqualTo(accountId);
@@ -231,7 +231,7 @@ class FinanceCalendarMovementMapperTest {
         when(transaction.getTransactionDescription()).thenReturn("Transazione");
         when(transaction.getTransactionAmount()).thenReturn(new BigDecimal("-100.00"));
         when(transaction.isTransactionAffectsAccountBalance()).thenReturn(true);
-        when(transaction.isTransactionAffectsLiquidity()).thenReturn(true);
+        when(transaction.isTransactionAffectsSerenityline()).thenReturn(true);
         when(transaction.getCategory()).thenReturn(category);
         when(transaction.getAccount()).thenReturn(account);
         when(transaction.getCreditCard()).thenReturn(null);

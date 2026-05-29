@@ -87,7 +87,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionDescription").value("Spesa supermercato"))
                 .andExpect(jsonPath("$.transactionAmount").value(-42.5))
                 .andExpect(jsonPath("$.transactionAffectsAccountBalance").value(true))
-                .andExpect(jsonPath("$.transactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.transactionAffectsSerenityline").value(true))
                 .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
                 .andExpect(jsonPath("$.transactionChargeDate").value("2026-06-10"))
                 .andExpect(jsonPath("$.transactionIsConfirmed").value(false))
@@ -111,7 +111,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         assertThat((BigDecimal) row.get("transaction_amount"))
                 .isEqualByComparingTo(new BigDecimal("-42.50"));
         assertThat(row.get("transaction_affects_account_balance")).isEqualTo(true);
-        assertThat(row.get("transaction_affects_liquidity")).isEqualTo(true);
+        assertThat(row.get("transaction_affects_serenityline")).isEqualTo(true);
         assertThat(row.get("category_id")).isEqualTo(categoryId);
         assertThat(((java.sql.Date) row.get("transaction_charge_date")).toLocalDate()).isEqualTo(LocalDate.of(2026, 6, 10));
         assertThat(row.get("transaction_is_confirmed")).isEqualTo(false);
@@ -151,7 +151,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         body.put("transactionDescription", "Entrata extra");
         body.put("transactionAmount", new BigDecimal("150.00"));
         body.put("transactionAffectsAccountBalance", true);
-        body.put("transactionAffectsLiquidity", false);
+        body.put("transactionAffectsSerenityline", false);
         body.put("transactionIsConfirmed", true);
         body.put("transactionReminderEnabled", false);
         body.put("transactionReminderDaysBefore", 0);
@@ -166,7 +166,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionDescription").value("Entrata extra"))
                 .andExpect(jsonPath("$.transactionAmount").value(150.0))
                 .andExpect(jsonPath("$.transactionAffectsAccountBalance").value(true))
-                .andExpect(jsonPath("$.transactionAffectsLiquidity").value(false))
+                .andExpect(jsonPath("$.transactionAffectsSerenityline").value(false))
                 .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
                 .andExpect(jsonPath("$.transactionReminderEnabled").value(false))
                 .andExpect(jsonPath("$.transactionReminderDaysBefore").value(0))
@@ -181,18 +181,18 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void ownerShouldCreateLiquidityOnlyTransaction() throws Exception {
+    void ownerShouldCreateSerenitylineOnlyTransactionWithoutAffectingAccountBalance() throws Exception {
         UserRef owner = createUserWithNewGroup("OWNER");
-        AccountRef account = createAccount(owner.userGroupId(), "Conto transaction liquidity only");
+        AccountRef account = createAccount(owner.userGroupId(), "Conto transaction serenityline only");
         UUID categoryId = createActiveCategory(
                 owner.userGroupId(),
                 owner.userId(),
-                "Categoria transaction liquidity only"
+                "Categoria transaction serenityline only"
         );
 
         Map<String, Object> body = validTransactionRequest(account, categoryId);
         body.put("transactionAffectsAccountBalance", false);
-        body.put("transactionAffectsLiquidity", true);
+        body.put("transactionAffectsSerenityline", true);
 
         String accessToken = accessTokenFor(owner);
 
@@ -202,7 +202,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                         .content(json(body)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.transactionAffectsAccountBalance").value(false))
-                .andExpect(jsonPath("$.transactionAffectsLiquidity").value(true));
+                .andExpect(jsonPath("$.transactionAffectsSerenityline").value(true));
     }
 
     @Test
@@ -292,7 +292,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
 
         Map<String, Object> body = validTransactionRequest(account, categoryId);
         body.put("transactionAffectsAccountBalance", false);
-        body.put("transactionAffectsLiquidity", false);
+        body.put("transactionAffectsSerenityline", false);
 
         String accessToken = accessTokenFor(owner);
 
@@ -1042,7 +1042,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionDescription").value("Spesa supermercato"))
                 .andExpect(jsonPath("$.transactionAmount").value(-42.5))
                 .andExpect(jsonPath("$.transactionAffectsAccountBalance").value(true))
-                .andExpect(jsonPath("$.transactionAffectsLiquidity").value(true))
+                .andExpect(jsonPath("$.transactionAffectsSerenityline").value(true))
                 .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
                 .andExpect(jsonPath("$.transactionChargeDate").value("2026-06-10"))
                 .andExpect(jsonPath("$.transactionIsConfirmed").value(false))
@@ -2149,7 +2149,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 LocalDate.of(2026, 7, 20)
         );
         body.put("transactionAffectsAccountBalance", true);
-        body.put("transactionAffectsLiquidity", false);
+        body.put("transactionAffectsSerenityline", false);
         body.put("transactionIsConfirmed", true);
         body.put("transactionReminderEnabled", false);
         body.put("transactionReminderDaysBefore", 2);
@@ -2163,7 +2163,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionDescription").value("Descrizione aggiornata"))
                 .andExpect(jsonPath("$.transactionAmount").value(123.45))
                 .andExpect(jsonPath("$.transactionAffectsAccountBalance").value(true))
-                .andExpect(jsonPath("$.transactionAffectsLiquidity").value(false))
+                .andExpect(jsonPath("$.transactionAffectsSerenityline").value(false))
                 .andExpect(jsonPath("$.categoryId").value(newCategoryId.toString()))
                 .andExpect(jsonPath("$.transactionChargeDate").value("2026-07-20"))
                 .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
@@ -2186,7 +2186,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(row.get("transaction_description")).isEqualTo("Descrizione aggiornata");
         assertThat((BigDecimal) row.get("transaction_amount")).isEqualByComparingTo(new BigDecimal("123.45"));
         assertThat(row.get("transaction_affects_account_balance")).isEqualTo(true);
-        assertThat(row.get("transaction_affects_liquidity")).isEqualTo(false);
+        assertThat(row.get("transaction_affects_serenityline")).isEqualTo(false);
         assertThat(row.get("category_id")).isEqualTo(newCategoryId);
         assertThat(((java.sql.Date) row.get("transaction_charge_date")).toLocalDate()).isEqualTo(LocalDate.of(2026, 7, 20));
         assertThat(row.get("transaction_is_confirmed")).isEqualTo(true);
@@ -3084,7 +3084,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 LocalDate.of(2026, 6, 11)
         );
         body.put("transactionAffectsAccountBalance", false);
-        body.put("transactionAffectsLiquidity", false);
+        body.put("transactionAffectsSerenityline", false);
 
         mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
@@ -4627,7 +4627,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         body.put("transactionDescription", description);
         body.put("transactionAmount", new BigDecimal(amount));
         body.put("transactionAffectsAccountBalance", true);
-        body.put("transactionAffectsLiquidity", true);
+        body.put("transactionAffectsSerenityline", true);
         body.put("categoryId", categoryId);
         body.put("transactionChargeDate", chargeDate.toString());
         body.put("transactionIsConfirmed", true);
@@ -4706,7 +4706,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                             transaction_description,
                             transaction_amount,
                             transaction_affects_account_balance,
-                            transaction_affects_liquidity,
+                            transaction_affects_serenityline,
                             category_id,
                             transaction_charge_date,
                             transaction_is_confirmed,
@@ -4750,7 +4750,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                             transaction_description,
                             transaction_amount,
                             transaction_affects_account_balance,
-                            transaction_affects_liquidity,
+                            transaction_affects_serenityline,
                             category_id,
                             transaction_charge_date,
                             transaction_is_confirmed,

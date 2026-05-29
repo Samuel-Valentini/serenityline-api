@@ -478,7 +478,7 @@ class TransactionRepositoryCalendarQueryIntegrationTest {
                             transaction_description,
                             transaction_amount,
                             transaction_affects_account_balance,
-                            transaction_affects_liquidity,
+                            transaction_affects_serenityline,
                             category_id,
                             transaction_charge_date,
                             transaction_is_confirmed,

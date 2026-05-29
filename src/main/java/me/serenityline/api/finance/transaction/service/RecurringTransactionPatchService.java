@@ -309,8 +309,8 @@ public class RecurringTransactionPatchService {
                         baseDetails.isRecurringTransactionAffectsAccountBalance()
                 ),
                 valueOr(
-                        detailsPatch.recurringTransactionAffectsLiquidity(),
-                        baseDetails.isRecurringTransactionAffectsLiquidity()
+                        detailsPatch.recurringtransactionAffectsSerenityline(),
+                        baseDetails.isRecurringTransactionAffectsSerenityline()
                 ),
                 effectiveFrom,
                 recurringTransaction.getUserGroup()

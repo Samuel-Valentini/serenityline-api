@@ -639,7 +639,7 @@ class RecurringTransactionRepositoryCalendarQueryIntegrationTest {
                             financial_priority_id,
                             linked_account_id,
                             recurring_transaction_affects_account_balance,
-                            recurring_transaction_affects_liquidity,
+                            recurring_transaction_affects_serenityline,
                             recurring_transaction_details_effective_from,
                             user_group_id
                         )

@@ -40,7 +40,7 @@ public record RecurringTransactionResponse(
         UUID linkedCreditCardId,
         UUID linkedBucketId,
         boolean recurringTransactionAffectsAccountBalance,
-        boolean recurringTransactionAffectsLiquidity,
+        boolean recurringtransactionAffectsSerenityline,
         LocalDate recurringTransactionDetailsEffectiveFrom
 ) {
 
@@ -85,7 +85,7 @@ public record RecurringTransactionResponse(
                         ? null
                         : details.getLinkedBucket().getBucketId(),
                 details.isRecurringTransactionAffectsAccountBalance(),
-                details.isRecurringTransactionAffectsLiquidity(),
+                details.isRecurringTransactionAffectsSerenityline(),
                 details.getRecurringTransactionDetailsEffectiveFrom()
         );
     }

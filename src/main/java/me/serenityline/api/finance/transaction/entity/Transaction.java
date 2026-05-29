@@ -20,7 +20,7 @@ import java.util.UUID;
 public class Transaction {
 
     private static final boolean DEFAULT_AFFECTS_ACCOUNT_BALANCE = true;
-    private static final boolean DEFAULT_AFFECTS_LIQUIDITY = true;
+    private static final boolean DEFAULT_AFFECTS_SERENITYLINE = true;
     private static final boolean DEFAULT_IS_CONFIRMED = false;
     private static final boolean DEFAULT_REMINDER_ENABLED = true;
     private static final short DEFAULT_REMINDER_DAYS_BEFORE = 7;
@@ -39,8 +39,8 @@ public class Transaction {
     @Column(name = "transaction_affects_account_balance", nullable = false)
     private boolean transactionAffectsAccountBalance;
 
-    @Column(name = "transaction_affects_liquidity", nullable = false)
-    private boolean transactionAffectsLiquidity;
+    @Column(name = "transaction_affects_serenityline", nullable = false)
+    private boolean transactionAffectsSerenityline;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "category_id", nullable = false)
@@ -107,7 +107,7 @@ public class Transaction {
             String transactionDescription,
             BigDecimal transactionAmount,
             Boolean transactionAffectsAccountBalance,
-            Boolean transactionAffectsLiquidity,
+            Boolean transactionAffectsSerenityline,
             Category category,
             LocalDate transactionChargeDate,
             Boolean transactionIsConfirmed,
@@ -129,9 +129,9 @@ public class Transaction {
         this.transactionAffectsAccountBalance = transactionAffectsAccountBalance == null
                 ? DEFAULT_AFFECTS_ACCOUNT_BALANCE
                 : transactionAffectsAccountBalance;
-        this.transactionAffectsLiquidity = transactionAffectsLiquidity == null
-                ? DEFAULT_AFFECTS_LIQUIDITY
-                : transactionAffectsLiquidity;
+        this.transactionAffectsSerenityline = transactionAffectsSerenityline == null
+                ? DEFAULT_AFFECTS_SERENITYLINE
+                : transactionAffectsSerenityline;
         this.category = Objects.requireNonNull(category, "category");
         this.transactionChargeDate = Objects.requireNonNull(transactionChargeDate, "transactionChargeDate");
         this.transactionIsConfirmed = transactionIsConfirmed == null
@@ -161,7 +161,7 @@ public class Transaction {
             String transactionDescription,
             BigDecimal transactionAmount,
             Boolean transactionAffectsAccountBalance,
-            Boolean transactionAffectsLiquidity,
+            Boolean transactionAffectsSerenityline,
             Category category,
             LocalDate transactionChargeDate,
             Boolean transactionIsConfirmed,
@@ -178,7 +178,7 @@ public class Transaction {
                 transactionDescription,
                 transactionAmount,
                 transactionAffectsAccountBalance,
-                transactionAffectsLiquidity,
+                transactionAffectsSerenityline,
                 category,
                 transactionChargeDate,
                 transactionIsConfirmed,
@@ -201,7 +201,7 @@ public class Transaction {
             String transactionDescription,
             BigDecimal transactionAmount,
             Boolean transactionAffectsAccountBalance,
-            Boolean transactionAffectsLiquidity,
+            Boolean transactionAffectsSerenityline,
             Category category,
             LocalDate transactionChargeDate,
             Account account,
@@ -220,7 +220,7 @@ public class Transaction {
                 transactionDescription,
                 transactionAmount,
                 transactionAffectsAccountBalance,
-                transactionAffectsLiquidity,
+                transactionAffectsSerenityline,
                 category,
                 transactionChargeDate,
                 true,
@@ -277,7 +277,7 @@ public class Transaction {
             String transactionDescription,
             BigDecimal transactionAmount,
             Boolean transactionAffectsAccountBalance,
-            Boolean transactionAffectsLiquidity,
+            Boolean transactionAffectsSerenityline,
             Category category,
             LocalDate transactionChargeDate,
             Boolean transactionIsConfirmed,
@@ -295,9 +295,9 @@ public class Transaction {
                 transactionAffectsAccountBalance,
                 "transactionAffectsAccountBalance"
         );
-        this.transactionAffectsLiquidity = Objects.requireNonNull(
-                transactionAffectsLiquidity,
-                "transactionAffectsLiquidity"
+        this.transactionAffectsSerenityline = Objects.requireNonNull(
+                transactionAffectsSerenityline,
+                "transactionAffectsSerenityline"
         );
         this.category = Objects.requireNonNull(category, "category");
         this.transactionChargeDate = Objects.requireNonNull(transactionChargeDate, "transactionChargeDate");
@@ -351,7 +351,7 @@ public class Transaction {
     }
 
     private void validateAffectsSomething() {
-        if (!transactionAffectsAccountBalance && !transactionAffectsLiquidity) {
+        if (!transactionAffectsAccountBalance && !transactionAffectsSerenityline) {
             throw new IllegalArgumentException("finance.transaction.affectsSomethingRequired");
         }
     }
@@ -467,8 +467,8 @@ public class Transaction {
         return transactionAffectsAccountBalance;
     }
 
-    public boolean isTransactionAffectsLiquidity() {
-        return transactionAffectsLiquidity;
+    public boolean isTransactionAffectsSerenityline() {
+        return transactionAffectsSerenityline;
     }
 
     public Category getCategory() {

@@ -18,7 +18,7 @@ public record TransactionCreateRequest(
 
         Boolean transactionAffectsAccountBalance,
 
-        Boolean transactionAffectsLiquidity,
+        Boolean transactionAffectsSerenityline,
 
         @NotNull(message = "finance.transaction.categoryRequired")
         UUID categoryId,

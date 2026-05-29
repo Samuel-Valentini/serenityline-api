@@ -170,7 +170,7 @@ public class RecurringTransactionCreationService {
                 linkedCreditCard,
                 linkedBucket,
                 request.recurringTransactionAffectsAccountBalance(),
-                request.recurringTransactionAffectsLiquidity(),
+                request.recurringtransactionAffectsSerenityline(),
                 effectiveFrom,
                 currentUser.getUserGroup()
         );

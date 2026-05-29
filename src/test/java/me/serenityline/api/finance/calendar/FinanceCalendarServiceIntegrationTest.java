@@ -412,7 +412,7 @@ class FinanceCalendarServiceIntegrationTest {
                             transaction_description,
                             transaction_amount,
                             transaction_affects_account_balance,
-                            transaction_affects_liquidity,
+                            transaction_affects_serenityline,
                             category_id,
                             transaction_charge_date,
                             transaction_is_confirmed,
@@ -495,7 +495,7 @@ class FinanceCalendarServiceIntegrationTest {
                             financial_priority_id,
                             linked_account_id,
                             recurring_transaction_affects_account_balance,
-                            recurring_transaction_affects_liquidity,
+                            recurring_transaction_affects_serenityline,
                             recurring_transaction_details_effective_from,
                             user_group_id
                         )

@@ -53,7 +53,7 @@ public record RecurringTransactionCreateRequest(
 
         Boolean recurringTransactionAffectsAccountBalance,
 
-        Boolean recurringTransactionAffectsLiquidity,
+        Boolean recurringtransactionAffectsSerenityline,
 
         Boolean recurringTransactionIsSimulated,
 

@@ -14,7 +14,7 @@ public record FinanceCalendarMovement(
         String description,
         BigDecimal amount,
         boolean affectsAccountBalance,
-        boolean affectsLiquidity,
+        boolean affectsSerenityline,
         UUID categoryId,
         UUID financialPriorityId,
         UUID accountId,
@@ -40,7 +40,7 @@ public record FinanceCalendarMovement(
 
         description = description.trim();
 
-        if (!affectsAccountBalance && !affectsLiquidity) {
+        if (!affectsAccountBalance && !affectsSerenityline) {
             throw new IllegalArgumentException("finance.calendar.affectsSomethingRequired");
         }
 

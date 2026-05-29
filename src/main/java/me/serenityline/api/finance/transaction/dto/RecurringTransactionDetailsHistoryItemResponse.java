@@ -16,7 +16,7 @@ public record RecurringTransactionDetailsHistoryItemResponse(
         UUID linkedCreditCardId,
         UUID linkedBucketId,
         boolean recurringTransactionAffectsAccountBalance,
-        boolean recurringTransactionAffectsLiquidity,
+        boolean recurringtransactionAffectsSerenityline,
         OffsetDateTime createdAt
 ) {
 
@@ -37,7 +37,7 @@ public record RecurringTransactionDetailsHistoryItemResponse(
                         ? null
                         : history.getLinkedBucket().getBucketId(),
                 history.isRecurringTransactionAffectsAccountBalance(),
-                history.isRecurringTransactionAffectsLiquidity(),
+                history.isRecurringTransactionAffectsSerenityline(),
                 history.getRecurringTransactionDetailsHistoryCreatedAt()
         );
     }

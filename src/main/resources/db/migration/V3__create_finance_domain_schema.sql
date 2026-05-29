@@ -583,7 +583,7 @@ CREATE TABLE recurring_transaction_details_history
     linked_credit_card_id                            UUID,
     linked_bucket_id                                 UUID,
     recurring_transaction_affects_account_balance    BOOLEAN      NOT NULL DEFAULT TRUE,
-    recurring_transaction_affects_liquidity          BOOLEAN      NOT NULL DEFAULT TRUE,
+    recurring_transaction_affects_serenityline       BOOLEAN      NOT NULL DEFAULT TRUE,
     recurring_transaction_details_effective_from     DATE         NOT NULL DEFAULT CURRENT_DATE,
     recurring_transaction_details_history_created_at TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp(),
     user_group_id                                    UUID         NOT NULL,
@@ -619,7 +619,7 @@ CREATE TABLE recurring_transaction_details_history
     CONSTRAINT chk_recurring_transaction_details_affects_something
         CHECK (
             recurring_transaction_affects_account_balance = TRUE
-                OR recurring_transaction_affects_liquidity = TRUE
+                OR recurring_transaction_affects_serenityline = TRUE
             )
 );
 
@@ -697,7 +697,7 @@ CREATE TABLE transactions
     transaction_description             VARCHAR(500)   NOT NULL,
     transaction_amount                  NUMERIC(19, 2) NOT NULL,
     transaction_affects_account_balance BOOLEAN        NOT NULL DEFAULT TRUE,
-    transaction_affects_liquidity       BOOLEAN        NOT NULL DEFAULT TRUE,
+    transaction_affects_serenityline    BOOLEAN        NOT NULL DEFAULT TRUE,
     category_id                         UUID           NOT NULL,
     transaction_charge_date             DATE           NOT NULL,
     transaction_is_confirmed            BOOLEAN        NOT NULL DEFAULT FALSE,
@@ -758,7 +758,7 @@ CREATE TABLE transactions
     CONSTRAINT chk_transactions_affects_something
         CHECK (
             transaction_affects_account_balance = TRUE
-                OR transaction_affects_liquidity = TRUE
+                OR transaction_affects_serenityline = TRUE
             ),
 
     CONSTRAINT chk_transactions_simulation_consistency

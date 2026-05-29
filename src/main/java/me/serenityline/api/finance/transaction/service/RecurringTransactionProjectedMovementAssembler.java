@@ -84,7 +84,7 @@ public class RecurringTransactionProjectedMovementAssembler {
                 details.getLinkedCreditCard(),
                 details.getLinkedBucket(),
                 details.isRecurringTransactionAffectsAccountBalance(),
-                details.isRecurringTransactionAffectsLiquidity()
+                details.isRecurringTransactionAffectsSerenityline()
         );
     }
 }

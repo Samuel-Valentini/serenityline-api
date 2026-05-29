@@ -12,7 +12,7 @@ public record RecurringTransactionDetailsPatchCommand(
         PatchField<UUID> linkedCreditCardId,
         PatchField<UUID> linkedBucketId,
         PatchField<Boolean> recurringTransactionAffectsAccountBalance,
-        PatchField<Boolean> recurringTransactionAffectsLiquidity
+        PatchField<Boolean> recurringtransactionAffectsSerenityline
 ) {
 
     public boolean hasAnyField() {
@@ -24,6 +24,6 @@ public record RecurringTransactionDetailsPatchCommand(
                 || linkedCreditCardId.isPresent()
                 || linkedBucketId.isPresent()
                 || recurringTransactionAffectsAccountBalance.isPresent()
-                || recurringTransactionAffectsLiquidity.isPresent();
+                || recurringtransactionAffectsSerenityline.isPresent();
     }
 }

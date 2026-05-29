@@ -24,7 +24,7 @@ public record RecurringTransactionProjectedMovement(
         CreditCard linkedCreditCard,
         Bucket linkedBucket,
         boolean affectsAccountBalance,
-        boolean affectsLiquidity
+        boolean affectsSerenityline
 ) {
     public RecurringTransactionProjectedMovement {
         Objects.requireNonNull(recurringTransactionId, "recurringTransactionId");
@@ -41,7 +41,7 @@ public record RecurringTransactionProjectedMovement(
 
         description = description.trim();
 
-        if (!affectsAccountBalance && !affectsLiquidity) {
+        if (!affectsAccountBalance && !affectsSerenityline) {
             throw new IllegalArgumentException("finance.recurringTransaction.affectsSomethingRequired");
         }
     }

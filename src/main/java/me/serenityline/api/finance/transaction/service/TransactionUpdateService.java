@@ -119,7 +119,7 @@ public class TransactionUpdateService {
                 request.transactionDescription(),
                 request.transactionAmount(),
                 request.transactionAffectsAccountBalance(),
-                request.transactionAffectsLiquidity(),
+                request.transactionAffectsSerenityline(),
                 category,
                 request.transactionChargeDate(),
                 request.transactionIsConfirmed(),

@@ -31,7 +31,7 @@ class RecurringTransactionProjectedMovementAssemblerTest {
             CreditCard linkedCreditCard,
             Bucket linkedBucket,
             boolean affectsAccountBalance,
-            boolean affectsLiquidity
+            boolean affectsSerenityline
     ) {
         RecurringTransactionDetailsHistory details =
                 mock(RecurringTransactionDetailsHistory.class);
@@ -60,8 +60,8 @@ class RecurringTransactionProjectedMovementAssemblerTest {
         when(details.isRecurringTransactionAffectsAccountBalance())
                 .thenReturn(affectsAccountBalance);
 
-        when(details.isRecurringTransactionAffectsLiquidity())
-                .thenReturn(affectsLiquidity);
+        when(details.isRecurringTransactionAffectsSerenityline())
+                .thenReturn(affectsSerenityline);
 
         return details;
     }
@@ -128,7 +128,7 @@ class RecurringTransactionProjectedMovementAssemblerTest {
                         RecurringTransactionProjectedMovement::financialPriority,
                         RecurringTransactionProjectedMovement::linkedAccount,
                         RecurringTransactionProjectedMovement::affectsAccountBalance,
-                        RecurringTransactionProjectedMovement::affectsLiquidity
+                        RecurringTransactionProjectedMovement::affectsSerenityline
                 )
                 .containsExactly(
                         tuple(
@@ -201,7 +201,7 @@ class RecurringTransactionProjectedMovementAssemblerTest {
         assertThat(movement.description()).isEqualTo("Seconda versione");
         assertThat(movement.linkedAccount()).isSameAs(secondAccount);
         assertThat(movement.affectsAccountBalance()).isTrue();
-        assertThat(movement.affectsLiquidity()).isFalse();
+        assertThat(movement.affectsSerenityline()).isFalse();
     }
 
     @Test

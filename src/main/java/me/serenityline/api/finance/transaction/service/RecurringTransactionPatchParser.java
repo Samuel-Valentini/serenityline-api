@@ -51,7 +51,7 @@ public class RecurringTransactionPatchParser {
             "linkedCreditCardId",
             "linkedBucketId",
             "recurringTransactionAffectsAccountBalance",
-            "recurringTransactionAffectsLiquidity"
+            "recurringtransactionAffectsSerenityline"
     );
 
     public RecurringTransactionPatchCommand parse(JsonNode body) {
@@ -120,7 +120,7 @@ public class RecurringTransactionPatchParser {
                 nullableUuidField(node, "linkedCreditCardId"),
                 nullableUuidField(node, "linkedBucketId"),
                 requiredBooleanField(node, "recurringTransactionAffectsAccountBalance"),
-                requiredBooleanField(node, "recurringTransactionAffectsLiquidity")
+                requiredBooleanField(node, "recurringtransactionAffectsSerenityline")
         );
 
         if (!command.hasAnyField()) {
