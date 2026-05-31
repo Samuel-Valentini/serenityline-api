@@ -314,6 +314,8 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("logicalDate") LocalDate logicalDate
     );
 
+    boolean existsByCreditCard_CreditCardId(UUID creditCardId);
+
     interface ConfirmedRecurringOccurrenceKeyView {
 
         UUID getRecurringTransactionId();

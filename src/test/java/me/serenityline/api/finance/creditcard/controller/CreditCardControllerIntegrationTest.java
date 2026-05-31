@@ -1410,6 +1410,84 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.fieldErrors").isEmpty());
     }
 
+    @Test
+    void deleteCreditCardShouldRejectCreditCardUsedByTransaction() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto carta usata da transaction");
+        CreditCard creditCard = createCreditCard(
+                userGroup,
+                account,
+                "Carta usata da transaction"
+        );
+
+        UUID categoryId = createActiveCategory(
+                userGroup,
+                owner,
+                "Categoria carta usata da transaction"
+        );
+
+        insertTransactionUsingCreditCard(
+                userGroup,
+                account,
+                creditCard,
+                categoryId
+        );
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.alreadyUsed"))
+                .andExpect(jsonPath("$.message").value("Questa carta di credito non può essere eliminata perché è già stata usata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        assertThat(creditCardRepository.findById(creditCard.getCreditCardId()))
+                .isPresent();
+    }
+
+    @Test
+    void deleteCreditCardShouldRejectCreditCardUsedByRecurringTransactionDetailsHistory() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+        UserGroup userGroup = owner.getUserGroup();
+
+        Account account = createAccount(userGroup, "Conto carta usata da ricorrente");
+        CreditCard creditCard = createCreditCard(
+                userGroup,
+                account,
+                "Carta usata da ricorrente"
+        );
+
+        UUID categoryId = createActiveCategory(
+                userGroup,
+                owner,
+                "Categoria carta usata da ricorrente"
+        );
+
+        insertRecurringTransactionDetailsHistoryUsingCreditCard(
+                userGroup,
+                account,
+                creditCard,
+                categoryId
+        );
+
+        mockMvc.perform(delete(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId())
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.creditCard.alreadyUsed"))
+                .andExpect(jsonPath("$.message").value("Questa carta di credito non può essere eliminata perché è già stata usata."))
+                .andExpect(jsonPath("$.path").value(CREDIT_CARDS_PATH + "/" + creditCard.getCreditCardId()))
+                .andExpect(jsonPath("$.fieldErrors").isArray())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        assertThat(creditCardRepository.findById(creditCard.getCreditCardId()))
+                .isPresent();
+    }
+
     private String validCreateCreditCardJson(String creditCardName, UUID accountId) {
         return """
                 {
@@ -1537,6 +1615,155 @@ class CreditCardControllerIntegrationTest extends IntegrationTestSupport {
                 account.getAccountId(),
                 creditCard.getCreditCardId(),
                 userGroup.getUserGroupId()
+        );
+    }
+
+    private UUID createActiveCategory(
+            UserGroup userGroup,
+            User createdByUser,
+            String categoryName
+    ) {
+        UUID categoryId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                        INSERT INTO categories (
+                            category_id,
+                            user_group_id,
+                            category_created_by_user_id,
+                            category_current_name
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                categoryId,
+                userGroup.getUserGroupId(),
+                createdByUser.getUserId(),
+                categoryName
+        );
+
+        jdbcTemplate.update("""
+                        INSERT INTO category_details_history (
+                            category_id,
+                            category_name,
+                            category_description
+                        )
+                        VALUES (?, ?, ?)
+                        """,
+                categoryId,
+                categoryName,
+                "Categoria test"
+        );
+
+        jdbcTemplate.update("""
+                        INSERT INTO category_status_history (
+                            category_id,
+                            category_is_active
+                        )
+                        VALUES (?, TRUE)
+                        """,
+                categoryId
+        );
+
+        return categoryId;
+    }
+
+    private void insertTransactionUsingCreditCard(
+            UserGroup userGroup,
+            Account account,
+            CreditCard creditCard,
+            UUID categoryId
+    ) {
+        jdbcTemplate.update("""
+                        INSERT INTO transactions (
+                            transaction_id,
+                            transaction_description,
+                            transaction_amount,
+                            transaction_affects_account_balance,
+                            transaction_affects_serenityline,
+                            category_id,
+                            transaction_charge_date,
+                            transaction_is_confirmed,
+                            account_id,
+                            credit_card_id,
+                            transaction_is_simulated,
+                            transaction_is_user_entered,
+                            transaction_reminder_enabled,
+                            transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, TRUE, TRUE, ?, ?, TRUE, ?, ?, FALSE, TRUE, TRUE, 7, ?)
+                        """,
+                UUID.randomUUID(),
+                "Transazione con carta",
+                new BigDecimal("-25.00"),
+                categoryId,
+                LocalDate.of(2026, 6, 10),
+                account.getAccountId(),
+                creditCard.getCreditCardId(),
+                userGroup.getUserGroupId()
+        );
+    }
+
+    private void insertRecurringTransactionDetailsHistoryUsingCreditCard(
+            UserGroup userGroup,
+            Account account,
+            CreditCard creditCard,
+            UUID categoryId
+    ) {
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                        INSERT INTO recurring_transactions (
+                            recurring_transaction_id,
+                            recurring_transaction_amount_is_adjustable,
+                            recurring_transaction_first_payment_date,
+                            recurring_transaction_is_simulated,
+                            recurring_transaction_reminder_enabled,
+                            recurring_transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        VALUES (?, FALSE, ?, FALSE, TRUE, 7, ?)
+                        """,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 1),
+                userGroup.getUserGroupId()
+        );
+
+        jdbcTemplate.update("""
+                        INSERT INTO recurring_transaction_details_history (
+                            recurring_transaction_details_history_id,
+                            recurring_transaction_id,
+                            recurring_transaction_description,
+                            category_id,
+                            financial_priority_id,
+                            linked_account_id,
+                            linked_credit_card_id,
+                            recurring_transaction_affects_account_balance,
+                            recurring_transaction_affects_serenityline,
+                            recurring_transaction_details_effective_from,
+                            user_group_id
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, ?, ?)
+                        """,
+                UUID.randomUUID(),
+                recurringTransactionId,
+                "Ricorrente con carta",
+                categoryId,
+                financialPriorityId("ESSENTIAL"),
+                account.getAccountId(),
+                creditCard.getCreditCardId(),
+                LocalDate.of(2026, 6, 1),
+                userGroup.getUserGroupId()
+        );
+    }
+
+    private UUID financialPriorityId(String financialPriorityName) {
+        return jdbcTemplate.queryForObject("""
+                        SELECT financial_priority_id
+                        FROM financial_priorities
+                        WHERE financial_priority_name = ?
+                        """,
+                UUID.class,
+                financialPriorityName
         );
     }
 }

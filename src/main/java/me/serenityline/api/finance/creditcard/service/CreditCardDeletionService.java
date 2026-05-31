@@ -18,13 +18,16 @@ public class CreditCardDeletionService {
 
     private final CreditCardRepository creditCardRepository;
     private final UserRepository userRepository;
+    private final CreditCardUsageChecker creditCardUsageChecker;
 
     public CreditCardDeletionService(
             CreditCardRepository creditCardRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            CreditCardUsageChecker creditCardUsageChecker
     ) {
         this.creditCardRepository = Objects.requireNonNull(creditCardRepository, "creditCardRepository");
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
+        this.creditCardUsageChecker = Objects.requireNonNull(creditCardUsageChecker, "creditCardUsageChecker");
     }
 
     @Transactional
@@ -35,11 +38,9 @@ public class CreditCardDeletionService {
         User currentUser = findCurrentUser(currentUserId);
         CreditCard creditCard = findDeletableCreditCard(currentUser, creditCardId);
 
-//        TODO:
-//        if (creditCardUsageChecker.isCreditCardUsed(creditCard.getCreditCardId())) {
-//            throw new IllegalStateException("finance.creditCard.alreadyUsed");
-//        }
-
+        if (creditCardUsageChecker.isCreditCardUsed(creditCard.getCreditCardId())) {
+            throw new IllegalStateException("finance.creditCard.alreadyUsed");
+        }
 
         try {
             creditCardRepository.delete(creditCard);

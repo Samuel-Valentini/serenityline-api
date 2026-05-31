@@ -99,4 +99,6 @@ public interface RecurringTransactionDetailsHistoryRepository
             @Param("recurringTransactionIds") Collection<UUID> recurringTransactionIds,
             @Param("userGroupId") UUID userGroupId
     );
+
+    boolean existsByLinkedCreditCard_CreditCardId(UUID creditCardId);
 }
