@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -485,5 +486,450 @@ public interface RecurringTransactionRepository extends JpaRepository<RecurringT
             @Param("userId") UUID userId,
             @Param("accountIds") Collection<UUID> accountIds,
             @Param("simulationGroupIds") Collection<UUID> simulationGroupIds
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND rt.recurring_transaction_is_simulated = FALSE
+              AND (
+                    CAST(:accountId AS uuid) IS NULL
+                    OR current_details.linked_account_id = CAST(:accountId AS uuid)
+              )
+              AND EXISTS (
+                     SELECT 1
+                     FROM recurring_transaction_history rth
+                     WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                       AND rth.effective_from <= GREATEST(
+                             CAST(:asOfDate AS date),
+                             rt.recurring_transaction_first_payment_date
+                       )
+                       AND (
+                             rth.effective_to IS NULL
+                             OR rth.effective_to > GREATEST(
+                                 CAST(:asOfDate AS date),
+                                 rt.recurring_transaction_first_payment_date
+                             )
+                       )
+               )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseByUserGroup(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("accountId") UUID accountId,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND (
+                    rt.recurring_transaction_is_simulated = FALSE
+                    OR rt.simulation_group_id IN (:simulationGroupIds)
+              )
+              AND (
+                    CAST(:accountId AS uuid) IS NULL
+                    OR current_details.linked_account_id = CAST(:accountId AS uuid)
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_from <= GREATEST(
+                            CAST(:asOfDate AS date),
+                            rt.recurring_transaction_first_payment_date
+                      )
+                      AND (
+                            rth.effective_to IS NULL
+                            OR rth.effective_to > GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                            )
+                      )
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseAndSimulatedByUserGroup(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("accountId") UUID accountId,
+            @Param("simulationGroupIds") Collection<UUID> simulationGroupIds,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND rt.recurring_transaction_is_simulated = FALSE
+              AND (
+                    CAST(:accountId AS uuid) IS NULL
+                    OR current_details.linked_account_id = CAST(:accountId AS uuid)
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_from <= GREATEST(
+                            CAST(:asOfDate AS date),
+                            rt.recurring_transaction_first_payment_date
+                      )
+                      AND (
+                            rth.effective_to IS NULL
+                            OR rth.effective_to > GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                            )
+                      )
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM accounts_users au
+                    WHERE au.account_id = current_details.linked_account_id
+                      AND au.user_group_id = rt.user_group_id
+                      AND au.user_id = :userId
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseByLinkedUserAccess(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("accountId") UUID accountId,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND (
+                    rt.recurring_transaction_is_simulated = FALSE
+                    OR rt.simulation_group_id IN (:simulationGroupIds)
+              )
+              AND (
+                    CAST(:accountId AS uuid) IS NULL
+                    OR current_details.linked_account_id = CAST(:accountId AS uuid)
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_from <= GREATEST(
+                            CAST(:asOfDate AS date),
+                            rt.recurring_transaction_first_payment_date
+                      )
+                      AND (
+                            rth.effective_to IS NULL
+                            OR rth.effective_to > GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                            )
+                      )
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM accounts_users au
+                    WHERE au.account_id = current_details.linked_account_id
+                      AND au.user_group_id = rt.user_group_id
+                      AND au.user_id = :userId
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseAndSimulatedByLinkedUserAccess(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("accountId") UUID accountId,
+            @Param("simulationGroupIds") Collection<UUID> simulationGroupIds,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND rt.recurring_transaction_is_simulated = FALSE
+              AND current_details.linked_account_id IN (:accountIds)
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_from <= GREATEST(
+                            CAST(:asOfDate AS date),
+                            rt.recurring_transaction_first_payment_date
+                      )
+                      AND (
+                            rth.effective_to IS NULL
+                            OR rth.effective_to > GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                            )
+                      )
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseByUserGroupForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("accountIds") Collection<UUID> accountIds,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND (
+                    rt.recurring_transaction_is_simulated = FALSE
+                    OR rt.simulation_group_id IN (:simulationGroupIds)
+              )
+              AND current_details.linked_account_id IN (:accountIds)
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_from <= GREATEST(
+                            CAST(:asOfDate AS date),
+                            rt.recurring_transaction_first_payment_date
+                      )
+                      AND (
+                            rth.effective_to IS NULL
+                            OR rth.effective_to > GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                            )
+                      )
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseAndSimulatedByUserGroupForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("accountIds") Collection<UUID> accountIds,
+            @Param("simulationGroupIds") Collection<UUID> simulationGroupIds,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND rt.recurring_transaction_is_simulated = FALSE
+              AND current_details.linked_account_id IN (:accountIds)
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_from <= GREATEST(
+                            CAST(:asOfDate AS date),
+                            rt.recurring_transaction_first_payment_date
+                      )
+                      AND (
+                            rth.effective_to IS NULL
+                            OR rth.effective_to > GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                            )
+                      )
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM accounts_users au
+                    WHERE au.account_id = current_details.linked_account_id
+                      AND au.user_group_id = rt.user_group_id
+                      AND au.user_id = :userId
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseByLinkedUserAccessForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("accountIds") Collection<UUID> accountIds,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            JOIN LATERAL (
+                SELECT rdth.*
+                FROM recurring_transaction_details_history rdth
+                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                  AND rdth.user_group_id = rt.user_group_id
+                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                        CAST(:asOfDate AS date),
+                        rt.recurring_transaction_first_payment_date
+                  )
+                ORDER BY
+                    rdth.recurring_transaction_details_effective_from DESC,
+                    rdth.recurring_transaction_details_history_created_at DESC,
+                    rdth.recurring_transaction_details_history_id DESC
+                LIMIT 1
+            ) current_details ON TRUE
+            WHERE rt.user_group_id = :userGroupId
+              AND (
+                    rt.recurring_transaction_is_simulated = FALSE
+                    OR rt.simulation_group_id IN (:simulationGroupIds)
+              )
+              AND current_details.linked_account_id IN (:accountIds)
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+            
+                      AND rth.effective_from <= GREATEST(
+                            CAST(:asOfDate AS date),
+                            rt.recurring_transaction_first_payment_date
+                      )
+                      AND (
+                            rth.effective_to IS NULL
+                            OR rth.effective_to > GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                            )
+                      )
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM accounts_users au
+                    WHERE au.account_id = current_details.linked_account_id
+                      AND au.user_group_id = rt.user_group_id
+                      AND au.user_id = :userId
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findReportReadableBaseAndSimulatedByLinkedUserAccessForAccounts(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("userId") UUID userId,
+            @Param("accountIds") Collection<UUID> accountIds,
+            @Param("simulationGroupIds") Collection<UUID> simulationGroupIds,
+            @Param("asOfDate") LocalDate asOfDate
     );
 }

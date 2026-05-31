@@ -567,6 +567,20 @@ public class FinanceCalendarService {
         }
     }
 
+    private void validateDatePresenceAndOrder(LocalDate from, LocalDate to) {
+        if (from == null) {
+            throw new IllegalArgumentException("finance.calendar.fromRequired");
+        }
+
+        if (to == null) {
+            throw new IllegalArgumentException("finance.calendar.toRequired");
+        }
+
+        if (to.isBefore(from)) {
+            throw new IllegalArgumentException("finance.calendar.dateRangeInvalid");
+        }
+    }
+
     private Set<ConfirmedRecurringOccurrenceKey> findConfirmedRecurringOccurrenceKeysForProjectedMovements(
             UUID userGroupId,
             List<RecurringTransactionProjectedMovement> projectedMovements,
@@ -705,6 +719,35 @@ public class FinanceCalendarService {
 
         validateRange(request.from(), request.to());
 
+        return getDailyBalancesAfterRequestValidation(
+                currentUserId,
+                request
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<FinanceCalendarDailyBalance> getDailyBalancesForReport(
+            UUID currentUserId,
+            FinanceCalendarSearchRequest request
+    ) {
+        Objects.requireNonNull(currentUserId, "currentUserId");
+        Objects.requireNonNull(request, "request");
+
+        validateDatePresenceAndOrder(
+                request.from(),
+                request.to()
+        );
+
+        return getDailyBalancesAfterRequestValidation(
+                currentUserId,
+                request
+        );
+    }
+
+    private List<FinanceCalendarDailyBalance> getDailyBalancesAfterRequestValidation(
+            UUID currentUserId,
+            FinanceCalendarSearchRequest request
+    ) {
         CalendarRequestContext context = buildCalendarRequestContext(
                 currentUserId,
                 request.accountIds(),

@@ -2367,6 +2367,344 @@ class FinanceCalendarServiceTest {
         );
     }
 
+    @Test
+    void getDailyBalancesShouldStillRejectRangeLongerThanConfiguredLimit() {
+        UUID currentUserId = UUID.randomUUID();
+
+        when(financeCalendarProperties.getMaxRangeDays())
+                .thenReturn(10L);
+
+        FinanceCalendarSearchRequest request = request(
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 20),
+                null,
+                null
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalances(
+                currentUserId,
+                request
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.calendar.dateRangeTooLarge");
+
+        verify(financeCalendarProperties).getMaxRangeDays();
+        verifyNoInteractions(userRepository);
+        verifyNoInteractions(accountRepository);
+        verifyNoInteractions(transactionRepository);
+        verifyNoInteractions(recurringTransactionRepository);
+        verifyNoInteractions(recurringTransactionProjectedMovementBatchService);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldAllowRangeLongerThanPublicCalendarLimit() {
+        UUID currentUserId = UUID.randomUUID();
+        UUID userGroupId = UUID.randomUUID();
+
+        LocalDate from = LocalDate.of(2026, 1, 1);
+        LocalDate to = LocalDate.of(2026, 1, 20);
+
+        User owner = user(currentUserId, userGroupId);
+
+        lenient().when(financeCalendarProperties.getMaxRangeDays())
+                .thenReturn(10L);
+
+        when(userRepository.findById(currentUserId))
+                .thenReturn(Optional.of(owner));
+
+        when(transactionAccessService.canReadAllGroupTransactions(owner))
+                .thenReturn(true);
+
+        when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(owner))
+                .thenReturn(true);
+
+        when(accountRepository.findAllByUserGroup_UserGroupIdOrderByAccountNameAsc(
+                userGroupId
+        )).thenReturn(List.of());
+
+        FinanceCalendarSearchRequest request = request(
+                from,
+                to,
+                null,
+                null
+        );
+
+        List<FinanceCalendarDailyBalance> result =
+                service.getDailyBalancesForReport(
+                        currentUserId,
+                        request
+                );
+
+        assertThat(result).hasSize(20);
+        assertThat(result.get(0).date())
+                .isEqualTo(from);
+        assertThat(result.get(result.size() - 1).date())
+                .isEqualTo(to);
+
+        assertThat(result)
+                .allSatisfy(dailyBalance -> {
+                    assertThat(dailyBalance.accounts()).isEmpty();
+                    assertThat(dailyBalance.buckets()).isEmpty();
+                    assertThat(dailyBalance.totalsByCurrency()).isEmpty();
+                });
+
+        verify(financeCalendarProperties, never()).getMaxRangeDays();
+
+        verify(recurringTransactionAccessService).assertReadableAccountFilter(
+                owner,
+                userGroupId,
+                null
+        );
+
+        verifyNoInteractions(transactionRepository);
+        verifyNoInteractions(recurringTransactionRepository);
+        verifyNoInteractions(recurringTransactionProjectedMovementBatchService);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRequireCurrentUserId() {
+        FinanceCalendarSearchRequest request = request(
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 20),
+                null,
+                null
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                null,
+                request
+        ))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("currentUserId");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRequireRequest() {
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                UUID.randomUUID(),
+                null
+        ))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("request");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRejectMissingFromBeforeLoadingUser() {
+        UUID currentUserId = UUID.randomUUID();
+
+        FinanceCalendarSearchRequest request = request(
+                null,
+                LocalDate.of(2026, 1, 20),
+                null,
+                null
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                currentUserId,
+                request
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.calendar.fromRequired");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRejectMissingToBeforeLoadingUser() {
+        UUID currentUserId = UUID.randomUUID();
+
+        FinanceCalendarSearchRequest request = request(
+                LocalDate.of(2026, 1, 1),
+                null,
+                null,
+                null
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                currentUserId,
+                request
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.calendar.toRequired");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRejectInvalidDateRangeBeforeLoadingUser() {
+        UUID currentUserId = UUID.randomUUID();
+
+        FinanceCalendarSearchRequest request = request(
+                LocalDate.of(2026, 1, 20),
+                LocalDate.of(2026, 1, 1),
+                null,
+                null
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                currentUserId,
+                request
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.calendar.dateRangeInvalid");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldStillRejectUnreadableAccountFilter() {
+        UUID currentUserId = UUID.randomUUID();
+        UUID userGroupId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+
+        User owner = user(currentUserId, userGroupId);
+
+        when(userRepository.findById(currentUserId))
+                .thenReturn(Optional.of(owner));
+
+        when(transactionAccessService.canReadAllGroupTransactions(owner))
+                .thenReturn(true);
+
+        when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(owner))
+                .thenReturn(true);
+
+        doThrow(new ResourceNotFoundException("finance.account.notFound"))
+                .when(recurringTransactionAccessService)
+                .assertReadableAccountFilter(
+                        owner,
+                        userGroupId,
+                        accountId
+                );
+
+        FinanceCalendarSearchRequest request = request(
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 20),
+                accountId,
+                null
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                currentUserId,
+                request
+        ))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        verify(recurringTransactionAccessService).assertReadableAccountFilter(
+                owner,
+                userGroupId,
+                accountId
+        );
+
+        verifyNoInteractions(accountRepository);
+        verifyNoInteractions(transactionRepository);
+        verifyNoInteractions(recurringTransactionRepository);
+        verifyNoInteractions(recurringTransactionProjectedMovementBatchService);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRejectTooManyAccountIdsBeforeLoadingUser() {
+        when(financeCalendarProperties.getMaxAccountIds())
+                .thenReturn(1);
+
+        UUID firstAccountId = UUID.randomUUID();
+        UUID secondAccountId = UUID.randomUUID();
+
+        FinanceCalendarSearchRequest request = requestForAccounts(
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 20),
+                List.of(firstAccountId, secondAccountId),
+                null
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                UUID.randomUUID(),
+                request
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.calendar.accountIdsTooMany");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRejectTooManySimulationGroupIdsBeforeLoadingUser() {
+        when(financeProperties.getMaxSimulationGroupIds())
+                .thenReturn(1);
+
+        FinanceCalendarSearchRequest request = request(
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 20),
+                null,
+                List.of(UUID.randomUUID(), UUID.randomUUID())
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                UUID.randomUUID(),
+                request
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.simulationGroup.idsTooMany");
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void getDailyBalancesForReportShouldRejectUnreadableSimulationGroup() {
+        UUID currentUserId = UUID.randomUUID();
+        UUID userGroupId = UUID.randomUUID();
+
+        UUID foundSimulationGroupId = UUID.randomUUID();
+        UUID missingSimulationGroupId = UUID.randomUUID();
+
+        User owner = user(currentUserId, userGroupId);
+
+        when(userRepository.findById(currentUserId))
+                .thenReturn(Optional.of(owner));
+
+        when(transactionAccessService.canReadAllGroupTransactions(owner))
+                .thenReturn(true);
+
+        when(recurringTransactionAccessService.canReadAllGroupRecurringTransactions(owner))
+                .thenReturn(true);
+
+        when(simulationGroupRepository.findActiveIdsByUserGroupId(
+                anyCollection(),
+                eq(userGroupId)
+        )).thenReturn(List.of(foundSimulationGroupId));
+
+        FinanceCalendarSearchRequest request = request(
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 20),
+                null,
+                List.of(foundSimulationGroupId, missingSimulationGroupId)
+        );
+
+        assertThatThrownBy(() -> service.getDailyBalancesForReport(
+                currentUserId,
+                request
+        ))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        verify(recurringTransactionAccessService).assertReadableAccountFilter(
+                owner,
+                userGroupId,
+                null
+        );
+
+        verify(simulationGroupRepository).findActiveIdsByUserGroupId(
+                eq(List.of(foundSimulationGroupId, missingSimulationGroupId)),
+                eq(userGroupId)
+        );
+
+        verifyNoInteractions(accountRepository);
+        verifyNoInteractions(transactionRepository);
+        verifyNoInteractions(recurringTransactionRepository);
+        verifyNoInteractions(recurringTransactionProjectedMovementBatchService);
+    }
 
     private void stubNoConfirmedKeys(
             UUID userGroupId,
