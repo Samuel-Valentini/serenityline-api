@@ -42,4 +42,32 @@ public interface CategoryRepository extends JpaRepository<Category, UUID> {
             @Param("categoryId") UUID categoryId,
             @Param("userGroupId") UUID userGroupId
     );
+
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM categories category
+                WHERE category.user_group_id = :userGroupId
+                  AND lower(btrim(category.category_current_name)) = lower(btrim(:categoryName))
+            )
+            """, nativeQuery = true)
+    boolean existsByUserGroupIdAndNormalizedCurrentName(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("categoryName") String categoryName
+    );
+
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM categories category
+                WHERE category.user_group_id = :userGroupId
+                  AND category.category_id <> :categoryId
+                  AND lower(btrim(category.category_current_name)) = lower(btrim(:categoryName))
+            )
+            """, nativeQuery = true)
+    boolean existsByUserGroupIdAndNormalizedCurrentNameExcludingCategoryId(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("categoryId") UUID categoryId,
+            @Param("categoryName") String categoryName
+    );
 }

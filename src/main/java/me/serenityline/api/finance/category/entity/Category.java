@@ -68,4 +68,8 @@ public class Category {
     public boolean wasCreatedBy(UUID userId) {
         return categoryCreatedByUserId.equals(userId);
     }
+
+    public void updateCurrentName(String categoryCurrentName) {
+        this.categoryCurrentName = categoryCurrentName;
+    }
 }
