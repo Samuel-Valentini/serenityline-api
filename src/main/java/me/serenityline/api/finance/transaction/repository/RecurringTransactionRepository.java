@@ -932,4 +932,36 @@ public interface RecurringTransactionRepository extends JpaRepository<RecurringT
             @Param("simulationGroupIds") Collection<UUID> simulationGroupIds,
             @Param("asOfDate") LocalDate asOfDate
     );
+
+    @Query(value = """
+            SELECT rt.*
+            FROM recurring_transactions rt
+            WHERE rt.user_group_id = :userGroupId
+              AND rt.recurring_transaction_is_simulated = FALSE
+              AND rt.recurring_transaction_first_payment_date <= :latestRelevantDate
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_history rth
+                    WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                      AND rth.effective_to IS NULL
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM recurring_transaction_details_history details
+                    WHERE details.recurring_transaction_id = rt.recurring_transaction_id
+                      AND details.user_group_id = rt.user_group_id
+                      AND details.linked_bucket_id = :bucketId
+                      AND details.recurring_transaction_details_effective_from <= :latestRelevantDate
+              )
+            ORDER BY
+                rt.recurring_transaction_first_payment_date,
+                rt.recurring_transaction_created_at,
+                rt.recurring_transaction_id
+            """, nativeQuery = true)
+    List<RecurringTransaction> findBaseOpenRecurringTransactionsEverLinkedToBucket(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("bucketId") UUID bucketId,
+            @Param("latestRelevantDate") LocalDate latestRelevantDate
+    );
+
 }

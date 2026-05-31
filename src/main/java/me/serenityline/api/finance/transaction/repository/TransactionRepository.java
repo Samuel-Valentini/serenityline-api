@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
@@ -329,6 +330,27 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("bucketId") UUID bucketId,
             @Param("accountId") UUID accountId,
             @Param("userGroupId") UUID userGroupId
+    );
+
+    @Query(value = """
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN t.transaction_affects_account_balance = FALSE
+                     AND t.transaction_affects_serenityline = TRUE
+                        THEN -t.transaction_amount
+                    ELSE t.transaction_amount
+                END
+            ), 0)
+            FROM transactions t
+            WHERE t.bucket_id = :bucketId
+              AND t.user_group_id = :userGroupId
+              AND t.transaction_is_simulated = FALSE
+              AND t.transaction_charge_date <= :asOfDate
+            """, nativeQuery = true)
+    BigDecimal calculatePersistedBaseBucketBalanceAt(
+            @Param("bucketId") UUID bucketId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("asOfDate") LocalDate asOfDate
     );
 
     interface ConfirmedRecurringOccurrenceKeyView {

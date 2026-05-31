@@ -23,15 +23,18 @@ public class BucketLifecycleService {
     private final BucketRepository bucketRepository;
     private final BucketAccountRepository bucketAccountRepository;
     private final UserRepository userRepository;
+    private final BucketBalanceCalculator bucketBalanceCalculator;
 
     public BucketLifecycleService(
             BucketRepository bucketRepository,
             BucketAccountRepository bucketAccountRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            BucketBalanceCalculator bucketBalanceCalculator
     ) {
         this.bucketRepository = Objects.requireNonNull(bucketRepository, "bucketRepository");
         this.bucketAccountRepository = Objects.requireNonNull(bucketAccountRepository, "bucketAccountRepository");
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
+        this.bucketBalanceCalculator = Objects.requireNonNull(bucketBalanceCalculator, "bucketBalanceCalculator");
     }
 
     @Transactional
@@ -150,11 +153,10 @@ public class BucketLifecycleService {
         Objects.requireNonNull(bucketId, "bucketId");
         Objects.requireNonNull(userGroupId, "userGroupId");
 
-        // TODO: quando implementiamo transactions / recurring transactions,
-        // calcolare il saldo reale del portafoglio.
-        // Regola: un portafoglio può essere chiuso solo se non ha disponibilità residua positiva.
-        // Per ora non esistono movimenti bucket, quindi il saldo effettivo è 0.
-        return BigDecimal.ZERO;
+        return bucketBalanceCalculator.calculateCurrentBalance(
+                bucketId,
+                userGroupId
+        );
     }
 
     private User findCurrentUser(UUID currentUserId) {

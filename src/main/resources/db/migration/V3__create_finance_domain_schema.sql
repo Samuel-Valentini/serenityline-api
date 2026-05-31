@@ -486,6 +486,14 @@ CREATE INDEX idx_recurring_transactions_simulation_group_id
 CREATE INDEX idx_recurring_transactions_first_payment_date
     ON recurring_transactions (user_group_id, recurring_transaction_first_payment_date);
 
+CREATE INDEX idx_recurring_transactions_base_group_first_payment
+    ON recurring_transactions (
+                               user_group_id,
+                               recurring_transaction_first_payment_date,
+                               recurring_transaction_id
+        )
+    WHERE recurring_transaction_is_simulated = FALSE;
+
 CREATE TABLE recurring_transaction_history
 (
     recurring_transaction_history_id         UUID PRIMARY KEY        DEFAULT gen_random_uuid(),
@@ -660,6 +668,15 @@ CREATE INDEX idx_recurring_transaction_details_history_group_recurring
                                               recurring_transaction_id
         );
 
+CREATE INDEX idx_recurring_details_bucket_balance_lookup
+    ON recurring_transaction_details_history (
+                                              user_group_id,
+                                              linked_bucket_id,
+                                              recurring_transaction_id,
+                                              recurring_transaction_details_effective_from
+        )
+    WHERE linked_bucket_id IS NOT NULL;
+
 CREATE TABLE recurring_transactions_users
 (
     recurring_transaction_user_id        UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
@@ -815,6 +832,20 @@ CREATE INDEX idx_transactions_credit_card_id
 CREATE INDEX idx_transactions_bucket_id
     ON transactions (bucket_id)
     WHERE bucket_id IS NOT NULL;
+
+CREATE INDEX idx_transactions_base_bucket_balance_lookup
+    ON transactions (
+                     user_group_id,
+                     bucket_id,
+                     transaction_charge_date
+        )
+    INCLUDE (
+        transaction_amount,
+        transaction_affects_account_balance,
+        transaction_affects_serenityline
+        )
+    WHERE transaction_is_simulated = FALSE
+        AND bucket_id IS NOT NULL;
 
 CREATE INDEX idx_transactions_simulation_group_id
     ON transactions (simulation_group_id)
