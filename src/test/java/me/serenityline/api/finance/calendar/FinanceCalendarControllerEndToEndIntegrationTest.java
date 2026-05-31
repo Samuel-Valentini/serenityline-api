@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -15,14 +16,17 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class FinanceCalendarControllerEndToEndIntegrationTest extends IntegrationTestSupport {
 
     private static final String CALENDAR_PATH = "/api/finance/calendar";
+    private static final String RECURRING_TRANSACTIONS_PATH = "/api/finance/recurring-transactions";
 
     @Autowired
     private MockMvc mockMvc;
@@ -318,6 +322,130 @@ class FinanceCalendarControllerEndToEndIntegrationTest extends IntegrationTestSu
                 .andExpect(jsonPath("$[1].totalsByCurrency[0].endOfDayAccountsBalance").value(1050.00))
                 .andExpect(jsonPath("$[1].totalsByCurrency[0].endOfDaySerenityline").value(750.00))
                 .andExpect(jsonPath("$[1].totalsByCurrency[0].endOfDayBucketsBalance").value(300.00));
+    }
+
+    @Test
+    void ownerShouldConfirmRecurringOccurrenceAndCalendarShouldShowPersistedTransactionInsteadOfProjectedOccurrence() throws Exception {
+        UUID userGroupId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+
+        UUID accountId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+
+        LocalDate logicalDate = LocalDate.of(2026, 6, 10);
+
+        givenUserGroup(userGroupId, unique("E2E recurring confirmation group"));
+        givenUser(ownerId, userGroupId, "OWNER", uniqueEmail("recurring-confirm-owner-e2e"));
+
+        givenCategory(categoryId, userGroupId, ownerId, "Ricorrenti confermate");
+        givenAccount(accountId, userGroupId, "Conto conferma ricorrente");
+
+        UUID recurringTransactionId = givenRecurringTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                false,
+                null,
+                "Affitto ricorrente da confermare"
+        );
+
+        String accessToken = accessTokenFor(ownerId);
+
+        mockMvc.perform(get(CALENDAR_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", logicalDate.toString())
+                        .param("to", logicalDate.toString())
+                        .param("accountIds", accountId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").value(hasSize(1)))
+                .andExpect(jsonPath("$[0].movementType").value("PROJECTED_RECURRING_TRANSACTION"))
+                .andExpect(jsonPath("$[0].transactionId").doesNotExist())
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$[0].logicalDate").value(logicalDate.toString()))
+                .andExpect(jsonPath("$[0].chargeDate").value(logicalDate.toString()))
+                .andExpect(jsonPath("$[0].description").value("Affitto ricorrente da confermare"))
+                .andExpect(jsonPath("$[0].amount").value(-100.00))
+                .andExpect(jsonPath("$[0].confirmed").value(false))
+                .andExpect(jsonPath("$[0].userEntered").value(false))
+                .andExpect(jsonPath("$[0].finalOccurrence").value(false));
+
+        mockMvc.perform(post(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId + "/occurrences/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "logicalDate": "2026-06-10"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.transactionDescription").value("Affitto ricorrente da confermare"))
+                .andExpect(jsonPath("$.transactionAmount").value(-100.00))
+                .andExpect(jsonPath("$.transactionChargeDate").value(logicalDate.toString()))
+                .andExpect(jsonPath("$.transactionIsConfirmed").value(true))
+                .andExpect(jsonPath("$.accountId").value(accountId.toString()))
+                .andExpect(jsonPath("$.transactionIsSimulated").value(false))
+                .andExpect(jsonPath("$.simulationGroupId").doesNotExist())
+                .andExpect(jsonPath("$.transactionIsUserEntered").value(false))
+                .andExpect(jsonPath("$.recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionLogicalDate").value(logicalDate.toString()))
+                .andExpect(jsonPath("$.recurringTransactionConfirmedAt").exists())
+                .andExpect(jsonPath("$.transactionReminderEnabled").value(true))
+                .andExpect(jsonPath("$.transactionReminderDaysBefore").value(7));
+
+        UUID confirmedTransactionId = jdbcTemplate.queryForObject("""
+                        SELECT transaction_id
+                        FROM transactions
+                        WHERE user_group_id = ?
+                          AND recurring_transaction_id = ?
+                          AND recurring_transaction_logical_date = ?
+                          AND transaction_is_user_entered = FALSE
+                          AND transaction_is_confirmed = TRUE
+                        """,
+                UUID.class,
+                userGroupId,
+                recurringTransactionId,
+                logicalDate
+        );
+
+        assertThat(confirmedTransactionId).isNotNull();
+
+        Integer confirmedRows = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM transactions
+                        WHERE user_group_id = ?
+                          AND recurring_transaction_id = ?
+                          AND recurring_transaction_logical_date = ?
+                          AND transaction_is_user_entered = FALSE
+                          AND transaction_is_confirmed = TRUE
+                        """,
+                Integer.class,
+                userGroupId,
+                recurringTransactionId,
+                logicalDate
+        );
+
+        assertThat(confirmedRows).isEqualTo(1);
+
+        mockMvc.perform(get(CALENDAR_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .param("from", logicalDate.toString())
+                        .param("to", logicalDate.toString())
+                        .param("accountIds", accountId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").value(hasSize(1)))
+                .andExpect(jsonPath("$[?(@.movementType == 'PROJECTED_RECURRING_TRANSACTION')]").value(hasSize(0)))
+                .andExpect(jsonPath("$[?(@.movementType == 'PERSISTED_TRANSACTION')]").value(hasSize(1)))
+                .andExpect(jsonPath("$[0].movementType").value("PERSISTED_TRANSACTION"))
+                .andExpect(jsonPath("$[0].transactionId").value(confirmedTransactionId.toString()))
+                .andExpect(jsonPath("$[0].recurringTransactionId").value(recurringTransactionId.toString()))
+                .andExpect(jsonPath("$[0].logicalDate").value(logicalDate.toString()))
+                .andExpect(jsonPath("$[0].chargeDate").value(logicalDate.toString()))
+                .andExpect(jsonPath("$[0].description").value("Affitto ricorrente da confermare"))
+                .andExpect(jsonPath("$[0].amount").value(-100.00))
+                .andExpect(jsonPath("$[0].confirmed").value(true))
+                .andExpect(jsonPath("$[0].simulated").value(false))
+                .andExpect(jsonPath("$[0].userEntered").value(false))
+                .andExpect(jsonPath("$[0].finalOccurrence").value(false));
     }
 
     private String accessTokenFor(UUID userId) {

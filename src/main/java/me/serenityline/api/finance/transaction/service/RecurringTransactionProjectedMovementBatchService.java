@@ -487,6 +487,44 @@ public class RecurringTransactionProjectedMovementBatchService {
                 && !occurrence.chargeDate().isAfter(to);
     }
 
+    @Transactional(readOnly = true)
+    public Optional<RecurringTransactionProjectedMovement> generateProjectedMovementForLogicalDate(
+            RecurringTransactionProjectedMovementSeed seed,
+            LocalDate logicalDate
+    ) {
+        Objects.requireNonNull(seed, "seed");
+        Objects.requireNonNull(logicalDate, "logicalDate");
+
+        RecurringTransactionPreparedBatch preparedBatch = prepareBatch(
+                List.of(seed)
+        );
+
+        PreparedRecurringTransactionGenerationContext context =
+                preparedBatch.preparedContexts().get(0);
+
+        int adjustmentWindowDays = context.paymentBusinessCalendarProvider()
+                .adjustmentWindowDays();
+
+        if (adjustmentWindowDays < 0) {
+            throw new IllegalArgumentException("finance.calendar.adjustmentWindowInvalid");
+        }
+
+        LocalDate generationFrom = logicalDate.minusDays(adjustmentWindowDays);
+        LocalDate generationTo = logicalDate.plusDays(adjustmentWindowDays);
+
+        return generatePreparedMovements(
+                preparedBatch.preparedContexts(),
+                generationFrom,
+                generationTo
+        )
+                .stream()
+                .filter(projectedMovement -> projectedMovement.recurringTransactionId()
+                        .equals(seed.recurringTransactionId()))
+                .filter(projectedMovement -> projectedMovement.logicalDate()
+                        .equals(logicalDate))
+                .findFirst();
+    }
+
     private record RecurringTransactionBatchContext(
             UUID recurringTransactionId,
             UUID userGroupId,

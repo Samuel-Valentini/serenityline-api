@@ -1,9 +1,7 @@
 package me.serenityline.api.finance.transaction.controller;
 
 import jakarta.validation.Valid;
-import me.serenityline.api.finance.transaction.dto.RecurringTransactionCreateRequest;
-import me.serenityline.api.finance.transaction.dto.RecurringTransactionHistoryResponse;
-import me.serenityline.api.finance.transaction.dto.RecurringTransactionResponse;
+import me.serenityline.api.finance.transaction.dto.*;
 import me.serenityline.api.finance.transaction.service.*;
 import me.serenityline.api.security.auth.AuthenticatedUser;
 import org.springframework.http.HttpStatus;
@@ -26,6 +24,7 @@ public class RecurringTransactionController {
     private final RecurringTransactionHistoryReadService recurringTransactionHistoryReadService;
     private final RecurringTransactionPatchService recurringTransactionPatchService;
     private final RecurringTransactionDeleteService recurringTransactionDeleteService;
+    private final RecurringTransactionOccurrenceConfirmationService recurringTransactionOccurrenceConfirmationService;
 
     public RecurringTransactionController(
             RecurringTransactionCreationService recurringTransactionCreationService,
@@ -33,7 +32,8 @@ public class RecurringTransactionController {
             RecurringTransactionListService recurringTransactionListService,
             RecurringTransactionHistoryReadService recurringTransactionHistoryReadService,
             RecurringTransactionPatchService recurringTransactionPatchService,
-            RecurringTransactionDeleteService recurringTransactionDeleteService
+            RecurringTransactionDeleteService recurringTransactionDeleteService,
+            RecurringTransactionOccurrenceConfirmationService recurringTransactionOccurrenceConfirmationService
     ) {
         this.recurringTransactionCreationService = Objects.requireNonNull(
                 recurringTransactionCreationService,
@@ -58,6 +58,10 @@ public class RecurringTransactionController {
         this.recurringTransactionDeleteService = Objects.requireNonNull(
                 recurringTransactionDeleteService,
                 "recurringTransactionDeleteService"
+        );
+        this.recurringTransactionOccurrenceConfirmationService = Objects.requireNonNull(
+                recurringTransactionOccurrenceConfirmationService,
+                "recurringTransactionOccurrenceConfirmationService"
         );
     }
 
@@ -146,5 +150,22 @@ public class RecurringTransactionController {
         );
 
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{recurringTransactionId}/occurrences/confirm")
+    public ResponseEntity<TransactionResponse> confirmRecurringTransactionOccurrence(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @PathVariable UUID recurringTransactionId,
+            @Valid @RequestBody RecurringTransactionOccurrenceConfirmRequest request
+    ) {
+        TransactionResponse response = recurringTransactionOccurrenceConfirmationService.confirmOccurrence(
+                authenticatedUser.userId(),
+                recurringTransactionId,
+                request
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(response);
     }
 }

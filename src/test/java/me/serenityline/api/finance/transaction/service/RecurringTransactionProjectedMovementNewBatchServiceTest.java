@@ -1,8 +1,11 @@
 package me.serenityline.api.finance.transaction.service;
 
+import me.serenityline.api.finance.account.entity.Account;
 import me.serenityline.api.finance.calendar.CurrencyBusinessCalendarResolver;
 import me.serenityline.api.finance.calendar.FinanceCalendarProperties;
 import me.serenityline.api.finance.calendar.PaymentAccountCurrencySnapshot;
+import me.serenityline.api.finance.category.entity.Category;
+import me.serenityline.api.finance.financialpriority.entity.FinancialPriority;
 import me.serenityline.api.finance.transaction.entity.RecurringTransaction;
 import me.serenityline.api.finance.transaction.entity.RecurringTransactionDetailsHistory;
 import me.serenityline.api.finance.transaction.entity.RecurringTransactionHistory;
@@ -465,7 +468,12 @@ class RecurringTransactionProjectedMovementNewBatchServiceTest {
                 mock(RecurringTransactionRuleSnapshot.class);
 
         PaymentAccountCurrencySnapshot accountCurrencySnapshot =
-                mock(PaymentAccountCurrencySnapshot.class);
+                new PaymentAccountCurrencySnapshot(
+                        firstPaymentDate,
+                        UUID.randomUUID(),
+                        "EUR",
+                        1L
+                );
 
         List<RecurringTransactionRuleSnapshot> ruleSnapshots =
                 List.of(ruleSnapshot);
@@ -764,6 +772,128 @@ class RecurringTransactionProjectedMovementNewBatchServiceTest {
         );
     }
 
+    @Test
+    void generateProjectedMovementForLogicalDateShouldReturnMatchingProjectedMovement() {
+        UUID userGroupId = UUID.randomUUID();
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        LocalDate firstPaymentDate = LocalDate.of(2026, 1, 1);
+        LocalDate logicalDate = LocalDate.of(2026, 1, 31);
+        LocalDate chargeDate = LocalDate.of(2026, 2, 2);
+
+        BatchFixture fixture = givenPreparedBatch(
+                recurringTransactionId,
+                userGroupId,
+                firstPaymentDate
+        );
+
+        RecurringTransactionOccurrence matchingOccurrence =
+                occurrence(recurringTransactionId, logicalDate, chargeDate);
+
+        RecurringTransactionProjectedMovement matchingProjectedMovement =
+                projectedMovement(recurringTransactionId, logicalDate, chargeDate);
+
+        when(recurringTransactionOccurrenceGenerator.generateOccurrences(
+                eq(recurringTransactionId),
+                eq(firstPaymentDate),
+                eq(fixture.ruleSnapshots()),
+                any(LocalDate.class),
+                any(LocalDate.class),
+                any()
+        )).thenReturn(List.of(matchingOccurrence));
+
+        when(recurringTransactionProjectedMovementAssembler.assemble(
+                anyList(),
+                eq(fixture.detailsHistoryRows())
+        )).thenReturn(List.of(matchingProjectedMovement));
+
+        assertThat(service.generateProjectedMovementForLogicalDate(
+                seed(recurringTransactionId, userGroupId, firstPaymentDate),
+                logicalDate
+        )).contains(matchingProjectedMovement);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<RecurringTransactionOccurrence>> occurrencesCaptor =
+                ArgumentCaptor.forClass(List.class);
+
+        ArgumentCaptor<LocalDate> generationFromCaptor =
+                ArgumentCaptor.forClass(LocalDate.class);
+
+        ArgumentCaptor<LocalDate> generationToCaptor =
+                ArgumentCaptor.forClass(LocalDate.class);
+
+        verify(recurringTransactionOccurrenceGenerator).generateOccurrences(
+                eq(recurringTransactionId),
+                eq(firstPaymentDate),
+                eq(fixture.ruleSnapshots()),
+                generationFromCaptor.capture(),
+                generationToCaptor.capture(),
+                any()
+        );
+
+        assertThat(generationFromCaptor.getValue()).isBeforeOrEqualTo(logicalDate);
+        assertThat(generationToCaptor.getValue()).isAfterOrEqualTo(logicalDate);
+
+        verify(recurringTransactionProjectedMovementAssembler)
+                .assemble(occurrencesCaptor.capture(), eq(fixture.detailsHistoryRows()));
+
+        assertThat(occurrencesCaptor.getValue())
+                .containsExactly(matchingOccurrence);
+    }
+
+    @Test
+    void generateProjectedMovementForLogicalDateShouldReturnEmptyWhenProjectedMovementHasDifferentLogicalDate() {
+        UUID userGroupId = UUID.randomUUID();
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        LocalDate firstPaymentDate = LocalDate.of(2026, 1, 1);
+        LocalDate requestedLogicalDate = LocalDate.of(2026, 1, 31);
+
+        LocalDate differentLogicalDate = LocalDate.of(2026, 1, 30);
+        LocalDate differentChargeDate = LocalDate.of(2026, 1, 30);
+
+        BatchFixture fixture = givenPreparedBatch(
+                recurringTransactionId,
+                userGroupId,
+                firstPaymentDate
+        );
+
+        RecurringTransactionOccurrence differentOccurrence =
+                occurrence(recurringTransactionId, differentLogicalDate, differentChargeDate);
+
+        RecurringTransactionProjectedMovement differentProjectedMovement =
+                projectedMovement(recurringTransactionId, differentLogicalDate, differentChargeDate);
+
+        when(recurringTransactionOccurrenceGenerator.generateOccurrences(
+                eq(recurringTransactionId),
+                eq(firstPaymentDate),
+                eq(fixture.ruleSnapshots()),
+                any(LocalDate.class),
+                any(LocalDate.class),
+                any()
+        )).thenReturn(List.of(differentOccurrence));
+
+        when(recurringTransactionProjectedMovementAssembler.assemble(
+                anyList(),
+                eq(fixture.detailsHistoryRows())
+        )).thenReturn(List.of(differentProjectedMovement));
+
+        assertThat(service.generateProjectedMovementForLogicalDate(
+                seed(recurringTransactionId, userGroupId, firstPaymentDate),
+                requestedLogicalDate
+        )).isEmpty();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<RecurringTransactionOccurrence>> occurrencesCaptor =
+                ArgumentCaptor.forClass(List.class);
+
+        verify(recurringTransactionProjectedMovementAssembler)
+                .assemble(occurrencesCaptor.capture(), eq(fixture.detailsHistoryRows()));
+
+        assertThat(occurrencesCaptor.getValue())
+                .containsExactly(differentOccurrence);
+    }
+
     private RecurringTransactionProjectedMovementSeed seed(
             UUID recurringTransactionId,
             UUID userGroupId,
@@ -792,6 +922,28 @@ class RecurringTransactionProjectedMovementNewBatchServiceTest {
 
     private RecurringTransactionProjectedMovement projectedMovement() {
         return mock(RecurringTransactionProjectedMovement.class);
+    }
+
+    private RecurringTransactionProjectedMovement projectedMovement(
+            UUID recurringTransactionId,
+            LocalDate logicalDate,
+            LocalDate chargeDate
+    ) {
+        return new RecurringTransactionProjectedMovement(
+                recurringTransactionId,
+                logicalDate,
+                chargeDate,
+                BigDecimal.valueOf(-100),
+                false,
+                "Movimento previsto",
+                mock(Category.class),
+                mock(FinancialPriority.class),
+                mock(Account.class),
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     private record BatchFixture(

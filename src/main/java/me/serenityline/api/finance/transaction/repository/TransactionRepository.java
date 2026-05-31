@@ -297,6 +297,23 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("simulationGroupIds") Collection<UUID> simulationGroupIds
     );
 
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM transactions t
+                WHERE t.user_group_id = :userGroupId
+                  AND t.recurring_transaction_id = :recurringTransactionId
+                  AND t.recurring_transaction_logical_date = :logicalDate
+                  AND t.transaction_is_user_entered = FALSE
+                  AND t.transaction_is_confirmed = TRUE
+            )
+            """, nativeQuery = true)
+    boolean existsConfirmedRecurringOccurrence(
+            @Param("userGroupId") UUID userGroupId,
+            @Param("recurringTransactionId") UUID recurringTransactionId,
+            @Param("logicalDate") LocalDate logicalDate
+    );
+
     interface ConfirmedRecurringOccurrenceKeyView {
 
         UUID getRecurringTransactionId();
