@@ -101,4 +101,19 @@ public interface RecurringTransactionDetailsHistoryRepository
     );
 
     boolean existsByLinkedCreditCard_CreditCardId(UUID creditCardId);
+
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM recurring_transaction_details_history details
+                WHERE details.linked_bucket_id = :bucketId
+                  AND details.linked_account_id = :accountId
+                  AND details.user_group_id = :userGroupId
+            )
+            """, nativeQuery = true)
+    boolean existsByLinkedBucketIdAndLinkedAccountIdAndUserGroupId(
+            @Param("bucketId") UUID bucketId,
+            @Param("accountId") UUID accountId,
+            @Param("userGroupId") UUID userGroupId
+    );
 }

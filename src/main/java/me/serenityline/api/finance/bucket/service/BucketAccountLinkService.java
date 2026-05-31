@@ -22,17 +22,20 @@ public class BucketAccountLinkService {
     private final BucketAccountRepository bucketAccountRepository;
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
+    private final BucketAccountUsageChecker bucketAccountUsageChecker;
 
     public BucketAccountLinkService(
             BucketRepository bucketRepository,
             BucketAccountRepository bucketAccountRepository,
             AccountRepository accountRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            BucketAccountUsageChecker bucketAccountUsageChecker
     ) {
         this.bucketRepository = Objects.requireNonNull(bucketRepository, "bucketRepository");
         this.bucketAccountRepository = Objects.requireNonNull(bucketAccountRepository, "bucketAccountRepository");
         this.accountRepository = Objects.requireNonNull(accountRepository, "accountRepository");
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
+        this.bucketAccountUsageChecker = Objects.requireNonNull(bucketAccountUsageChecker, "bucketAccountUsageChecker");
     }
 
     @Transactional
@@ -136,10 +139,13 @@ public class BucketAccountLinkService {
             UUID accountId,
             UUID userGroupId
     ) {
-        // TODO: quando implementiamo transactions / recurring transactions,
-        // verificare se la coppia bucket-account è già stata usata.
-        // Se è usata, non eliminare fisicamente il link e lanciare:
-        // throw new IllegalStateException("finance.bucketAccount.alreadyUsed");
+        if (bucketAccountUsageChecker.isBucketAccountUsed(
+                bucketId,
+                accountId,
+                userGroupId
+        )) {
+            throw new IllegalStateException("finance.bucketAccount.alreadyUsed");
+        }
     }
 
     private User findCurrentUser(UUID currentUserId) {

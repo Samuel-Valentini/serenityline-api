@@ -316,6 +316,21 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     boolean existsByCreditCard_CreditCardId(UUID creditCardId);
 
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM transactions transaction
+                WHERE transaction.bucket_id = :bucketId
+                  AND transaction.account_id = :accountId
+                  AND transaction.user_group_id = :userGroupId
+            )
+            """, nativeQuery = true)
+    boolean existsByBucketIdAndAccountIdAndUserGroupId(
+            @Param("bucketId") UUID bucketId,
+            @Param("accountId") UUID accountId,
+            @Param("userGroupId") UUID userGroupId
+    );
+
     interface ConfirmedRecurringOccurrenceKeyView {
 
         UUID getRecurringTransactionId();

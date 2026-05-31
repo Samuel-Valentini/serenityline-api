@@ -3206,6 +3206,168 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(unchangedBucket.getBucketClosedAt()).isNotNull();
     }
 
+    @Test
+    void unlinkBucketAccountShouldRejectLinkUsedByTransaction() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto usato da transaction");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket usato da transaction");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria transaction bucket account"
+        );
+
+        insertTransactionUsingBucketAccount(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId
+        );
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucketAccount.alreadyUsed"))
+                .andExpect(jsonPath("$.message").value(
+                        "Il collegamento tra portafoglio e conto non può essere rimosso perché è già stato usato."
+                ))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, account)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void unlinkBucketAccountShouldRejectLinkUsedByRecurringTransactionDetailsHistory() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto usato da ricorrente");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket usato da ricorrente");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria recurring bucket account"
+        );
+
+        insertRecurringTransactionDetailsHistoryUsingBucketAccount(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId
+        );
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucketAccount.alreadyUsed"))
+                .andExpect(jsonPath("$.message").value(
+                        "Il collegamento tra portafoglio e conto non può essere rimosso perché è già stato usato."
+                ))
+                .andExpect(jsonPath("$.path").value(bucketAccountPath(bucket, account)));
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+    }
+
+    @Test
+    void unlinkBucketAccountShouldOnlyConsiderExactBucketAccountPairUsage() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account usedAccount = createAccount(owner.getUserGroup(), "Conto usato");
+        Account removableAccount = createAccount(owner.getUserGroup(), "Conto removibile");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket con due conti");
+
+        linkBucketToAccount(bucket, usedAccount);
+        linkBucketToAccount(bucket, removableAccount);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria usage exact pair"
+        );
+
+        insertTransactionUsingBucketAccount(
+                owner.getUserGroup(),
+                usedAccount,
+                bucket,
+                categoryId
+        );
+
+        mockMvc.perform(delete(bucketAccountPath(bucket, removableAccount))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                usedAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                bucket.getBucketId(),
+                removableAccount.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
+    @Test
+    void unlinkBucketAccountShouldNotBeBlockedBySameAccountUsedWithDifferentBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto condiviso");
+        Bucket usedBucket = createBucket(owner.getUserGroup(), "Bucket usato");
+        Bucket removableBucket = createBucket(owner.getUserGroup(), "Bucket removibile");
+
+        linkBucketToAccount(usedBucket, account);
+        linkBucketToAccount(removableBucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria same account different bucket"
+        );
+
+        insertTransactionUsingBucketAccount(
+                owner.getUserGroup(),
+                account,
+                usedBucket,
+                categoryId
+        );
+
+        mockMvc.perform(delete(bucketAccountPath(removableBucket, account))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isNoContent());
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                usedBucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isTrue();
+
+        assertThat(bucketAccountRepository.existsByBucketIdAndAccountIdAndUserGroupId(
+                removableBucket.getBucketId(),
+                account.getAccountId(),
+                owner.getUserGroup().getUserGroupId()
+        )).isFalse();
+    }
+
     private User createVerifiedUser(UserRole userRole) {
         return transactionTemplate.execute(status -> {
             UserGroup userGroup = new UserGroup("Test group " + UUID.randomUUID());
@@ -3403,5 +3565,149 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 + "/"
                 + bucketId
                 + "/reopen";
+    }
+
+    private UUID createActiveCategory(
+            UserGroup userGroup,
+            User createdByUser,
+            String categoryName
+    ) {
+        UUID categoryId = UUID.randomUUID();
+
+        jdbcTemplate.update(
+                """
+                        insert into categories (
+                            category_id,
+                            user_group_id,
+                            category_created_by_user_id,
+                            category_current_name
+                        )
+                        values (?, ?, ?, ?)
+                        """,
+                categoryId,
+                userGroup.getUserGroupId(),
+                createdByUser.getUserId(),
+                categoryName
+        );
+
+        jdbcTemplate.update(
+                """
+                        insert into category_details_history (
+                            category_id,
+                            category_name,
+                            category_description
+                        )
+                        values (?, ?, ?)
+                        """,
+                categoryId,
+                categoryName,
+                "Categoria test"
+        );
+
+        jdbcTemplate.update(
+                """
+                        insert into category_status_history (
+                            category_id,
+                            category_is_active
+                        )
+                        values (?, true)
+                        """,
+                categoryId
+        );
+
+        return categoryId;
+    }
+
+    private void insertTransactionUsingBucketAccount(
+            UserGroup userGroup,
+            Account account,
+            Bucket bucket,
+            UUID categoryId
+    ) {
+        jdbcTemplate.update(
+                """
+                        insert into transactions (
+                            transaction_id,
+                            transaction_description,
+                            transaction_amount,
+                            category_id,
+                            transaction_charge_date,
+                            account_id,
+                            bucket_id,
+                            user_group_id
+                        )
+                        values (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                UUID.randomUUID(),
+                "Transazione con bucket account",
+                new BigDecimal("-25.00"),
+                categoryId,
+                LocalDate.of(2026, 6, 10),
+                account.getAccountId(),
+                bucket.getBucketId(),
+                userGroup.getUserGroupId()
+        );
+    }
+
+    private void insertRecurringTransactionDetailsHistoryUsingBucketAccount(
+            UserGroup userGroup,
+            Account account,
+            Bucket bucket,
+            UUID categoryId
+    ) {
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transactions (
+                            recurring_transaction_id,
+                            recurring_transaction_amount_is_adjustable,
+                            recurring_transaction_first_payment_date,
+                            user_group_id
+                        )
+                        values (?, false, ?, ?)
+                        """,
+                recurringTransactionId,
+                LocalDate.of(2026, 6, 1),
+                userGroup.getUserGroupId()
+        );
+
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transaction_details_history (
+                            recurring_transaction_details_history_id,
+                            recurring_transaction_id,
+                            recurring_transaction_description,
+                            category_id,
+                            financial_priority_id,
+                            linked_account_id,
+                            linked_bucket_id,
+                            recurring_transaction_details_effective_from,
+                            user_group_id
+                        )
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                UUID.randomUUID(),
+                recurringTransactionId,
+                "Ricorrente con bucket account",
+                categoryId,
+                financialPriorityId("ESSENTIAL"),
+                account.getAccountId(),
+                bucket.getBucketId(),
+                LocalDate.of(2026, 6, 1),
+                userGroup.getUserGroupId()
+        );
+    }
+
+    private UUID financialPriorityId(String financialPriorityName) {
+        return jdbcTemplate.queryForObject(
+                """
+                        select financial_priority_id
+                        from financial_priorities
+                        where financial_priority_name = ?
+                        """,
+                UUID.class,
+                financialPriorityName
+        );
     }
 }
