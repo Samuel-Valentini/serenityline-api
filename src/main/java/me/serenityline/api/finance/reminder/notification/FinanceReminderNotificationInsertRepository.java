@@ -26,6 +26,7 @@ public class FinanceReminderNotificationInsertRepository {
             UUID userGroupId,
             UUID transactionId,
             LocalDate chargeDate,
+            String notifiedDescription,
             BigDecimal notifiedAmount,
             String notifiedCurrency,
             LocalDate reminderDate,
@@ -40,6 +41,7 @@ public class FinanceReminderNotificationInsertRepository {
                     recurring_transaction_id,
                     recurring_transaction_logical_date,
                     charge_date,
+                    notified_description,
                     notified_amount,
                     notified_currency,
                     reminder_date,
@@ -53,6 +55,7 @@ public class FinanceReminderNotificationInsertRepository {
                     NULL,
                     NULL,
                     :chargeDate,
+                    :notifiedDescription,
                     :notifiedAmount,
                     :notifiedCurrency,
                     :reminderDate,
@@ -74,6 +77,7 @@ public class FinanceReminderNotificationInsertRepository {
                 .addValue("userGroupId", userGroupId)
                 .addValue("transactionId", transactionId)
                 .addValue("chargeDate", chargeDate)
+                .addValue("notifiedDescription", notifiedDescription)
                 .addValue("notifiedAmount", notifiedAmount)
                 .addValue("notifiedCurrency", notifiedCurrency)
                 .addValue("reminderDate", reminderDate)
@@ -89,6 +93,7 @@ public class FinanceReminderNotificationInsertRepository {
             UUID recurringTransactionId,
             LocalDate recurringTransactionLogicalDate,
             LocalDate chargeDate,
+            String notifiedDescription,
             BigDecimal notifiedAmount,
             String notifiedCurrency,
             LocalDate reminderDate,
@@ -103,6 +108,7 @@ public class FinanceReminderNotificationInsertRepository {
                     recurring_transaction_id,
                     recurring_transaction_logical_date,
                     charge_date,
+                    notified_description,
                     notified_amount,
                     notified_currency,
                     reminder_date,
@@ -116,6 +122,7 @@ public class FinanceReminderNotificationInsertRepository {
                     :recurringTransactionId,
                     :recurringTransactionLogicalDate,
                     :chargeDate,
+                    :notifiedDescription,
                     :notifiedAmount,
                     :notifiedCurrency,
                     :reminderDate,
@@ -139,6 +146,7 @@ public class FinanceReminderNotificationInsertRepository {
                 .addValue("recurringTransactionId", recurringTransactionId)
                 .addValue("recurringTransactionLogicalDate", recurringTransactionLogicalDate)
                 .addValue("chargeDate", chargeDate)
+                .addValue("notifiedDescription", notifiedDescription)
                 .addValue("notifiedAmount", notifiedAmount)
                 .addValue("notifiedCurrency", notifiedCurrency)
                 .addValue("reminderDate", reminderDate)

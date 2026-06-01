@@ -939,6 +939,7 @@ CREATE TABLE finance_reminder_notifications
     recurring_transaction_logical_date DATE,
 
     charge_date                        DATE           NOT NULL,
+    notified_description               VARCHAR(500)   NOT NULL,
     notified_amount                    NUMERIC(19, 2) NOT NULL,
     notified_currency                  VARCHAR(3)     NOT NULL,
     reminder_date                      DATE           NOT NULL,
@@ -976,6 +977,9 @@ CREATE TABLE finance_reminder_notifications
                     AND recurring_transaction_logical_date IS NOT NULL
                 )
             ),
+
+    CONSTRAINT chk_finance_reminder_notifications_description_not_blank
+        CHECK (length(btrim(notified_description)) > 0),
 
     CONSTRAINT chk_finance_reminder_notifications_amount_not_zero
         CHECK (notified_amount <> 0),

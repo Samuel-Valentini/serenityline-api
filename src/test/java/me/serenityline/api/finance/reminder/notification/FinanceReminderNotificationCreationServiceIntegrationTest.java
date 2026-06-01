@@ -30,6 +30,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
     private static final LocalDate REMINDER_DATE = LocalDate.of(2026, 6, 3);
     private static final LocalDate RECURRING_FIRST_PAYMENT_DATE = LocalDate.of(2026, 1, 10);
     private static final LocalDate RECURRING_LOGICAL_DATE = LocalDate.of(2026, 6, 10);
+    private static final String DESCRIPTION = "Reminder test movement";
 
     private static final byte[] ENCRYPTED_VALUE = new byte[]{1};
     private static final byte[] GCM_IV = new byte[12];
@@ -109,6 +110,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 transactionId,
                 CHARGE_DATE,
+                DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -127,6 +129,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
         assertThat(notification.getRecurringTransactionLogicalDate()).isNull();
 
         assertThat(notification.getChargeDate()).isEqualTo(CHARGE_DATE);
+        assertThat(notification.getNotifiedDescription()).isEqualTo(DESCRIPTION);
         assertThat(notification.getNotifiedAmount()).isEqualByComparingTo(AMOUNT);
         assertThat(notification.getNotifiedCurrency()).isEqualTo(CURRENCY);
         assertThat(notification.getReminderDate()).isEqualTo(REMINDER_DATE);
@@ -148,6 +151,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 transactionId,
                 CHARGE_DATE,
+                DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -158,6 +162,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 transactionId,
                 CHARGE_DATE,
+                DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -177,6 +182,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 missingTransactionId,
                 CHARGE_DATE,
+                DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -192,6 +198,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 simulatedTransactionId,
                 CHARGE_DATE,
+                DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -207,6 +214,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 reminderDisabledTransactionId,
                 CHARGE_DATE,
+                DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -221,7 +229,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 unlinkedTransactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -238,7 +246,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 remindersDisabledUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -254,7 +262,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 recurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -273,6 +281,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
         assertThat(notification.getRecurringTransactionLogicalDate()).isEqualTo(RECURRING_LOGICAL_DATE);
 
         assertThat(notification.getChargeDate()).isEqualTo(CHARGE_DATE);
+        assertThat(notification.getNotifiedDescription()).isEqualTo(DESCRIPTION);
         assertThat(notification.getNotifiedAmount()).isEqualByComparingTo(AMOUNT);
         assertThat(notification.getNotifiedCurrency()).isEqualTo(CURRENCY);
         assertThat(notification.getReminderDate()).isEqualTo(REMINDER_DATE);
@@ -295,7 +304,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 recurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -306,7 +315,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 recurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -331,7 +340,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 missingRecurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -351,7 +360,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 simulatedRecurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -371,7 +380,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 reminderDisabledRecurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -391,7 +400,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 unlinkedRecurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -413,7 +422,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 recurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -432,7 +441,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -459,7 +468,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -495,7 +504,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -537,7 +546,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -571,7 +580,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -598,7 +607,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 recurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -624,7 +633,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -634,7 +643,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 secondTransactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -656,7 +665,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -682,7 +691,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -718,7 +727,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -745,7 +754,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -781,7 +790,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 recurringTransactionId,
                 RECURRING_LOGICAL_DATE,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -793,6 +802,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 recurringTransactionId,
                 secondLogicalDate,
                 secondChargeDate,
+                DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 secondReminderDate
@@ -822,7 +832,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 systemGeneratedTransactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -837,7 +847,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -857,7 +867,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 REMINDER_DATE
@@ -890,6 +900,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 userGroupId,
                 transactionId,
                 CHARGE_DATE,
+                DESCRIPTION,
                 BigDecimal.ZERO,
                 CURRENCY,
                 REMINDER_DATE
@@ -902,7 +913,7 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 "EURO",
                 REMINDER_DATE
@@ -915,10 +926,24 @@ class FinanceReminderNotificationCreationServiceIntegrationTest {
                 ownerUserId,
                 userGroupId,
                 transactionId,
-                CHARGE_DATE,
+                CHARGE_DATE, DESCRIPTION,
                 AMOUNT,
                 CURRENCY,
                 CHARGE_DATE.plusDays(1)
+        )).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void shouldRejectBlankDescription() {
+        assertThatThrownBy(() -> service.createForTransactionIfAbsent(
+                ownerUserId,
+                userGroupId,
+                transactionId,
+                CHARGE_DATE,
+                " ",
+                AMOUNT,
+                CURRENCY,
+                REMINDER_DATE
         )).isInstanceOf(IllegalArgumentException.class);
     }
 

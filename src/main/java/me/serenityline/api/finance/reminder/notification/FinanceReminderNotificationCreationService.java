@@ -77,12 +77,27 @@ public class FinanceReminderNotificationCreationService {
         }
     }
 
+    private static String requireDescription(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("finance.reminderNotification.notifiedDescription.required");
+        }
+
+        String normalized = value.trim();
+
+        if (normalized.length() > 500) {
+            throw new IllegalArgumentException("finance.reminderNotification.notifiedDescription.tooLong");
+        }
+
+        return normalized;
+    }
+
     @Transactional
     public Optional<FinanceReminderNotification> createForTransactionIfAbsent(
             UUID userId,
             UUID userGroupId,
             UUID transactionId,
             LocalDate chargeDate,
+            String notifiedDescription,
             BigDecimal notifiedAmount,
             String notifiedCurrency,
             LocalDate reminderDate
@@ -91,6 +106,7 @@ public class FinanceReminderNotificationCreationService {
         requireUuid(userGroupId, "finance.reminderNotification.userGroupId.required");
         requireUuid(transactionId, "finance.reminderNotification.transactionId.required");
         requireDate(chargeDate, "finance.reminderNotification.chargeDate.required");
+        String normalizedDescription = requireDescription(notifiedDescription);
         requireNonZeroAmount(notifiedAmount);
         String normalizedCurrency = requireCurrency(notifiedCurrency);
         requireDate(reminderDate, "finance.reminderNotification.reminderDate.required");
@@ -105,6 +121,7 @@ public class FinanceReminderNotificationCreationService {
                 userGroupId,
                 transactionId,
                 chargeDate,
+                normalizedDescription,
                 notifiedAmount,
                 normalizedCurrency,
                 reminderDate,
@@ -126,6 +143,7 @@ public class FinanceReminderNotificationCreationService {
             UUID recurringTransactionId,
             LocalDate recurringTransactionLogicalDate,
             LocalDate chargeDate,
+            String notifiedDescription,
             BigDecimal notifiedAmount,
             String notifiedCurrency,
             LocalDate reminderDate
@@ -135,6 +153,7 @@ public class FinanceReminderNotificationCreationService {
         requireUuid(recurringTransactionId, "finance.reminderNotification.recurringTransactionId.required");
         requireDate(recurringTransactionLogicalDate, "finance.reminderNotification.recurringTransactionLogicalDate.required");
         requireDate(chargeDate, "finance.reminderNotification.chargeDate.required");
+        String normalizedDescription = requireDescription(notifiedDescription);
         requireNonZeroAmount(notifiedAmount);
         String normalizedCurrency = requireCurrency(notifiedCurrency);
         requireDate(reminderDate, "finance.reminderNotification.reminderDate.required");
@@ -150,6 +169,7 @@ public class FinanceReminderNotificationCreationService {
                 recurringTransactionId,
                 recurringTransactionLogicalDate,
                 chargeDate,
+                notifiedDescription,
                 notifiedAmount,
                 normalizedCurrency,
                 reminderDate,

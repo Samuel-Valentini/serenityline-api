@@ -1,6 +1,10 @@
 package me.serenityline.api.finance.reminder.notification;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.Optional;
@@ -23,4 +27,12 @@ public interface FinanceReminderNotificationRepository
     );
 
     Optional<FinanceReminderNotification> findByEmailOutboxId(UUID emailOutboxId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select n
+            from FinanceReminderNotification n
+            where n.financeReminderNotificationId = :id
+            """)
+    Optional<FinanceReminderNotification> findByIdForUpdate(@Param("id") UUID id);
 }

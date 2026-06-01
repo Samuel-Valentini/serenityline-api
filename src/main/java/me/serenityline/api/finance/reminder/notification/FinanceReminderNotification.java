@@ -34,6 +34,9 @@ public class FinanceReminderNotification {
     @Column(name = "charge_date", nullable = false, updatable = false)
     private LocalDate chargeDate;
 
+    @Column(name = "notified_description", nullable = false, updatable = false, length = 500)
+    private String notifiedDescription;
+
     @Column(name = "notified_amount", nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal notifiedAmount;
 
@@ -72,6 +75,7 @@ public class FinanceReminderNotification {
             UUID recurringTransactionId,
             LocalDate recurringTransactionLogicalDate,
             LocalDate chargeDate,
+            String notifiedDescription,
             BigDecimal notifiedAmount,
             String notifiedCurrency,
             LocalDate reminderDate,
@@ -83,6 +87,7 @@ public class FinanceReminderNotification {
         this.recurringTransactionId = recurringTransactionId;
         this.recurringTransactionLogicalDate = recurringTransactionLogicalDate;
         this.chargeDate = requireDate(chargeDate, "finance.reminderNotification.chargeDate.required");
+        this.notifiedDescription = requireDescription(notifiedDescription);
         this.notifiedAmount = requireNonZeroAmount(notifiedAmount);
         this.notifiedCurrency = requireCurrency(notifiedCurrency);
         this.reminderDate = requireDate(reminderDate, "finance.reminderNotification.reminderDate.required");
@@ -97,6 +102,7 @@ public class FinanceReminderNotification {
             UUID userGroupId,
             UUID transactionId,
             LocalDate chargeDate,
+            String notifiedDescription,
             BigDecimal notifiedAmount,
             String notifiedCurrency,
             LocalDate reminderDate,
@@ -109,6 +115,7 @@ public class FinanceReminderNotification {
                 null,
                 null,
                 chargeDate,
+                notifiedDescription,
                 notifiedAmount,
                 notifiedCurrency,
                 reminderDate,
@@ -122,6 +129,7 @@ public class FinanceReminderNotification {
             UUID recurringTransactionId,
             LocalDate recurringTransactionLogicalDate,
             LocalDate chargeDate,
+            String notifiedDescription,
             BigDecimal notifiedAmount,
             String notifiedCurrency,
             LocalDate reminderDate,
@@ -134,6 +142,7 @@ public class FinanceReminderNotification {
                 requireUuid(recurringTransactionId, "finance.reminderNotification.recurringTransactionId.required"),
                 requireDate(recurringTransactionLogicalDate, "finance.reminderNotification.recurringTransactionLogicalDate.required"),
                 chargeDate,
+                notifiedDescription,
                 notifiedAmount,
                 notifiedCurrency,
                 reminderDate,
@@ -196,6 +205,20 @@ public class FinanceReminderNotification {
 
         if (normalized.length() > maxLength) {
             throw new IllegalArgumentException(tooLongKey);
+        }
+
+        return normalized;
+    }
+
+    private static String requireDescription(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("finance.reminderNotification.notifiedDescription.required");
+        }
+
+        String normalized = value.trim();
+
+        if (normalized.length() > 500) {
+            throw new IllegalArgumentException("finance.reminderNotification.notifiedDescription.tooLong");
         }
 
         return normalized;
@@ -301,6 +324,10 @@ public class FinanceReminderNotification {
 
     public LocalDate getChargeDate() {
         return chargeDate;
+    }
+
+    public String getNotifiedDescription() {
+        return notifiedDescription;
     }
 
     public BigDecimal getNotifiedAmount() {
