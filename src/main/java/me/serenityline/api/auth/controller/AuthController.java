@@ -13,10 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
 import java.util.Optional;
@@ -49,6 +47,11 @@ public class AuthController {
         this.passwordResetService = passwordResetService;
         this.login2faService = login2faService;
         this.emailChangeService = emailChangeService;
+    }
+
+    @GetMapping("/csrf")
+    public CsrfTokenResponse csrf(CsrfToken csrfToken) {
+        return CsrfTokenResponse.from(csrfToken);
     }
 
     @PostMapping("/register")

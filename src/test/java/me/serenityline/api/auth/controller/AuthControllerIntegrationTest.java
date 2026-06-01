@@ -65,6 +65,9 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     private static final String NEW_PASSWORD = "NewVeryStrongPassword-2026-SerenityLine!";
     private static final String WEAK_PASSWORD = "password12345";
 
+    private static final String CSRF_COOKIE_NAME = "XSRF-TOKEN";
+    private static final String CSRF_HEADER_NAME = "X-XSRF-TOKEN";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -2821,6 +2824,208 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.user.email").value(victim.email()));
     }
 
+    @Test
+    void csrfShouldIssueCookieAndReturnHeaderToken() throws Exception {
+        CsrfTestToken csrf = fetchCsrfToken();
+
+        assertThat(csrf.headerName()).isEqualTo(CSRF_HEADER_NAME);
+        assertThat(csrf.token()).isNotBlank();
+
+        assertThat(csrf.cookie().getName()).isEqualTo(CSRF_COOKIE_NAME);
+        assertThat(csrf.cookie().getValue()).isNotBlank();
+        assertThat(csrf.cookie().getPath()).isEqualTo("/");
+
+        assertThat(csrf.cookie().getValue()).isNotEqualTo(csrf.token());
+        assertThat(csrf.cookie().isHttpOnly()).isTrue();
+    }
+
+    @Test
+    void refreshShouldRejectPresentRefreshCookieWithoutCsrfToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .cookie(new Cookie(REFRESH_COOKIE_NAME, plainRefreshToken)))
+                .andExpect(status().isForbidden());
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectPresentRefreshCookieWithWrongCsrfToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        CsrfTestToken csrf = fetchCsrfToken();
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(csrf.headerName(), "wrong-" + csrf.token())
+                        .cookie(csrf.cookie(), new Cookie(REFRESH_COOKIE_NAME, plainRefreshToken)))
+                .andExpect(status().isForbidden());
+
+        assertThat(refreshTokenRepository.findAll()).hasSize(1);
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void csrfShouldIgnoreInvalidAuthorizationHeader() throws Exception {
+        mockMvc.perform(get("/api/auth/csrf")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer invalid-access-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.headerName").value(CSRF_HEADER_NAME))
+                .andExpect(jsonPath("$.token").isString())
+                .andExpect(cookie().exists(CSRF_COOKIE_NAME));
+    }
+
+    @Test
+    void corsPreflightShouldAllowCsrfHeaderForRefresh() throws Exception {
+        mockMvc.perform(options("/api/auth/refresh")
+                        .header(HttpHeaders.ORIGIN, DEV_ORIGIN)
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "Content-Type, X-XSRF-TOKEN"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, DEV_ORIGIN))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, containsString(CSRF_HEADER_NAME)));
+    }
+
+    @Test
+    void refreshShouldRejectMissingCookieWithoutRequiringCsrfToken() throws Exception {
+        ResultActions resultActions = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE))
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
+    }
+
+    @Test
+    void logoutShouldNotRequireCsrfToken() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        ResultActions logoutResult = mockMvc.perform(post("/api/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .cookie(new Cookie(REFRESH_COOKIE_NAME, plainRefreshToken)))
+                .andExpect(status().isNoContent());
+
+        assertRefreshCookieCleared(logoutResult);
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+        UserSession session = userSessionRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNotNull();
+        assertThat(session.getSessionRevokedAt()).isNotNull();
+    }
+
+    @Test
+    void csrfBodyTokenShouldBeTheTokenUsedForRefreshHeader() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        CsrfTestToken csrf = fetchCsrfToken();
+
+        MvcResult refreshResult = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(csrf.headerName(), csrf.token())
+                        .cookie(csrf.cookie(), new Cookie(REFRESH_COOKIE_NAME, plainRefreshToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists())
+                .andReturn();
+
+        assertRefreshCookieIssued(refreshResult);
+    }
+
+    @Test
+    void refreshShouldRejectBodyCsrfTokenWithoutCsrfCookie() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        CsrfTestToken csrf = fetchCsrfToken();
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(csrf.headerName(), csrf.token())
+                        .cookie(new Cookie(REFRESH_COOKIE_NAME, plainRefreshToken)))
+                .andExpect(status().isForbidden());
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void refreshShouldRejectStaleBodyCsrfTokenWithDifferentCsrfCookie() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        String plainRefreshToken = loginDefaultUserWithDeviceAndExtractRefreshToken();
+
+        CsrfTestToken oldCsrf = fetchCsrfToken();
+        CsrfTestToken newCsrf = fetchCsrfToken();
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(newCsrf.headerName(), oldCsrf.token())
+                        .cookie(newCsrf.cookie(), new Cookie(REFRESH_COOKIE_NAME, plainRefreshToken)))
+                .andExpect(status().isForbidden());
+
+        RefreshToken refreshToken = refreshTokenRepository.findAll().getFirst();
+
+        assertThat(refreshToken.getRefreshTokenUsedAt()).isNull();
+        assertThat(refreshToken.getRefreshTokenRevokedAt()).isNull();
+    }
+
+    @Test
+    void csrfShouldNotCreateHttpSession() throws Exception {
+        mockMvc.perform(get("/api/auth/csrf")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE))
+                .andExpect(status().isOk())
+                .andExpect(cookie().doesNotExist("JSESSIONID"));
+    }
+
+    @Test
+    void csrfCookieShouldBeHttpOnlyBecauseFrontendUsesBodyToken() throws Exception {
+        CsrfTestToken csrf = fetchCsrfToken();
+
+        assertThat(csrf.cookie().isHttpOnly()).isTrue();
+        assertThat(csrf.cookie().getValue()).isNotEqualTo(csrf.token());
+    }
+
+    @Test
+    void refreshShouldRejectEmptyRefreshCookieWithoutRequiringCsrfToken() throws Exception {
+        ResultActions resultActions = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .cookie(new Cookie(REFRESH_COOKIE_NAME, "")))
+                .andExpect(status().isUnauthorized());
+
+        assertRefreshCookieCleared(resultActions);
+    }
+
     private void registerValidUser(String email) throws Exception {
         performRegister(
                 IT_LOCALE,
@@ -3102,21 +3307,27 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     private ResultActions performRefresh(String refreshToken) throws Exception {
+        CsrfTestToken csrf = fetchCsrfToken();
+
         return mockMvc.perform(post("/api/auth/refresh")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
-                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+                .header(csrf.headerName(), csrf.token())
+                .cookie(csrf.cookie(), new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
     }
 
     private ResultActions performRefreshWithAuthorization(
             String refreshToken,
             String authorizationHeader
     ) throws Exception {
+        CsrfTestToken csrf = fetchCsrfToken();
+
         return mockMvc.perform(post("/api/auth/refresh")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
                 .header(HttpHeaders.AUTHORIZATION, authorizationHeader)
-                .cookie(new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
+                .header(csrf.headerName(), csrf.token())
+                .cookie(csrf.cookie(), new Cookie(REFRESH_COOKIE_NAME, refreshToken)));
     }
 
     private ResultActions performRestoreAccount(String restoreToken) throws Exception {
@@ -3437,12 +3648,46 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         );
     }
 
+    private CsrfTestToken fetchCsrfToken() throws Exception {
+        MvcResult result = mockMvc.perform(get("/api/auth/csrf")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.headerName").value(CSRF_HEADER_NAME))
+                .andExpect(jsonPath("$.parameterName").isString())
+                .andExpect(jsonPath("$.token").isString())
+                .andExpect(cookie().exists(CSRF_COOKIE_NAME))
+                .andReturn();
+
+        String token = jsonPathString(result, "$.token");
+
+        Cookie cookie = result.getResponse().getCookie(CSRF_COOKIE_NAME);
+
+        assertThat(token).isNotBlank();
+        assertThat(cookie).isNotNull();
+        assertThat(cookie.getName()).isEqualTo(CSRF_COOKIE_NAME);
+        assertThat(cookie.getValue()).isNotBlank();
+        assertThat(cookie.getPath()).isEqualTo("/");
+
+        return new CsrfTestToken(
+                CSRF_HEADER_NAME,
+                token,
+                cookie
+        );
+    }
+
     private record AuthenticatedTestUser(
             String email,
             UUID userId,
             UUID userGroupId,
             String accessToken,
             String refreshToken
+    ) {
+    }
+
+    private record CsrfTestToken(
+            String headerName,
+            String token,
+            Cookie cookie
     ) {
     }
 }

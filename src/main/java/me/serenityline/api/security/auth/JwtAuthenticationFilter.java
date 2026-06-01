@@ -128,6 +128,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return true;
         }
 
+        if (HttpMethod.GET.name().equals(request.getMethod())
+                && "/api/auth/csrf".equals(path)) {
+            return true;
+        }
+
         if (!HttpMethod.POST.name().equals(request.getMethod())) {
             return false;
         }
