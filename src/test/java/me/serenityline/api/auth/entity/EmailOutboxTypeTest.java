@@ -20,6 +20,7 @@ class EmailOutboxTypeTest {
                         EmailOutboxType.EMAIL_CHANGE_NOTIFICATION,
                         EmailOutboxType.TRANSACTION_REMINDER,
                         EmailOutboxType.RECURRING_TRANSACTION_REMINDER,
+                        EmailOutboxType.USER_INVITATION,
                         EmailOutboxType.GENERIC
                 );
     }

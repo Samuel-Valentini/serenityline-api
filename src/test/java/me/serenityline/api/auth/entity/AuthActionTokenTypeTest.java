@@ -17,7 +17,8 @@ class AuthActionTokenTypeTest {
                         AuthActionTokenType.EMAIL_2FA_ENABLE_CONFIRMATION,
                         AuthActionTokenType.EMAIL_2FA_DISABLE_CONFIRMATION,
                         AuthActionTokenType.EMAIL_CHANGE_CONFIRMATION,
-                        AuthActionTokenType.RESTORE_ACCOUNT
+                        AuthActionTokenType.RESTORE_ACCOUNT,
+                        AuthActionTokenType.USER_INVITATION
                 );
     }
 }

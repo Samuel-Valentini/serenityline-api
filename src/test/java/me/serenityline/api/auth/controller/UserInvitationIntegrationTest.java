@@ -4,10 +4,12 @@ import com.jayway.jsonpath.JsonPath;
 import me.serenityline.api.auth.entity.AuthActionToken;
 import me.serenityline.api.auth.entity.AuthActionTokenType;
 import me.serenityline.api.auth.repository.AuthActionTokenRepository;
+import me.serenityline.api.email.outbox.EmailOutboxProcessor;
 import me.serenityline.api.email.outbox.entity.EmailOutbox;
 import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
 import me.serenityline.api.email.outbox.entity.EmailOutboxType;
 import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
+import me.serenityline.api.email.service.EmailSender;
 import me.serenityline.api.finance.account.entity.AccountUser;
 import me.serenityline.api.finance.account.repository.AccountUserRepository;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
@@ -26,7 +28,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -54,6 +59,9 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
     private static final String DEFAULT_DEVICE_LABEL = "JUnit Device";
     private static final String DEFAULT_USER_AGENT = "JUnit Browser";
 
+    private static final int OUTBOX_BATCH_SIZE = 10;
+    private static final Duration OUTBOX_RETRY_DELAY = Duration.ofMinutes(5);
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -80,6 +88,12 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private EmailSender emailSender;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
 
     private static String jsonPathString(
@@ -1057,6 +1071,82 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.accessToken").exists());
     }
 
+    @Test
+    void userInvitationEmailShouldBeProcessedByOutboxSender() throws Exception {
+        AuthenticatedUser owner = registerVerifyAndLoginOwner();
+
+        int processedBeforeInvitation = processDueEmails();
+
+        assertThat(processedBeforeInvitation).isGreaterThanOrEqualTo(1);
+
+        UUID accountId = createAccountAndExtractId(
+                owner.accessToken(),
+                "Main Account"
+        );
+
+        String invitedEmail = uniqueEmail("outbox-send");
+
+        inviteUser(
+                owner.accessToken(),
+                "Outbox Send User",
+                invitedEmail,
+                "COLLABORATOR",
+                DEFAULT_LOCALE,
+                List.of(accountId)
+        );
+
+        EmailOutbox invitationEmailBeforeSend = latestPendingEmailOutbox(
+                EmailOutboxType.USER_INVITATION,
+                invitedEmail
+        );
+
+        assertThat(invitationEmailBeforeSend.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.PENDING);
+        assertThat(invitationEmailBeforeSend.getAttempts()).isZero();
+        assertThat(invitationEmailBeforeSend.getEmailSentAt()).isNull();
+        assertThat(invitationEmailBeforeSend.getProvider()).isNull();
+        assertThat(invitationEmailBeforeSend.getProviderMessageId()).isNull();
+
+        String bodyBeforeSend = decryptTextBody(invitationEmailBeforeSend);
+        String invitationToken = extractTokenFromBody(bodyBeforeSend);
+
+        AuthActionToken invitationActionToken = authActionTokenRepository
+                .findByAuthActionTokenHash(tokenHashingService.hash(invitationToken))
+                .orElseThrow();
+
+        assertThat(invitationActionToken.getAuthActionTokenType())
+                .isEqualTo(AuthActionTokenType.USER_INVITATION);
+
+        int processedEmails = processDueEmails();
+
+        assertThat(processedEmails).isEqualTo(1);
+
+        EmailOutbox invitationEmailAfterSend = emailOutboxRepository
+                .findById(invitationEmailBeforeSend.getEmailOutboxId())
+                .orElseThrow();
+
+        assertThat(invitationEmailAfterSend.getEmailType())
+                .isEqualTo(EmailOutboxType.USER_INVITATION);
+        assertThat(invitationEmailAfterSend.getEmailStatus())
+                .isEqualTo(EmailOutboxStatus.SENT);
+        assertThat(invitationEmailAfterSend.getAttempts()).isEqualTo(1);
+        assertThat(invitationEmailAfterSend.getEmailSentAt()).isNotNull();
+        assertThat(invitationEmailAfterSend.getLastError()).isNull();
+        assertThat(invitationEmailAfterSend.getProvider()).isNotBlank();
+        assertThat(invitationEmailAfterSend.getProviderMessageId()).isNotBlank();
+
+        assertThat(invitationEmailAfterSend.getBodyTextEncrypted()).isNull();
+        assertThat(invitationEmailAfterSend.getBodyTextIv()).isNull();
+        assertThat(invitationEmailAfterSend.getBodyTextTag()).isNull();
+        assertThat(invitationEmailAfterSend.getBodyHtmlEncrypted()).isNull();
+        assertThat(invitationEmailAfterSend.getBodyHtmlIv()).isNull();
+        assertThat(invitationEmailAfterSend.getBodyHtmlTag()).isNull();
+        assertThat(invitationEmailAfterSend.getEmailBodyDeletedAt()).isNotNull();
+
+        performAcceptInvitation(invitationToken, INVITED_PASSWORD)
+                .andExpect(status().isNoContent());
+    }
+
     private AuthenticatedUser registerVerifyAndLoginOwner() throws Exception {
         return registerVerifyAndLoginUser(
                 OWNER_NAME,
@@ -1385,6 +1475,20 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
                 prefix,
                 UUID.randomUUID().toString().replace("-", "")
         );
+    }
+
+    private int processDueEmails() {
+        EmailOutboxProcessor processor = new EmailOutboxProcessor(
+                emailOutboxRepository,
+                emailOutboxEncryptionService,
+                emailSender,
+                OUTBOX_BATCH_SIZE,
+                OUTBOX_RETRY_DELAY
+        );
+
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+
+        return transactionTemplate.execute(status -> processor.processDueEmails());
     }
 
     private record AuthenticatedUser(

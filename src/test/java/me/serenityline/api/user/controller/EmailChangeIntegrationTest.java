@@ -1,5 +1,6 @@
 package me.serenityline.api.user.controller;
 
+import com.jayway.jsonpath.JsonPath;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.servlet.http.Cookie;
@@ -41,8 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -90,40 +90,33 @@ class EmailChangeIntegrationTest {
 
     private static final Pattern EMAIL_CHANGE_TOKEN_TEXT_PATTERN =
             Pattern.compile("(?i)(?:confirmation token|token di conferma):\\s*([^\\s]+)");
+    private static final String CSRF_COOKIE_NAME = "XSRF-TOKEN";
+    private static final String CSRF_HEADER_NAME = "X-XSRF-TOKEN";
+
+    private static final String IT_LOCALE = "it-IT";
 
     @Autowired
     private MockMvc mockMvc;
-
     @Autowired
     private JsonMapper jsonMapper;
-
     @Autowired
     private UserRepository userRepository;
-
     @Autowired
     private AuthActionTokenRepository authActionTokenRepository;
-
     @Autowired
     private EmailOutboxRepository emailOutboxRepository;
-
     @Autowired
     private EmailOutboxEncryptionService emailOutboxEncryptionService;
-
     @Autowired
     private PasswordEncoder passwordEncoder;
-
     @Autowired
     private JwtTokenService jwtTokenService;
-
     @Autowired
     private AuthCookieService authCookieService;
-
     @Autowired
     private PlatformTransactionManager transactionManager;
-
     @PersistenceContext
     private EntityManager entityManager;
-
     private TransactionTemplate transactionTemplate;
 
     private static String bearer(String accessToken) {
@@ -520,8 +513,11 @@ class EmailChangeIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, bearer(loginSession.accessToken())))
                 .andExpect(status().isUnauthorized());
 
+        CsrfTestToken csrf = fetchCsrfToken();
+
         mockMvc.perform(post(REFRESH_PATH)
-                        .cookie(loginSession.refreshCookie()))
+                        .header(csrf.headerName(), csrf.token())
+                        .cookie(csrf.cookie(), loginSession.refreshCookie()))
                 .andExpect(status().isUnauthorized());
 
         performLogin(currentEmail, DEFAULT_PASSWORD)
@@ -1757,9 +1753,43 @@ class EmailChangeIntegrationTest {
         });
     }
 
+    private CsrfTestToken fetchCsrfToken() throws Exception {
+        MvcResult result = mockMvc.perform(get("/api/auth/csrf")
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.headerName").value(CSRF_HEADER_NAME))
+                .andExpect(jsonPath("$.parameterName").isString())
+                .andExpect(jsonPath("$.token").isString())
+                .andExpect(cookie().exists(CSRF_COOKIE_NAME))
+                .andReturn();
+
+        String token = JsonPath.read(
+                result.getResponse().getContentAsString(),
+                "$.token"
+        );
+
+        Cookie cookie = result.getResponse().getCookie(CSRF_COOKIE_NAME);
+
+        assertThat(token).isNotBlank();
+        assertThat(cookie).isNotNull();
+
+        return new CsrfTestToken(
+                CSRF_HEADER_NAME,
+                token,
+                cookie
+        );
+    }
+
     private record LoginSession(
             String accessToken,
             Cookie refreshCookie
+    ) {
+    }
+
+    private record CsrfTestToken(
+            String headerName,
+            String token,
+            Cookie cookie
     ) {
     }
 }
