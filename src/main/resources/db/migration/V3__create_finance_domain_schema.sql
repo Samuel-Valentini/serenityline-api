@@ -30,6 +30,7 @@ ALTER TABLE email_outbox
                            'EMAIL_CHANGE_NOTIFICATION',
                            'TRANSACTION_REMINDER',
                            'RECURRING_TRANSACTION_REMINDER',
+                           'USER_INVITATION',
                            'GENERIC'
                 )
             );

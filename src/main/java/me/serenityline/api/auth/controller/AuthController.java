@@ -34,8 +34,9 @@ public class AuthController {
     private final PasswordResetService passwordResetService;
     private final Login2faService login2faService;
     private final EmailChangeService emailChangeService;
+    private final UserInvitationService userInvitationService;
 
-    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService, PasswordResetService passwordResetService, Login2faService login2faService, EmailChangeService emailChangeService) {
+    public AuthController(RegisterService registerService, EmailVerificationService emailVerificationService, LoginService loginService, RestoreAccountService restoreAccountService, ResendEmailVerificationService resendEmailVerificationService, AuthCookieService authCookieService, RefreshTokenService refreshTokenService, LogoutService logoutService, PasswordResetService passwordResetService, Login2faService login2faService, EmailChangeService emailChangeService, UserInvitationService userInvitationService) {
         this.registerService = registerService;
         this.emailVerificationService = emailVerificationService;
         this.loginService = loginService;
@@ -47,6 +48,7 @@ public class AuthController {
         this.passwordResetService = passwordResetService;
         this.login2faService = login2faService;
         this.emailChangeService = emailChangeService;
+        this.userInvitationService = userInvitationService;
     }
 
     @GetMapping("/csrf")
@@ -279,6 +281,30 @@ public class AuthController {
                 .noContent()
                 .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
                 .build();
+    }
+
+    @PostMapping("/user-invitations")
+    public ResponseEntity<UserInvitationResponse> inviteUser(
+            @AuthenticationPrincipal AuthenticatedUser authenticatedUser,
+            @Valid @RequestBody UserInvitationCreateRequest request
+    ) {
+        UserInvitationResponse response = userInvitationService.inviteUser(
+                authenticatedUser.userId(),
+                request
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(response);
+    }
+
+    @PostMapping("/user-invitations/accept")
+    public ResponseEntity<Void> acceptUserInvitation(
+            @Valid @RequestBody UserInvitationAcceptRequest request
+    ) {
+        userInvitationService.acceptInvitation(request);
+
+        return ResponseEntity.noContent().build();
     }
 
 }

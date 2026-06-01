@@ -296,7 +296,8 @@ CREATE TABLE auth_action_tokens
                                        'EMAIL_2FA_ENABLE_CONFIRMATION',
                                        'EMAIL_2FA_DISABLE_CONFIRMATION',
                                        'EMAIL_CHANGE_CONFIRMATION',
-                                       'RESTORE_ACCOUNT'
+                                       'RESTORE_ACCOUNT',
+                                       'USER_INVITATION'
                 )
             ),
 

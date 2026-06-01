@@ -20,6 +20,8 @@ serenityline:
     session-ttl: 30d
     email-verification:
       token-ttl: 24h
+    user-invitation:
+      token-ttl: 7d
   security:
     cors:
       allowed-origins: [ ]
@@ -52,7 +54,7 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
     tags-sorter: alpha
-    
+
 management:
   endpoints:
     web:

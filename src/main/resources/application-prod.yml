@@ -43,6 +43,8 @@ serenityline:
       cooldown: ${EMAIL_VERIFICATION_RESEND_COOLDOWN:60s}
     email-change:
       token-ttl: ${AUTH_EMAIL_CHANGE_TOKEN_TTL:30m}
+    user-invitation:
+      token-ttl: ${USER_INVITATION_TOKEN_TTL:7d}
     jwt:
       issuer: ${JWT_ISSUER:serenityline-api}
       access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
