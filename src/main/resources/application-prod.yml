@@ -24,6 +24,7 @@ logging:
     org.hibernate.orm.jdbc.bind: warn
 
 serenityline:
+
   security:
     cors:
       allowed-origins:
@@ -82,6 +83,18 @@ serenityline:
     from: ${EMAIL_FROM}
     resend:
       api-key: ${RESEND_API_KEY}
+  finance:
+    reminder-worker:
+      enabled: ${FINANCE_REMINDER_WORKER_ENABLED:true}
+      fixed-delay-ms: ${FINANCE_REMINDER_WORKER_FIXED_DELAY_MS:3600000}
+      slow-run-warning-ms: ${FINANCE_REMINDER_WORKER_SLOW_RUN_WARNING_MS:30000}
+      high-candidates-warning-threshold: ${FINANCE_REMINDER_WORKER_HIGH_CANDIDATES_WARNING_THRESHOLD:1000}
+    reminder-final-status-worker:
+      enabled: ${FINANCE_REMINDER_FINAL_STATUS_WORKER_ENABLED:true}
+      fixed-delay-ms: ${FINANCE_REMINDER_FINAL_STATUS_WORKER_FIXED_DELAY_MS:60000}
+      batch-size: ${FINANCE_REMINDER_FINAL_STATUS_WORKER_BATCH_SIZE:100}
+
+
 springdoc:
   api-docs:
     enabled: false
