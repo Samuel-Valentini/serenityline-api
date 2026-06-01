@@ -40,6 +40,10 @@ serenityline:
       extremes-future-months: 36
       year-end-forecast-years: 10
       trend-min-days: 90
+  export:
+    jdbc-fetch-size: ${DATA_EXPORT_JDBC_FETCH_SIZE:500}
+    max-rows-per-csv-file: ${DATA_EXPORT_MAX_ROWS_PER_CSV_FILE:50000}
+    max-concurrent-exports: ${DATA_EXPORT_MAX_CONCURRENT_EXPORTS:2}
 
 springdoc:
   api-docs:
@@ -48,6 +52,7 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
     tags-sorter: alpha
+    
 management:
   endpoints:
     web:

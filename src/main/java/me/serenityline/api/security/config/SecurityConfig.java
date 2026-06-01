@@ -1,5 +1,6 @@
 package me.serenityline.api.security.config;
 
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import me.serenityline.api.auth.config.RefreshTokenProperties;
 import me.serenityline.api.security.auth.JwtAuthenticationFilter;
@@ -77,6 +78,8 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(authorizeHttpRequests -> authorizeHttpRequests
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(
                                 "/swagger-ui.html",
@@ -104,7 +107,6 @@ public class SecurityConfig {
                                 "/api/auth/login/2fa/verify",
                                 "/api/auth/email-change/confirm"
                         ).permitAll()
-                        .requestMatchers("/actuator/**").denyAll()
                         .anyRequest().authenticated()
                 )
                 .build();
