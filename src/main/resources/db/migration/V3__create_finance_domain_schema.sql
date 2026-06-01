@@ -494,6 +494,15 @@ CREATE INDEX idx_recurring_transactions_base_group_first_payment
         )
     WHERE recurring_transaction_is_simulated = FALSE;
 
+CREATE INDEX idx_recurring_transactions_reminder_candidates
+    ON recurring_transactions (
+                               user_group_id,
+                               recurring_transaction_first_payment_date,
+                               recurring_transaction_id
+        )
+    WHERE recurring_transaction_is_simulated = FALSE
+        AND recurring_transaction_reminder_enabled = TRUE;
+
 CREATE TABLE recurring_transaction_history
 (
     recurring_transaction_history_id         UUID PRIMARY KEY        DEFAULT gen_random_uuid(),
@@ -861,9 +870,31 @@ CREATE UNIQUE INDEX uq_transactions_recurring_logical_occurrence
                      recurring_transaction_id,
                      recurring_transaction_logical_date
         )
+    INCLUDE (
+        transaction_id,
+        account_id,
+        transaction_amount,
+        transaction_charge_date
+        )
     WHERE recurring_transaction_id IS NOT NULL
         AND transaction_is_user_entered = FALSE
         AND transaction_is_confirmed = TRUE;
+
+CREATE INDEX idx_transactions_reminder_due_lookup
+    ON transactions (
+                     (transaction_charge_date - transaction_reminder_days_before::integer),
+                     user_group_id,
+                     transaction_id
+        )
+    INCLUDE (
+        account_id,
+        transaction_amount,
+        transaction_charge_date,
+        transaction_reminder_days_before
+        )
+    WHERE transaction_is_simulated = FALSE
+        AND transaction_reminder_enabled = TRUE
+        AND transaction_is_user_entered = TRUE;
 
 CREATE TABLE transactions_users
 (
@@ -895,3 +926,235 @@ CREATE INDEX idx_transactions_users_transaction_id
 
 CREATE INDEX idx_transactions_users_user_group_id
     ON transactions_users (user_group_id);
+
+CREATE TABLE finance_reminder_notifications
+(
+    finance_reminder_notification_id   UUID PRIMARY KEY        DEFAULT gen_random_uuid(),
+
+    user_id                            UUID           NOT NULL,
+    user_group_id                      UUID           NOT NULL,
+
+    transaction_id                     UUID,
+    recurring_transaction_id           UUID,
+    recurring_transaction_logical_date DATE,
+
+    charge_date                        DATE           NOT NULL,
+    notified_amount                    NUMERIC(19, 2) NOT NULL,
+    notified_currency                  VARCHAR(3)     NOT NULL,
+    reminder_date                      DATE           NOT NULL,
+
+    email_outbox_id                    UUID           REFERENCES email_outbox (email_outbox_id) ON DELETE SET NULL,
+
+    email_final_status                 VARCHAR(30),
+    email_final_status_recorded_at     TIMESTAMPTZ,
+    email_provider                     VARCHAR(100),
+    provider_message_id                VARCHAR(255),
+
+    reminder_notification_created_at   TIMESTAMPTZ    NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_finance_reminder_notifications_user_group
+        FOREIGN KEY (user_id, user_group_id)
+            REFERENCES users (user_id, user_group_id)
+            ON DELETE CASCADE,
+
+    CONSTRAINT fk_finance_reminder_notifications_recurring_group
+        FOREIGN KEY (recurring_transaction_id, user_group_id)
+            REFERENCES recurring_transactions (recurring_transaction_id, user_group_id)
+            ON DELETE RESTRICT,
+
+    CONSTRAINT chk_finance_reminder_notifications_source
+        CHECK (
+            (
+                transaction_id IS NOT NULL
+                    AND recurring_transaction_id IS NULL
+                    AND recurring_transaction_logical_date IS NULL
+                )
+                OR
+            (
+                transaction_id IS NULL
+                    AND recurring_transaction_id IS NOT NULL
+                    AND recurring_transaction_logical_date IS NOT NULL
+                )
+            ),
+
+    CONSTRAINT chk_finance_reminder_notifications_amount_not_zero
+        CHECK (notified_amount <> 0),
+
+    CONSTRAINT chk_finance_reminder_notifications_currency_format
+        CHECK (notified_currency ~ '^[A-Z]{3}$'),
+
+    CONSTRAINT chk_finance_reminder_notifications_reminder_not_after_charge
+        CHECK (reminder_date <= charge_date),
+
+    CONSTRAINT chk_finance_reminder_notifications_email_final_status
+        CHECK (
+            email_final_status IS NULL
+                OR email_final_status IN ('SENT', 'FAILED', 'CANCELLED')
+            ),
+
+    CONSTRAINT chk_finance_reminder_notifications_final_status_consistency
+        CHECK (
+            (
+                email_final_status IS NULL
+                    AND email_final_status_recorded_at IS NULL
+                )
+                OR
+            (
+                email_final_status IS NOT NULL
+                    AND email_final_status_recorded_at IS NOT NULL
+                )
+            ),
+
+    CONSTRAINT chk_finance_reminder_notifications_email_provider_not_blank
+        CHECK (
+            email_provider IS NULL
+                OR length(btrim(email_provider)) > 0
+            ),
+
+    CONSTRAINT chk_finance_reminder_notifications_provider_message_not_blank
+        CHECK (
+            provider_message_id IS NULL
+                OR length(btrim(provider_message_id)) > 0
+            ),
+
+    CONSTRAINT chk_finance_reminder_notifications_provider_message_consistency
+        CHECK (
+            provider_message_id IS NULL
+                OR email_provider IS NOT NULL
+            ),
+
+    CONSTRAINT chk_finance_reminder_notifications_provider_only_when_final
+        CHECK (
+            email_final_status IS NOT NULL
+                OR (
+                email_provider IS NULL
+                    AND provider_message_id IS NULL
+                )
+            )
+
+);
+
+CREATE OR REPLACE FUNCTION validate_finance_reminder_notification_source()
+    RETURNS TRIGGER AS
+$$
+BEGIN
+    IF NOT EXISTS (SELECT 1
+                   FROM users u
+                   WHERE u.user_id = NEW.user_id
+                     AND u.user_group_id = NEW.user_group_id
+                     AND u.payment_email_reminders_enabled = TRUE) THEN
+        RAISE EXCEPTION
+            'Invalid finance reminder notification recipient: user_id %, user_group_id %',
+            NEW.user_id,
+            NEW.user_group_id
+            USING
+                ERRCODE = '23503',
+                CONSTRAINT = 'trg_finance_reminder_notifications_source';
+    END IF;
+
+    IF NEW.transaction_id IS NOT NULL THEN
+        IF NOT EXISTS (SELECT 1
+                       FROM transactions t
+                                JOIN transactions_users tu
+                                     ON tu.transaction_id = t.transaction_id
+                                         AND tu.user_id = NEW.user_id
+                                         AND tu.user_group_id = t.user_group_id
+                       WHERE t.transaction_id = NEW.transaction_id
+                         AND t.user_group_id = NEW.user_group_id
+                         AND t.transaction_is_simulated = FALSE
+                         AND t.transaction_is_user_entered = TRUE
+                         AND t.transaction_reminder_enabled = TRUE) THEN
+            RAISE EXCEPTION
+                'Invalid transaction reminder notification source: transaction_id %, user_id %, user_group_id %',
+                NEW.transaction_id,
+                NEW.user_id,
+                NEW.user_group_id
+                USING
+                    ERRCODE = '23503',
+                    CONSTRAINT = 'trg_finance_reminder_notifications_source';
+        END IF;
+    END IF;
+
+    IF NEW.recurring_transaction_id IS NOT NULL THEN
+        IF NOT EXISTS (SELECT 1
+                       FROM recurring_transactions rt
+                                JOIN recurring_transactions_users rtu
+                                     ON rtu.recurring_transaction_id = rt.recurring_transaction_id
+                                         AND rtu.user_id = NEW.user_id
+                                         AND rtu.user_group_id = rt.user_group_id
+                       WHERE rt.recurring_transaction_id = NEW.recurring_transaction_id
+                         AND rt.user_group_id = NEW.user_group_id
+                         AND rt.recurring_transaction_is_simulated = FALSE
+                         AND rt.recurring_transaction_reminder_enabled = TRUE) THEN
+            RAISE EXCEPTION
+                'Invalid recurring reminder notification source: recurring_transaction_id %, user_id %, user_group_id %',
+                NEW.recurring_transaction_id,
+                NEW.user_id,
+                NEW.user_group_id
+                USING
+                    ERRCODE = '23503',
+                    CONSTRAINT = 'trg_finance_reminder_notifications_source';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_finance_reminder_notifications_source
+    BEFORE INSERT OR UPDATE OF
+        user_id,
+        transaction_id,
+        recurring_transaction_id,
+        recurring_transaction_logical_date,
+        user_group_id
+    ON finance_reminder_notifications
+    FOR EACH ROW
+EXECUTE FUNCTION validate_finance_reminder_notification_source();
+
+CREATE UNIQUE INDEX uq_finance_reminder_notifications_transaction
+    ON finance_reminder_notifications (
+                                       user_group_id,
+                                       user_id,
+                                       transaction_id
+        )
+    WHERE transaction_id IS NOT NULL;
+
+CREATE UNIQUE INDEX uq_finance_reminder_notifications_recurring
+    ON finance_reminder_notifications (
+                                       user_group_id,
+                                       user_id,
+                                       recurring_transaction_id,
+                                       recurring_transaction_logical_date
+        )
+    WHERE recurring_transaction_id IS NOT NULL;
+
+CREATE UNIQUE INDEX uq_finance_reminder_notifications_email_outbox
+    ON finance_reminder_notifications (email_outbox_id)
+    WHERE email_outbox_id IS NOT NULL;
+
+CREATE INDEX idx_finance_reminder_notifications_outbox_pending_final
+    ON finance_reminder_notifications (email_outbox_id)
+    WHERE email_outbox_id IS NOT NULL
+        AND email_final_status IS NULL;
+
+CREATE INDEX idx_finance_reminder_notifications_group_created
+    ON finance_reminder_notifications (
+                                       user_group_id,
+                                       reminder_notification_created_at DESC,
+                                       finance_reminder_notification_id
+        );
+
+CREATE INDEX idx_finance_reminder_notifications_user_created
+    ON finance_reminder_notifications (
+                                       user_id,
+                                       reminder_notification_created_at DESC,
+                                       finance_reminder_notification_id
+        );
+
+CREATE INDEX idx_finance_reminder_notifications_recurring_group
+    ON finance_reminder_notifications (
+                                       recurring_transaction_id,
+                                       user_group_id
+        )
+    WHERE recurring_transaction_id IS NOT NULL;
