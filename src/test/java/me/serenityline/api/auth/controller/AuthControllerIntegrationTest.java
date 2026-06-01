@@ -2756,6 +2756,71 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(21);
     }
 
+    @Test
+    void deleteMeShouldIgnoreMaliciousBodyAndDeleteOnlyAuthenticatedUser() throws Exception {
+        AuthenticatedTestUser attacker = registerVerifyAndLoginUser("delete-me-attacker");
+        AuthenticatedTestUser victim = registerVerifyAndLoginUser("delete-me-victim");
+
+        ResultActions deleteResult = mockMvc.perform(delete("/api/me")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + attacker.accessToken())
+                        .cookie(new Cookie(REFRESH_COOKIE_NAME, attacker.refreshToken()))
+                        .content("""
+                                {
+                                  "userId": "%s",
+                                  "userGroupId": "%s",
+                                  "role": "OWNER",
+                                  "email": "%s"
+                                }
+                                """.formatted(
+                                victim.userId(),
+                                victim.userGroupId(),
+                                victim.email()
+                        )))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertRefreshCookieCleared(deleteResult);
+
+        assertThat(userRepository.findByEmailAndUserDeletedAtIsNull(attacker.email()))
+                .isEmpty();
+
+        User deletedAttacker = userRepository.findByEmailAndUserDeletedAtIsNotNull(attacker.email())
+                .orElseThrow();
+
+        assertThat(deletedAttacker.getUserId()).isEqualTo(attacker.userId());
+        assertThat(deletedAttacker.getUserGroup().getUserGroupId()).isEqualTo(attacker.userGroupId());
+        assertThat(deletedAttacker.isPendingDeletion()).isTrue();
+        assertThat(deletedAttacker.getUserDeletedAt()).isNotNull();
+
+        User activeVictim = userRepository.findByEmailAndUserDeletedAtIsNull(victim.email())
+                .orElseThrow();
+
+        assertThat(activeVictim.getUserId()).isEqualTo(victim.userId());
+        assertThat(activeVictim.getUserGroup().getUserGroupId()).isEqualTo(victim.userGroupId());
+        assertThat(activeVictim.isPendingDeletion()).isFalse();
+        assertThat(activeVictim.getUserDeletedAt()).isNull();
+        assertThat(activeVictim.isUserIsEnabled()).isTrue();
+
+        performMe(attacker.accessToken())
+                .andExpect(status().isUnauthorized());
+
+        performRefresh(attacker.refreshToken())
+                .andExpect(status().isUnauthorized());
+
+        performMe(victim.accessToken())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(victim.userId().toString()))
+                .andExpect(jsonPath("$.email").value(victim.email()))
+                .andExpect(jsonPath("$.userGroupId").value(victim.userGroupId().toString()));
+
+        performRefresh(victim.refreshToken())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.userId").value(victim.userId().toString()))
+                .andExpect(jsonPath("$.user.email").value(victim.email()));
+    }
+
     private void registerValidUser(String email) throws Exception {
         performRegister(
                 IT_LOCALE,
@@ -3328,5 +3393,56 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
                 OffsetDateTime.now().minus(duration),
                 token.getAuthActionTokenId()
         );
+    }
+
+    private AuthenticatedTestUser registerVerifyAndLoginUser(String prefix) throws Exception {
+        String email = uniqueEmail(prefix);
+        String userName = "Test " + prefix;
+
+        performRegister(
+                DEFAULT_LOCALE,
+                userName,
+                email,
+                DEFAULT_PASSWORD,
+                DEFAULT_LOCALE
+        )
+                .andExpect(status().isCreated());
+
+        EmailOutbox verificationEmail = latestPendingEmailOutbox(
+                EmailOutboxType.EMAIL_VERIFICATION,
+                email
+        );
+
+        String verificationToken = extractTokenFromBody(decryptTextBody(verificationEmail));
+
+        verifyEmail(verificationToken);
+
+        User user = userRepository.findByEmailAndUserDeletedAtIsNull(email)
+                .orElseThrow();
+
+        MvcResult loginResult = performLoginWithDevice(
+                email,
+                DEFAULT_PASSWORD,
+                "Device " + prefix
+        )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        return new AuthenticatedTestUser(
+                email,
+                user.getUserId(),
+                user.getUserGroup().getUserGroupId(),
+                extractAccessToken(loginResult),
+                extractRefreshCookie(loginResult)
+        );
+    }
+
+    private record AuthenticatedTestUser(
+            String email,
+            UUID userId,
+            UUID userGroupId,
+            String accessToken,
+            String refreshToken
+    ) {
     }
 }

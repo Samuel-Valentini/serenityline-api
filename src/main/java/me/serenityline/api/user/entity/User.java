@@ -15,15 +15,12 @@ import java.util.regex.Pattern;
 @Table(name = "users")
 public class User {
 
+    public static final int SOFT_DELETE_GRACE_PERIOD_DAYS = 30;
     private static final int USER_NAME_MAX_LENGTH = 255;
     private static final int EMAIL_MAX_LENGTH = 320;
     private static final int PASSWORD_HASH_MAX_LENGTH = 255;
-
     private static final Set<String> SUPPORTED_LOCALES = Set.of("it-IT", "en-US");
-
     private static final Pattern BASIC_EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
-    private static final int SOFT_DELETE_GRACE_PERIOD_DAYS = 30;
-
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "user_id", nullable = false)

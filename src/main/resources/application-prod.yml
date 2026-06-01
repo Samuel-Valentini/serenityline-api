@@ -93,6 +93,11 @@ serenityline:
       enabled: ${FINANCE_REMINDER_FINAL_STATUS_WORKER_ENABLED:true}
       fixed-delay-ms: ${FINANCE_REMINDER_FINAL_STATUS_WORKER_FIXED_DELAY_MS:60000}
       batch-size: ${FINANCE_REMINDER_FINAL_STATUS_WORKER_BATCH_SIZE:100}
+  account-deletion:
+    hard-deletion:
+      enabled: ${ACCOUNT_HARD_DELETION_ENABLED:true}
+      fixed-delay-ms: ${ACCOUNT_HARD_DELETION_FIXED_DELAY_MS:3600000}
+      batch-size: ${ACCOUNT_HARD_DELETION_BATCH_SIZE:50}
 
 
 springdoc:
