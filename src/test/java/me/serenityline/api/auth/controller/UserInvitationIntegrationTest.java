@@ -10,6 +10,8 @@ import me.serenityline.api.email.outbox.entity.EmailOutboxStatus;
 import me.serenityline.api.email.outbox.entity.EmailOutboxType;
 import me.serenityline.api.email.outbox.repository.EmailOutboxRepository;
 import me.serenityline.api.email.service.EmailSender;
+import me.serenityline.api.email.service.OutboundEmail;
+import me.serenityline.api.email.service.SentEmail;
 import me.serenityline.api.finance.account.entity.AccountUser;
 import me.serenityline.api.finance.account.repository.AccountUserRepository;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
@@ -19,12 +21,14 @@ import me.serenityline.api.support.IntegrationTestSupport;
 import me.serenityline.api.user.entity.User;
 import me.serenityline.api.user.entity.UserRole;
 import me.serenityline.api.user.repository.UserRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
@@ -40,6 +44,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItems;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -89,12 +95,11 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
-    @Autowired
+    @MockitoBean
     private EmailSender emailSender;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
-
 
     private static String jsonPathString(
             MvcResult result,
@@ -104,6 +109,17 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
                 result.getResponse().getContentAsString(),
                 path
         );
+    }
+
+    @BeforeEach
+    void preventRealEmails() {
+        when(emailSender.provider())
+                .thenReturn("test-email-sender");
+
+        when(emailSender.send(any(OutboundEmail.class)))
+                .thenAnswer(invocation -> new SentEmail(
+                        "test-message-" + UUID.randomUUID()
+                ));
     }
 
     @Test
@@ -186,8 +202,8 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
         assertThat(body).contains("Mario Rossi");
         assertThat(body).contains("Owner");
         assertThat(body).contains("Owner's group");
-        assertThat(body).contains("/user-invitations/accept#token=");
-        assertThat(body).contains("/user-invitations/accept");
+        assertThat(body).contains("/invito/accetta#token=");
+        assertThat(body).contains("/invito/accetta");
 
         assertThat(plainToken).isNotBlank();
         assertThat(invitationToken.getAuthActionTokenHash())
@@ -777,10 +793,15 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void inviteUserShouldRejectInvalidAccessToken() throws Exception {
+        long authActionTokensBefore = authActionTokenRepository.count();
+        long emailOutboxBefore = emailOutboxRepository.count();
+
+        String invitedEmail = uniqueEmail("invalid-bearer-invite");
+
         performInviteUser(
                 "invalid-access-token",
                 "Invalid Bearer Invite",
-                uniqueEmail("invalid-bearer-invite"),
+                invitedEmail,
                 "COLLABORATOR",
                 DEFAULT_LOCALE,
                 true,
@@ -788,8 +809,14 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
         )
                 .andExpect(status().isUnauthorized());
 
-        assertThat(authActionTokenRepository.findAll()).isEmpty();
-        assertThat(emailOutboxRepository.findAll()).isEmpty();
+        assertThat(authActionTokenRepository.count())
+                .isEqualTo(authActionTokensBefore);
+
+        assertThat(emailOutboxRepository.count())
+                .isEqualTo(emailOutboxBefore);
+
+        assertThat(userRepository.findByEmailAndUserDeletedAtIsNull(invitedEmail))
+                .isEmpty();
     }
 
     @Test

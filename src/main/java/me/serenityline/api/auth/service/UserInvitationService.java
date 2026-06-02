@@ -412,11 +412,11 @@ public class UserInvitationService {
     }
 
     private String buildInvitationUrl(String plainToken) {
-        return frontendBaseUrl + "/user-invitations/accept#token=" + plainToken;
+        return frontendBaseUrl + "/invito/accetta#token=" + plainToken;
     }
 
     private String buildManualInvitationUrl() {
-        return frontendBaseUrl + "/user-invitations/accept";
+        return frontendBaseUrl + "/invito/accetta";
     }
 
     private String formatTokenTtl(Locale locale) {

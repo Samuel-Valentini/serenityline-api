@@ -40,6 +40,7 @@ import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -513,11 +514,9 @@ class EmailChangeIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, bearer(loginSession.accessToken())))
                 .andExpect(status().isUnauthorized());
 
-        CsrfTestToken csrf = fetchCsrfToken();
-
         mockMvc.perform(post(REFRESH_PATH)
-                        .header(csrf.headerName(), csrf.token())
-                        .cookie(csrf.cookie(), loginSession.refreshCookie()))
+                        .with(csrf().asHeader())
+                        .cookie(loginSession.refreshCookie()))
                 .andExpect(status().isUnauthorized());
 
         performLogin(currentEmail, DEFAULT_PASSWORD)
@@ -1763,6 +1762,11 @@ class EmailChangeIntegrationTest {
                 .andExpect(cookie().exists(CSRF_COOKIE_NAME))
                 .andReturn();
 
+        String headerName = JsonPath.read(
+                result.getResponse().getContentAsString(),
+                "$.headerName"
+        );
+
         String token = JsonPath.read(
                 result.getResponse().getContentAsString(),
                 "$.token"
@@ -1770,11 +1774,12 @@ class EmailChangeIntegrationTest {
 
         Cookie cookie = result.getResponse().getCookie(CSRF_COOKIE_NAME);
 
+        assertThat(headerName).isEqualTo(CSRF_HEADER_NAME);
         assertThat(token).isNotBlank();
         assertThat(cookie).isNotNull();
 
         return new CsrfTestToken(
-                CSRF_HEADER_NAME,
+                headerName,
                 token,
                 cookie
         );

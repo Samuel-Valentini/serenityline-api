@@ -193,11 +193,11 @@ public class EmailVerificationService {
     }
 
     private String buildVerificationUrl(String plainToken) {
-        return frontendBaseUrl + "/verify-email#token=" + plainToken;
+        return frontendBaseUrl + "/verifica-email#token=" + plainToken;
     }
 
     private String buildManualVerificationUrl() {
-        return frontendBaseUrl + "/verify-email";
+        return frontendBaseUrl + "/verifica-email";
     }
 
     private String formatTokenTtl(Locale locale) {

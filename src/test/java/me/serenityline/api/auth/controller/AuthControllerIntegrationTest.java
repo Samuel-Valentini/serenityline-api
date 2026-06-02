@@ -409,8 +409,8 @@ class AuthControllerIntegrationTest extends IntegrationTestSupport {
         String body = decryptTextBody(emailOutbox);
 
         assertThat(subject).isEqualTo("Verify your SerenityLine email");
-        assertThat(body).contains(DEV_ORIGIN + "/verify-email#token=");
-        assertThat(body).contains(DEV_ORIGIN + "/verify-email");
+        assertThat(body).contains(DEV_ORIGIN + "/verifica-email#token=");
+        assertThat(body).contains(DEV_ORIGIN + "/verifica-email");
         assertThat(body).contains("This link expires in 1 day.");
     }
 
