@@ -54,6 +54,10 @@ public record FinanceCalendarMovement(
             throw new IllegalArgumentException("finance.calendar.recurringTransactionIdRequired");
         }
 
+        if (isTechnicalCreditCardCharge(type) && creditCardId == null) {
+            throw new IllegalArgumentException("finance.calendar.creditCardIdRequired");
+        }
+
         if (type == FinanceCalendarMovementType.PERSISTED_TRANSACTION
                 && finalOccurrence) {
             throw new IllegalArgumentException("finance.calendar.finalOccurrenceNotAllowed");
@@ -66,5 +70,10 @@ public record FinanceCalendarMovement(
         if (simulated && simulationGroupId == null) {
             throw new IllegalArgumentException("finance.calendar.simulationGroupRequired");
         }
+    }
+
+    private static boolean isTechnicalCreditCardCharge(FinanceCalendarMovementType type) {
+        return type == FinanceCalendarMovementType.TECHNICAL_CREDIT_CARD_CHARGE_FROM_PERSISTED_TRANSACTION
+                || type == FinanceCalendarMovementType.TECHNICAL_CREDIT_CARD_CHARGE_FROM_PROJECTED_RECURRING_TRANSACTION;
     }
 }

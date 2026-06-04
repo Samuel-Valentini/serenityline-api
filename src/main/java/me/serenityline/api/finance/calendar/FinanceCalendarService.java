@@ -14,6 +14,8 @@ import me.serenityline.api.finance.transaction.repository.TransactionRepository;
 import me.serenityline.api.finance.transaction.service.*;
 import me.serenityline.api.user.entity.User;
 import me.serenityline.api.user.repository.UserRepository;
+import org.springframework.context.MessageSource;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +40,7 @@ public class FinanceCalendarService {
     private final FinanceCalendarProperties financeCalendarProperties;
     private final FinanceProperties financeProperties;
     private final AccountRepository accountRepository;
+    private final MessageSource messageSource;
 
     public FinanceCalendarService(
             UserRepository userRepository,
@@ -51,7 +54,8 @@ public class FinanceCalendarService {
             FinanceCalendarMovementMapper financeCalendarMovementMapper,
             FinanceCalendarProperties financeCalendarProperties,
             FinanceProperties financeProperties,
-            AccountRepository accountRepository
+            AccountRepository accountRepository,
+            MessageSource messageSource
     ) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.transactionRepository = Objects.requireNonNull(transactionRepository, "transactionRepository");
@@ -65,6 +69,7 @@ public class FinanceCalendarService {
         this.financeCalendarProperties = Objects.requireNonNull(financeCalendarProperties, "financeCalendarProperties");
         this.financeProperties = Objects.requireNonNull(financeProperties, "financeProperties");
         this.accountRepository = Objects.requireNonNull(accountRepository, "accountRepository");
+        this.messageSource = Objects.requireNonNull(messageSource, "messageSource");
     }
 
     @Transactional(readOnly = true)
@@ -115,6 +120,16 @@ public class FinanceCalendarService {
                 canReadAllGroupTransactions
         );
 
+        List<Transaction> persistedCreditCardSourceTransactions = findPersistedTransactions(
+                currentUser,
+                userGroupId,
+                creditCardChargeSourceFrom(from),
+                creditCardChargeSourceTo(to),
+                accountIds,
+                simulationGroupIds,
+                canReadAllGroupTransactions
+        );
+
         List<RecurringTransaction> recurringTransactions = findReadableRecurringTransactions(
                 currentUser,
                 userGroupId,
@@ -159,19 +174,35 @@ public class FinanceCalendarService {
                         to
                 );
 
+        List<RecurringTransactionProjectedMovement> projectedCreditCardSourceMovements =
+                recurringTransactionProjectedMovementBatchService.generateProjectedMovementsAcrossRange(
+                        seeds,
+                        creditCardChargeSourceFrom(from),
+                        creditCardChargeSourceTo(to)
+                );
+
         assertProjectedMovementsHaveReadableRecurringContext(
                 projectedMovements,
                 recurringContextById
         );
 
-        Set<UUID> readableRecurringAccountIds = projectedMovements.isEmpty()
-                ? Set.of()
-                : readableProjectedAccountIds(
+        assertProjectedMovementsHaveReadableRecurringContext(
+                projectedCreditCardSourceMovements,
+                recurringContextById
+        );
+
+        boolean hasProjectedMovementsToAuthorize =
+                !projectedMovements.isEmpty()
+                        || !projectedCreditCardSourceMovements.isEmpty();
+
+        Set<UUID> readableRecurringAccountIds = hasProjectedMovementsToAuthorize
+                ? readableProjectedAccountIds(
                 currentUser,
                 userGroupId,
                 accountIds,
                 canReadAllGroupRecurringTransactions
-        );
+        )
+                : Set.of();
 
         Set<UUID> requestedAccountIdSet = Set.copyOf(accountIds);
 
@@ -185,10 +216,26 @@ public class FinanceCalendarService {
                         ))
                         .toList();
 
+        List<RecurringTransactionProjectedMovement> visibleProjectedCreditCardSourceMovements =
+                projectedCreditCardSourceMovements.stream()
+                        .filter(projectedMovement -> canReadProjectedMovementAccount(
+                                projectedMovement,
+                                requestedAccountIdSet,
+                                canReadAllGroupRecurringTransactions,
+                                readableRecurringAccountIds
+                        ))
+                        .toList();
+
+        List<RecurringTransactionProjectedMovement> visibleProjectedMovementsForConfirmation =
+                new ArrayList<>();
+
+        visibleProjectedMovementsForConfirmation.addAll(visibleProjectedMovements);
+        visibleProjectedMovementsForConfirmation.addAll(visibleProjectedCreditCardSourceMovements);
+
         Set<ConfirmedRecurringOccurrenceKey> confirmedRecurringOccurrenceKeys =
                 findConfirmedRecurringOccurrenceKeysForProjectedMovements(
                         userGroupId,
-                        visibleProjectedMovements,
+                        visibleProjectedMovementsForConfirmation,
                         recurringContextById.keySet()
                 );
 
@@ -196,6 +243,15 @@ public class FinanceCalendarService {
 
         persistedTransactions.stream()
                 .map(financeCalendarMovementMapper::fromPersistedTransaction)
+                .forEach(movements::add);
+
+        persistedCreditCardSourceTransactions.stream()
+                .map(transaction -> toTechnicalCreditCardChargeFromPersistedTransaction(
+                        transaction,
+                        from,
+                        to
+                ))
+                .flatMap(Optional::stream)
                 .forEach(movements::add);
 
         visibleProjectedMovements.stream()
@@ -207,6 +263,20 @@ public class FinanceCalendarService {
                         projectedMovement,
                         recurringContextById
                 ))
+                .forEach(movements::add);
+
+        visibleProjectedCreditCardSourceMovements.stream()
+                .filter(projectedMovement -> !isAlreadyConfirmed(
+                        projectedMovement,
+                        confirmedRecurringOccurrenceKeys
+                ))
+                .map(projectedMovement -> toTechnicalCreditCardChargeFromProjectedRecurringTransaction(
+                        projectedMovement,
+                        recurringContextById,
+                        from,
+                        to
+                ))
+                .flatMap(Optional::stream)
                 .forEach(movements::add);
 
         return movements.stream()
@@ -540,6 +610,166 @@ public class FinanceCalendarService {
                 simulationGroupId
         );
     }
+
+    private LocalDate creditCardChargeSourceFrom(LocalDate responseFrom) {
+        return responseFrom.minusMonths(1).withDayOfMonth(1);
+    }
+
+    private LocalDate creditCardChargeSourceTo(LocalDate responseTo) {
+        LocalDate sourceMonth = responseTo.minusMonths(1);
+        return sourceMonth.withDayOfMonth(sourceMonth.lengthOfMonth());
+    }
+
+    private LocalDate creditCardSettlementDate(
+            LocalDate sourceChargeDate,
+            Short creditCardChargeDay
+    ) {
+        Objects.requireNonNull(sourceChargeDate, "sourceChargeDate");
+        Objects.requireNonNull(creditCardChargeDay, "creditCardChargeDay");
+
+        LocalDate settlementMonth = sourceChargeDate.plusMonths(1).withDayOfMonth(1);
+
+        int settlementDay = Math.min(
+                creditCardChargeDay,
+                settlementMonth.lengthOfMonth()
+        );
+
+        return settlementMonth.withDayOfMonth(settlementDay);
+    }
+
+    private boolean isInsideRange(
+            LocalDate date,
+            LocalDate from,
+            LocalDate to
+    ) {
+        return !date.isBefore(from) && !date.isAfter(to);
+    }
+
+    private String technicalCreditCardChargeDescription(String sourceDescription) {
+        return messageSource.getMessage(
+                "finance.calendar.technicalCreditCardCharge.description",
+                new Object[]{sourceDescription},
+                LocaleContextHolder.getLocale()
+        );
+    }
+
+    private Optional<FinanceCalendarMovement> toTechnicalCreditCardChargeFromPersistedTransaction(
+            Transaction transaction,
+            LocalDate responseFrom,
+            LocalDate responseTo
+    ) {
+        Objects.requireNonNull(transaction, "transaction");
+        Objects.requireNonNull(responseFrom, "responseFrom");
+        Objects.requireNonNull(responseTo, "responseTo");
+
+        if (transaction.getCreditCard() == null) {
+            return Optional.empty();
+        }
+
+        if (transaction.isTransactionAffectsAccountBalance()
+                || !transaction.isTransactionAffectsSerenityline()) {
+            return Optional.empty();
+        }
+
+        LocalDate settlementDate = creditCardSettlementDate(
+                transaction.getTransactionChargeDate(),
+                transaction.getCreditCard().getCreditCardChargeDay()
+        );
+
+        if (!isInsideRange(settlementDate, responseFrom, responseTo)) {
+            return Optional.empty();
+        }
+
+        return Optional.of(new FinanceCalendarMovement(
+                FinanceCalendarMovementType.TECHNICAL_CREDIT_CARD_CHARGE_FROM_PERSISTED_TRANSACTION,
+                transaction.getTransactionId(),
+                transaction.getRecurringTransaction() == null
+                        ? null
+                        : transaction.getRecurringTransaction().getRecurringTransactionId(),
+                transaction.getTransactionChargeDate(),
+                settlementDate,
+                technicalCreditCardChargeDescription(transaction.getTransactionDescription()),
+                transaction.getTransactionAmount(),
+                true,
+                false,
+                transaction.getCategory().getCategoryId(),
+                null,
+                transaction.getAccount().getAccountId(),
+                transaction.getCreditCard().getCreditCardId(),
+                transaction.getBucket() == null
+                        ? null
+                        : transaction.getBucket().getBucketId(),
+                false,
+                transaction.isTransactionIsSimulated(),
+                transaction.getSimulationGroup() == null
+                        ? null
+                        : transaction.getSimulationGroup().getSimulationGroupId(),
+                false,
+                false
+        ));
+    }
+
+    private Optional<FinanceCalendarMovement> toTechnicalCreditCardChargeFromProjectedRecurringTransaction(
+            RecurringTransactionProjectedMovement projectedMovement,
+            Map<UUID, RecurringTransactionProjectionContext> recurringContextById,
+            LocalDate responseFrom,
+            LocalDate responseTo
+    ) {
+        Objects.requireNonNull(projectedMovement, "projectedMovement");
+        Objects.requireNonNull(recurringContextById, "recurringContextById");
+        Objects.requireNonNull(responseFrom, "responseFrom");
+        Objects.requireNonNull(responseTo, "responseTo");
+
+        RecurringTransactionProjectionContext context =
+                recurringContextById.get(projectedMovement.recurringTransactionId());
+
+        if (context == null) {
+            throw new IllegalStateException("finance.calendar.recurringContextMissing");
+        }
+
+        if (projectedMovement.linkedCreditCard() == null) {
+            return Optional.empty();
+        }
+
+        if (projectedMovement.affectsAccountBalance()
+                || !projectedMovement.affectsSerenityline()) {
+            return Optional.empty();
+        }
+
+        LocalDate settlementDate = creditCardSettlementDate(
+                projectedMovement.chargeDate(),
+                projectedMovement.linkedCreditCard().getCreditCardChargeDay()
+        );
+
+        if (!isInsideRange(settlementDate, responseFrom, responseTo)) {
+            return Optional.empty();
+        }
+
+        return Optional.of(new FinanceCalendarMovement(
+                FinanceCalendarMovementType.TECHNICAL_CREDIT_CARD_CHARGE_FROM_PROJECTED_RECURRING_TRANSACTION,
+                null,
+                projectedMovement.recurringTransactionId(),
+                projectedMovement.logicalDate(),
+                settlementDate,
+                technicalCreditCardChargeDescription(projectedMovement.description()),
+                projectedMovement.amount(),
+                true,
+                false,
+                projectedMovement.category().getCategoryId(),
+                projectedMovement.financialPriority().getFinancialPriorityId(),
+                projectedMovement.linkedAccount().getAccountId(),
+                projectedMovement.linkedCreditCard().getCreditCardId(),
+                projectedMovement.linkedBucket() == null
+                        ? null
+                        : projectedMovement.linkedBucket().getBucketId(),
+                false,
+                context.simulated(),
+                context.simulationGroupId(),
+                false,
+                projectedMovement.finalOccurrence()
+        ));
+    }
+
 
     private UUID stableMovementId(FinanceCalendarMovement movement) {
         if (movement.transactionId() != null) {

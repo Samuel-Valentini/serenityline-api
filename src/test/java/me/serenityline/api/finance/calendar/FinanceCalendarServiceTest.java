@@ -23,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.MessageSource;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -73,6 +74,9 @@ class FinanceCalendarServiceTest {
 
     @Mock
     private AccountRepository accountRepository;
+
+    @Mock
+    private MessageSource messageSource;
 
     private FinanceCalendarService service;
 
@@ -314,7 +318,8 @@ class FinanceCalendarServiceTest {
                 financeCalendarMovementMapper,
                 financeCalendarProperties,
                 financeProperties,
-                accountRepository
+                accountRepository,
+                messageSource
         );
     }
 
