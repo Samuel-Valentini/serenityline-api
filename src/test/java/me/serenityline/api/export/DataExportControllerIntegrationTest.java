@@ -66,6 +66,19 @@ class DataExportControllerIntegrationTest extends IntegrationTestSupport {
     @Autowired
     private DataExportConcurrencyGuard concurrencyGuard;
 
+    private static String tamperJwtSignature(String token) {
+        String[] parts = token.split("\\.", -1);
+
+        if (parts.length != 3 || parts[2].isBlank()) {
+            throw new IllegalArgumentException("Invalid JWT test token");
+        }
+
+        String signature = parts[2];
+        char replacement = signature.charAt(0) == 'A' ? 'B' : 'A';
+
+        return parts[0] + "." + parts[1] + "." + replacement + signature.substring(1);
+    }
+
     @Test
     void exportShouldRequireAccessToken() throws Exception {
         mockMvc.perform(get("/api/me/export")
@@ -322,7 +335,9 @@ class DataExportControllerIntegrationTest extends IntegrationTestSupport {
     void exportShouldRejectTamperedAccessToken() throws Exception {
         AuthenticatedExportUser user = registerVerifyAndLoginUser("export-tampered-token");
 
-        String tamperedAccessToken = user.accessToken().substring(0, user.accessToken().length() - 1) + "A";
+        String tamperedAccessToken = tamperJwtSignature(user.accessToken());
+
+        assertThat(tamperedAccessToken).isNotEqualTo(user.accessToken());
 
         mockMvc.perform(get("/api/me/export")
                         .header(HttpHeaders.ACCEPT_LANGUAGE, DEFAULT_LOCALE)

@@ -795,7 +795,7 @@ class EmailChangeIntegrationTest {
         assertThat(confirmationBody)
                 .contains(currentEmail)
                 .contains(newEmail)
-                .contains("/change-email/confirm")
+                .contains("/cambia-email/conferma")
                 .contains("#token=");
 
         assertThat(emailOutboxes(EmailOutboxType.EMAIL_CHANGE_NOTIFICATION, currentEmail))

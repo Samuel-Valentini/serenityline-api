@@ -421,11 +421,11 @@ public class EmailChangeService {
     }
 
     private String buildConfirmationUrl(String plainToken) {
-        return frontendBaseUrl + "/change-email/confirm#token=" + plainToken;
+        return frontendBaseUrl + "/cambia-email/conferma#token=" + plainToken;
     }
 
     private String buildManualConfirmationUrl() {
-        return frontendBaseUrl + "/change-email/confirm";
+        return frontendBaseUrl + "/cambia-email/conferma";
     }
 
     private String buildOldEmailNotificationSubject(User user) {

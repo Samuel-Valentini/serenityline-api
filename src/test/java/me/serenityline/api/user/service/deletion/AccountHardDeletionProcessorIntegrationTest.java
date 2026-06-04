@@ -1,16 +1,18 @@
 package me.serenityline.api.user.service.deletion;
 
 import me.serenityline.api.support.IntegrationTestSupport;
+import me.serenityline.api.user.entity.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.time.Clock;
-import java.time.LocalDate;
-import java.time.OffsetDateTime;
+import java.time.*;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
@@ -22,19 +24,14 @@ import static org.assertj.core.api.Assertions.*;
 class AccountHardDeletionProcessorIntegrationTest extends IntegrationTestSupport {
 
     private static final int GRACE_DAYS = 30;
-
     @Autowired
     private AccountHardDeletionProcessor processor;
-
     @Autowired
     private AccountHardDeletionRepository repository;
-
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
     @Autowired
     private Clock clock;
-
     @Autowired
     private ApplicationContext applicationContext;
 
@@ -387,10 +384,10 @@ class AccountHardDeletionProcessorIntegrationTest extends IntegrationTestSupport
 
     @Test
     void processDueHardDeletionsShouldNotDeleteUserDeletedJustAfterCutoff() {
-        OffsetDateTime justAfterCutoff = OffsetDateTime.now(clock)
-                .minusDays(GRACE_DAYS)
-                .plusSeconds(1)
-                .withNano(0);
+        OffsetDateTime cutoff = OffsetDateTime.now(clock)
+                .minusDays(User.SOFT_DELETE_GRACE_PERIOD_DAYS);
+
+        OffsetDateTime justAfterCutoff = cutoff.plusSeconds(1);
 
         GroupFixture group = createRichGroup(
                 "just-after-cutoff",
@@ -1735,6 +1732,19 @@ class AccountHardDeletionProcessorIntegrationTest extends IntegrationTestSupport
                 bytes(12),
                 bytes(16)
         );
+    }
+
+    @TestConfiguration
+    static class FixedClockTestConfig {
+
+        @Bean
+        @Primary
+        Clock testClock() {
+            return Clock.fixed(
+                    Instant.parse("2026-06-03T10:00:00Z"),
+                    ZoneOffset.UTC
+            );
+        }
     }
 
     private record GroupFixture(
