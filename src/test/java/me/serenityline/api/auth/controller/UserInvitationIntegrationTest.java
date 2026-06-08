@@ -24,6 +24,7 @@ import me.serenityline.api.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -94,6 +95,9 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     @MockitoBean
     private EmailSender emailSender;
@@ -1388,11 +1392,11 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
         String accountIdsJson = accountIds == null
                 ? "null"
                 : accountIds.stream()
-                  .map(UUID::toString)
-                  .map(value -> "\"" + value + "\"")
-                  .reduce((left, right) -> left + ", " + right)
-                  .map(value -> "[" + value + "]")
-                  .orElse("[]");
+                .map(UUID::toString)
+                .map(value -> "\"" + value + "\"")
+                .reduce((left, right) -> left + ", " + right)
+                .map(value -> "[" + value + "]")
+                .orElse("[]");
 
         return """
                 {
@@ -1510,7 +1514,8 @@ class UserInvitationIntegrationTest extends IntegrationTestSupport {
                 emailOutboxEncryptionService,
                 emailSender,
                 OUTBOX_BATCH_SIZE,
-                OUTBOX_RETRY_DELAY
+                OUTBOX_RETRY_DELAY,
+                eventPublisher
         );
 
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);

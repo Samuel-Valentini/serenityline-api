@@ -28,6 +28,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -113,6 +114,9 @@ class AuthLogin2faResendEndToEndIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     private static String jsonPathString(
             MvcResult result,
@@ -276,7 +280,8 @@ class AuthLogin2faResendEndToEndIntegrationTest extends IntegrationTestSupport {
                 emailOutboxEncryptionService,
                 emailSender,
                 OUTBOX_BATCH_SIZE,
-                OUTBOX_RETRY_DELAY
+                OUTBOX_RETRY_DELAY,
+                eventPublisher
         );
 
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);

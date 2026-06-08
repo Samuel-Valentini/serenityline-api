@@ -20,6 +20,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -68,6 +69,7 @@ class EmailChangeLiveEmailIntegrationTest {
     private final PasswordEncoder passwordEncoder;
     private final EntityManager entityManager;
     private final TransactionTemplate transactionTemplate;
+    private ApplicationEventPublisher eventPublisher;
 
     @Autowired
     EmailChangeLiveEmailIntegrationTest(
@@ -246,7 +248,8 @@ class EmailChangeLiveEmailIntegrationTest {
                 emailOutboxEncryptionService,
                 emailSender,
                 10,
-                Duration.ofMinutes(1)
+                Duration.ofMinutes(1),
+                eventPublisher
         );
 
         return transactionTemplate.execute(status -> processor.processDueEmails());

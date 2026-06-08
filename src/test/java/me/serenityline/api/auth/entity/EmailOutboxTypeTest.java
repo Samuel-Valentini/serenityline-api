@@ -21,6 +21,8 @@ class EmailOutboxTypeTest {
                         EmailOutboxType.TRANSACTION_REMINDER,
                         EmailOutboxType.RECURRING_TRANSACTION_REMINDER,
                         EmailOutboxType.USER_INVITATION,
+                        EmailOutboxType.SUPPORT_CONTACT,
+                        EmailOutboxType.SUPPORT_CONTACT_CONFIRMATION,
                         EmailOutboxType.GENERIC
                 );
     }

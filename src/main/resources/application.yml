@@ -31,6 +31,9 @@ serenityline:
       key-base64: ${SENSITIVE_HASH_KEY_BASE64}
   frontend:
     base-url: ${FRONTEND_BASE_URL}
+  support:
+    contact:
+      recipient-email: ${SUPPORT_CONTACT_RECIPIENT_EMAIL}
   finance:
     max-simulation-group-ids: 50
     calendar:

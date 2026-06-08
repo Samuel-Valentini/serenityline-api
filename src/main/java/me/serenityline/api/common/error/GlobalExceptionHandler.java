@@ -6,6 +6,7 @@ import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.ElementKind;
 import jakarta.validation.Path;
 import me.serenityline.api.auth.exception.TooManyLoginAttemptsException;
+import me.serenityline.api.support.contact.service.TooManySupportContactRequestsException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSource;
@@ -250,6 +251,34 @@ public class GlobalExceptionHandler {
         ResolvedError error = resolveSafeError(
                 exception.getMessage(),
                 "auth.login.tooManyAttempts",
+                locale
+        );
+
+        logClientError(
+                request,
+                error,
+                exception,
+                HttpStatus.TOO_MANY_REQUESTS
+        );
+
+        ApiErrorResponse response = ApiErrorResponse.of(
+                error.code(),
+                error.message(),
+                request.getRequestURI()
+        );
+
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
+    }
+
+    @ExceptionHandler(TooManySupportContactRequestsException.class)
+    public ResponseEntity<ApiErrorResponse> handleTooManySupportContactRequestsException(
+            TooManySupportContactRequestsException exception,
+            HttpServletRequest request,
+            Locale locale
+    ) {
+        ResolvedError error = resolveSafeError(
+                exception.getMessage(),
+                "support.contact.tooManyRequests",
                 locale
         );
 

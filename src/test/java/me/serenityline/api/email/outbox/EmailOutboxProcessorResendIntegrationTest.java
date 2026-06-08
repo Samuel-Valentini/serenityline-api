@@ -13,6 +13,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -65,6 +66,9 @@ class EmailOutboxProcessorResendIntegrationTest {
     @Autowired
     private EmailSender emailSender;
 
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+
     @Test
     @Transactional
     void shouldSendDueEncryptedOutboxEmailWithResendAndMarkItAsSent() {
@@ -78,7 +82,8 @@ class EmailOutboxProcessorResendIntegrationTest {
                 emailOutboxEncryptionService,
                 emailSender,
                 BATCH_SIZE,
-                RETRY_DELAY
+                RETRY_DELAY,
+                eventPublisher
         );
 
         int processedEmails = processor.processDueEmails();

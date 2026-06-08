@@ -357,6 +357,42 @@ public class EmailOutbox {
         validateState();
     }
 
+    public void replaceEncryptedContent(
+            byte[] subjectEncrypted,
+            byte[] subjectIv,
+            byte[] subjectTag,
+            byte[] bodyHtmlEncrypted,
+            byte[] bodyHtmlIv,
+            byte[] bodyHtmlTag,
+            byte[] bodyTextEncrypted,
+            byte[] bodyTextIv,
+            byte[] bodyTextTag
+    ) {
+        if (!isPending()) {
+            throw new IllegalStateException("emailOutbox.notPending");
+        }
+
+        if (this.attempts > 0) {
+            throw new IllegalStateException("emailOutbox.contentCannotBeChangedAfterAttempt");
+        }
+
+        this.subjectEncrypted = copyRequiredBytes(subjectEncrypted, "emailOutbox.subjectEncrypted.required");
+        this.subjectIv = copyRequiredBytes(subjectIv, "emailOutbox.subjectIv.required");
+        this.subjectTag = copyRequiredBytes(subjectTag, "emailOutbox.subjectTag.required");
+
+        this.bodyHtmlEncrypted = copyNullableBytes(bodyHtmlEncrypted);
+        this.bodyHtmlIv = copyNullableBytes(bodyHtmlIv);
+        this.bodyHtmlTag = copyNullableBytes(bodyHtmlTag);
+
+        this.bodyTextEncrypted = copyNullableBytes(bodyTextEncrypted);
+        this.bodyTextIv = copyNullableBytes(bodyTextIv);
+        this.bodyTextTag = copyNullableBytes(bodyTextTag);
+
+        this.emailBodyDeletedAt = null;
+
+        validateState();
+    }
+
     public void markSent(String provider, String providerMessageId) {
         ensureCanAttempt();
 

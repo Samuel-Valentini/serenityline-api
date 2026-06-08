@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,6 +60,9 @@ class EmailOutboxProcessorTest {
 
     @Autowired
     private EmailOutboxEncryptionService emailOutboxEncryptionService;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     @BeforeEach
     void cleanEmailOutbox() {
@@ -247,7 +251,8 @@ class EmailOutboxProcessorTest {
                 emailOutboxEncryptionService,
                 fakeEmailSender,
                 BATCH_SIZE,
-                RETRY_DELAY
+                RETRY_DELAY,
+                eventPublisher
         );
     }
 

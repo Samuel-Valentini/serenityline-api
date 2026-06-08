@@ -8,8 +8,11 @@ import me.serenityline.api.email.service.OutboundEmail;
 import me.serenityline.api.email.service.SentEmail;
 import me.serenityline.api.security.crypto.EmailOutboxEncryptionService;
 import me.serenityline.api.security.crypto.EncryptedValue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +29,7 @@ import java.util.Objects;
 )
 public class EmailOutboxProcessor {
 
+    private static final Logger log = LoggerFactory.getLogger(EmailOutboxProcessor.class);
     private static final int LAST_ERROR_MAX_LENGTH = 2000;
 
     private final EmailOutboxRepository emailOutboxRepository;
@@ -33,13 +37,15 @@ public class EmailOutboxProcessor {
     private final EmailSender emailSender;
     private final int batchSize;
     private final Duration retryDelay;
+    private final ApplicationEventPublisher eventPublisher;
 
     public EmailOutboxProcessor(
             EmailOutboxRepository emailOutboxRepository,
             EmailOutboxEncryptionService emailOutboxEncryptionService,
             EmailSender emailSender,
             @Value("${serenityline.email.outbox-worker.batch-size:20}") int batchSize,
-            @Value("${serenityline.email.outbox-worker.retry-delay:5m}") Duration retryDelay
+            @Value("${serenityline.email.outbox-worker.retry-delay:5m}") Duration retryDelay,
+            ApplicationEventPublisher eventPublisher
     ) {
         if (batchSize <= 0) {
             throw new IllegalStateException("emailOutbox.worker.batchSize.invalid");
@@ -54,6 +60,7 @@ public class EmailOutboxProcessor {
         this.emailSender = Objects.requireNonNull(emailSender, "emailSender");
         this.batchSize = batchSize;
         this.retryDelay = retryDelay;
+        this.eventPublisher = Objects.requireNonNull(eventPublisher, "eventPublisher");
     }
 
     @Transactional
@@ -87,6 +94,28 @@ public class EmailOutboxProcessor {
             emailOutbox.markFailed(
                     safeLastError(ex),
                     nextScheduledAt
+            );
+
+            return;
+        }
+
+        publishSentEvent(emailOutbox);
+    }
+
+    private void publishSentEvent(EmailOutbox emailOutbox) {
+        try {
+            eventPublisher.publishEvent(new EmailOutboxSentEvent(
+                    emailOutbox.getEmailOutboxId(),
+                    emailOutbox.getUser() == null ? null : emailOutbox.getUser().getUserId(),
+                    emailOutbox.getRecipientEmail(),
+                    emailOutbox.getEmailType()
+            ));
+        } catch (Exception ex) {
+            log.warn(
+                    "Failed to publish email outbox sent event: emailOutboxId={}, emailType={}",
+                    emailOutbox.getEmailOutboxId(),
+                    emailOutbox.getEmailType(),
+                    ex
             );
         }
     }
