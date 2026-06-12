@@ -1588,6 +1588,637 @@ class FinanceCalendarDailyBalanceServiceIntegrationTest extends IntegrationTestS
         assertThat(logicalDateAccount.endOfDaySerenityline()).isEqualByComparingTo("900.00");
     }
 
+    @Test
+    void dailyBalancesShouldReduceSerenitylineByNegativeBucketBalanceOnSameAccount() {
+        UUID userGroupId = givenUserGroup("Negative bucket impact group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "negative.bucket.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Negative bucket category");
+
+        UUID accountId = givenAccount(
+                userGroupId,
+                "Negative bucket account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID bucketId = givenBucket(userGroupId, "Negative bucket");
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-300),
+                LocalDate.of(2026, 1, 2),
+                true,
+                false,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        FinanceCalendarDailyBalance jan2 =
+                balanceOn(
+                        financeCalendarService.getDailyBalances(
+                                ownerId,
+                                new FinanceCalendarSearchRequest(
+                                        LocalDate.of(2026, 1, 2),
+                                        LocalDate.of(2026, 1, 2),
+                                        null,
+                                        null
+                                )
+                        ),
+                        LocalDate.of(2026, 1, 2)
+                );
+
+        FinanceCalendarAccountDailyBalance account =
+                accountBalance(jan2, accountId);
+
+        assertThat(account.endOfDayAccountBalance()).isEqualByComparingTo("700.00");
+        assertThat(account.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(account.endOfDayBucketsBalance()).isEqualByComparingTo("-300.00");
+        assertThat(accountBucketBalance(account, bucketId).endOfDayBucketBalance())
+                .isEqualByComparingTo("-300.00");
+
+        FinanceCalendarCurrencyDailyBalance eurTotal =
+                currencyBalance(jan2, "EUR");
+
+        assertThat(eurTotal.endOfDayAccountsBalance()).isEqualByComparingTo("700.00");
+        assertThat(eurTotal.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(eurTotal.endOfDayBucketsBalance()).isEqualByComparingTo("-300.00");
+
+        FinanceCalendarBucketDailyBalance bucketTotal =
+                bucketBalance(jan2, bucketId, "EUR");
+
+        assertThat(bucketTotal.endOfDayBucketBalance()).isEqualByComparingTo("-300.00");
+    }
+
+    @Test
+    void dailyBalancesShouldNotReduceSerenitylineAgainForPositiveBucketBalance() {
+        UUID userGroupId = givenUserGroup("Positive bucket impact group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "positive.bucket.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Positive bucket category");
+
+        UUID accountId = givenAccount(
+                userGroupId,
+                "Positive bucket account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID bucketId = givenBucket(userGroupId, "Positive bucket");
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-300),
+                LocalDate.of(2026, 1, 2),
+                false,
+                true,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        FinanceCalendarDailyBalance jan2 =
+                balanceOn(
+                        financeCalendarService.getDailyBalances(
+                                ownerId,
+                                new FinanceCalendarSearchRequest(
+                                        LocalDate.of(2026, 1, 2),
+                                        LocalDate.of(2026, 1, 2),
+                                        null,
+                                        null
+                                )
+                        ),
+                        LocalDate.of(2026, 1, 2)
+                );
+
+        FinanceCalendarAccountDailyBalance account =
+                accountBalance(jan2, accountId);
+
+        assertThat(account.endOfDayAccountBalance()).isEqualByComparingTo("1000.00");
+        assertThat(account.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(account.endOfDayBucketsBalance()).isEqualByComparingTo("300.00");
+        assertThat(accountBucketBalance(account, bucketId).endOfDayBucketBalance())
+                .isEqualByComparingTo("300.00");
+
+        FinanceCalendarCurrencyDailyBalance eurTotal =
+                currencyBalance(jan2, "EUR");
+
+        assertThat(eurTotal.endOfDayAccountsBalance()).isEqualByComparingTo("1000.00");
+        assertThat(eurTotal.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(eurTotal.endOfDayBucketsBalance()).isEqualByComparingTo("300.00");
+    }
+
+    @Test
+    void dailyBalancesShouldNotOffsetNegativeBucketWithPositiveBucketOnSameAccount() {
+        UUID userGroupId = givenUserGroup("Mixed bucket same account group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "mixed.same.account.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Mixed same account category");
+
+        UUID accountId = givenAccount(
+                userGroupId,
+                "Mixed bucket account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID negativeBucketId = givenBucket(userGroupId, "Negative bucket same account");
+        UUID positiveBucketId = givenBucket(userGroupId, "Positive bucket same account");
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                negativeBucketId,
+                BigDecimal.valueOf(-300),
+                LocalDate.of(2026, 1, 2),
+                true,
+                false,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                positiveBucketId,
+                BigDecimal.valueOf(-200),
+                LocalDate.of(2026, 1, 2),
+                false,
+                true,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        FinanceCalendarDailyBalance jan2 =
+                balanceOn(
+                        financeCalendarService.getDailyBalances(
+                                ownerId,
+                                new FinanceCalendarSearchRequest(
+                                        LocalDate.of(2026, 1, 2),
+                                        LocalDate.of(2026, 1, 2),
+                                        null,
+                                        null
+                                )
+                        ),
+                        LocalDate.of(2026, 1, 2)
+                );
+
+        FinanceCalendarAccountDailyBalance account =
+                accountBalance(jan2, accountId);
+
+        assertThat(account.endOfDayAccountBalance()).isEqualByComparingTo("700.00");
+        assertThat(account.endOfDaySerenityline()).isEqualByComparingTo("500.00");
+        assertThat(account.endOfDayBucketsBalance()).isEqualByComparingTo("-100.00");
+
+        assertThat(accountBucketBalance(account, negativeBucketId).endOfDayBucketBalance())
+                .isEqualByComparingTo("-300.00");
+
+        assertThat(accountBucketBalance(account, positiveBucketId).endOfDayBucketBalance())
+                .isEqualByComparingTo("200.00");
+
+        FinanceCalendarCurrencyDailyBalance eurTotal =
+                currencyBalance(jan2, "EUR");
+
+        assertThat(eurTotal.endOfDayAccountsBalance()).isEqualByComparingTo("700.00");
+        assertThat(eurTotal.endOfDaySerenityline()).isEqualByComparingTo("500.00");
+        assertThat(eurTotal.endOfDayBucketsBalance()).isEqualByComparingTo("-100.00");
+    }
+
+    @Test
+    void dailyBalancesShouldNotOffsetNegativeBucketWithPositiveSameBucketOnDifferentAccount() {
+        UUID userGroupId = givenUserGroup("Same bucket different accounts group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "same.bucket.accounts.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Same bucket accounts category");
+
+        UUID firstAccountId = givenAccount(
+                userGroupId,
+                "First same bucket account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID secondAccountId = givenAccount(
+                userGroupId,
+                "Second same bucket account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID bucketId = givenBucket(userGroupId, "Shared bucket");
+
+        givenTransaction(
+                userGroupId,
+                firstAccountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-300),
+                LocalDate.of(2026, 1, 2),
+                true,
+                false,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        givenTransaction(
+                userGroupId,
+                secondAccountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-500),
+                LocalDate.of(2026, 1, 2),
+                false,
+                true,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        FinanceCalendarDailyBalance jan2 =
+                balanceOn(
+                        financeCalendarService.getDailyBalances(
+                                ownerId,
+                                new FinanceCalendarSearchRequest(
+                                        LocalDate.of(2026, 1, 2),
+                                        LocalDate.of(2026, 1, 2),
+                                        null,
+                                        null
+                                )
+                        ),
+                        LocalDate.of(2026, 1, 2)
+                );
+
+        FinanceCalendarAccountDailyBalance firstAccount =
+                accountBalance(jan2, firstAccountId);
+
+        FinanceCalendarAccountDailyBalance secondAccount =
+                accountBalance(jan2, secondAccountId);
+
+        assertThat(firstAccount.endOfDayAccountBalance()).isEqualByComparingTo("700.00");
+        assertThat(firstAccount.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(firstAccount.endOfDayBucketsBalance()).isEqualByComparingTo("-300.00");
+
+        assertThat(secondAccount.endOfDayAccountBalance()).isEqualByComparingTo("1000.00");
+        assertThat(secondAccount.endOfDaySerenityline()).isEqualByComparingTo("500.00");
+        assertThat(secondAccount.endOfDayBucketsBalance()).isEqualByComparingTo("500.00");
+
+        FinanceCalendarCurrencyDailyBalance eurTotal =
+                currencyBalance(jan2, "EUR");
+
+        assertThat(eurTotal.endOfDayAccountsBalance()).isEqualByComparingTo("1700.00");
+        assertThat(eurTotal.endOfDaySerenityline()).isEqualByComparingTo("1200.00");
+        assertThat(eurTotal.endOfDayBucketsBalance()).isEqualByComparingTo("200.00");
+
+        FinanceCalendarBucketDailyBalance bucketTotal =
+                bucketBalance(jan2, bucketId, "EUR");
+
+        assertThat(bucketTotal.endOfDayBucketBalance()).isEqualByComparingTo("200.00");
+    }
+
+    @Test
+    void dailyBalancesShouldApplyNegativeBucketImpactOnceAcrossFollowingDays() {
+        UUID userGroupId = givenUserGroup("Negative bucket carry forward group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "negative.bucket.carry.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Negative bucket carry category");
+
+        UUID accountId = givenAccount(
+                userGroupId,
+                "Negative bucket carry account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID bucketId = givenBucket(userGroupId, "Negative bucket carry");
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-300),
+                LocalDate.of(2026, 1, 2),
+                true,
+                false,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        List<FinanceCalendarDailyBalance> result =
+                financeCalendarService.getDailyBalances(
+                        ownerId,
+                        new FinanceCalendarSearchRequest(
+                                LocalDate.of(2026, 1, 2),
+                                LocalDate.of(2026, 1, 4),
+                                null,
+                                null
+                        )
+                );
+
+        for (LocalDate date = LocalDate.of(2026, 1, 2);
+             !date.isAfter(LocalDate.of(2026, 1, 4));
+             date = date.plusDays(1)) {
+
+            FinanceCalendarDailyBalance dailyBalance = balanceOn(result, date);
+            FinanceCalendarAccountDailyBalance account = accountBalance(dailyBalance, accountId);
+            FinanceCalendarCurrencyDailyBalance eurTotal = currencyBalance(dailyBalance, "EUR");
+
+            assertThat(account.endOfDayAccountBalance()).isEqualByComparingTo("700.00");
+            assertThat(account.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+            assertThat(account.endOfDayBucketsBalance()).isEqualByComparingTo("-300.00");
+
+            assertThat(eurTotal.endOfDayAccountsBalance()).isEqualByComparingTo("700.00");
+            assertThat(eurTotal.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+            assertThat(eurTotal.endOfDayBucketsBalance()).isEqualByComparingTo("-300.00");
+        }
+    }
+
+    @Test
+    void dailyBalancesShouldKeepEffectiveSerenitylineStableWhenNegativeBucketIsPartiallyCoveredLater() {
+        UUID userGroupId = givenUserGroup("Negative bucket partial cover group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "negative.bucket.partial.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Negative bucket partial category");
+
+        UUID accountId = givenAccount(
+                userGroupId,
+                "Negative bucket partial account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID bucketId = givenBucket(userGroupId, "Negative bucket partial");
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-300),
+                LocalDate.of(2026, 1, 2),
+                true,
+                false,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-100),
+                LocalDate.of(2026, 1, 3),
+                false,
+                true,
+                true,
+                false,
+                null,
+                true,
+                null,
+                null
+        );
+
+        List<FinanceCalendarDailyBalance> result =
+                financeCalendarService.getDailyBalances(
+                        ownerId,
+                        new FinanceCalendarSearchRequest(
+                                LocalDate.of(2026, 1, 2),
+                                LocalDate.of(2026, 1, 3),
+                                null,
+                                null
+                        )
+                );
+
+        FinanceCalendarAccountDailyBalance jan2 =
+                accountBalanceOn(result, LocalDate.of(2026, 1, 2), accountId);
+
+        assertThat(jan2.endOfDayAccountBalance()).isEqualByComparingTo("700.00");
+        assertThat(jan2.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(jan2.endOfDayBucketsBalance()).isEqualByComparingTo("-300.00");
+
+        FinanceCalendarAccountDailyBalance jan3 =
+                accountBalanceOn(result, LocalDate.of(2026, 1, 3), accountId);
+
+        assertThat(jan3.endOfDayAccountBalance()).isEqualByComparingTo("700.00");
+        assertThat(jan3.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(jan3.endOfDayBucketsBalance()).isEqualByComparingTo("-200.00");
+
+        FinanceCalendarCurrencyDailyBalance jan3Total =
+                currencyBalance(balanceOn(result, LocalDate.of(2026, 1, 3)), "EUR");
+
+        assertThat(jan3Total.endOfDayAccountsBalance()).isEqualByComparingTo("700.00");
+        assertThat(jan3Total.endOfDaySerenityline()).isEqualByComparingTo("700.00");
+        assertThat(jan3Total.endOfDayBucketsBalance()).isEqualByComparingTo("-200.00");
+    }
+
+    @Test
+    void dailyBalancesShouldApplyNegativeBucketImpactForProjectedRecurringMovements() {
+        UUID userGroupId = givenUserGroup("Projected recurring negative bucket group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "projected.negative.bucket.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Projected negative bucket category");
+
+        UUID accountId = givenAccount(
+                userGroupId,
+                "Projected negative bucket account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID bucketId = givenBucket(userGroupId, "Projected negative bucket");
+
+        givenRecurringTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                bucketId,
+                BigDecimal.valueOf(-150),
+                LocalDate.of(2026, 1, 5),
+                5,
+                false,
+                null,
+                "Projected recurring bucket usage",
+                true,
+                false
+        );
+
+        FinanceCalendarDailyBalance jan5 =
+                balanceOn(
+                        financeCalendarService.getDailyBalances(
+                                ownerId,
+                                new FinanceCalendarSearchRequest(
+                                        LocalDate.of(2026, 1, 5),
+                                        LocalDate.of(2026, 1, 5),
+                                        null,
+                                        null
+                                )
+                        ),
+                        LocalDate.of(2026, 1, 5)
+                );
+
+        FinanceCalendarAccountDailyBalance account =
+                accountBalance(jan5, accountId);
+
+        assertThat(account.endOfDayAccountBalance()).isEqualByComparingTo("850.00");
+        assertThat(account.endOfDaySerenityline()).isEqualByComparingTo("850.00");
+        assertThat(account.endOfDayBucketsBalance()).isEqualByComparingTo("-150.00");
+        assertThat(accountBucketBalance(account, bucketId).endOfDayBucketBalance())
+                .isEqualByComparingTo("-150.00");
+
+        FinanceCalendarCurrencyDailyBalance eurTotal =
+                currencyBalance(jan5, "EUR");
+
+        assertThat(eurTotal.endOfDayAccountsBalance()).isEqualByComparingTo("850.00");
+        assertThat(eurTotal.endOfDaySerenityline()).isEqualByComparingTo("850.00");
+        assertThat(eurTotal.endOfDayBucketsBalance()).isEqualByComparingTo("-150.00");
+    }
+
+    @Test
+    void dailyBalancesShouldApplyNegativeBucketImpactOnlyForSelectedSimulationGroups() {
+        UUID userGroupId = givenUserGroup("Simulated negative bucket group");
+        UUID ownerId = givenUser(userGroupId, "OWNER", "simulated.negative.bucket.owner@example.test");
+        UUID categoryId = givenCategory(userGroupId, ownerId, "Simulated negative bucket category");
+
+        UUID accountId = givenAccount(
+                userGroupId,
+                "Simulated negative bucket account",
+                "EUR",
+                BigDecimal.valueOf(1000),
+                LocalDate.of(2026, 1, 1)
+        );
+
+        UUID bucketId = givenBucket(userGroupId, "Simulated negative bucket");
+        UUID selectedSimulationGroupId = givenSimulationGroup(userGroupId, "Selected negative bucket simulation");
+        UUID excludedSimulationGroupId = givenSimulationGroup(userGroupId, "Excluded negative bucket simulation");
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-400),
+                LocalDate.of(2026, 1, 2),
+                true,
+                false,
+                true,
+                true,
+                selectedSimulationGroupId,
+                true,
+                null,
+                null
+        );
+
+        givenTransaction(
+                userGroupId,
+                accountId,
+                categoryId,
+                null,
+                bucketId,
+                BigDecimal.valueOf(-900),
+                LocalDate.of(2026, 1, 2),
+                true,
+                false,
+                true,
+                true,
+                excludedSimulationGroupId,
+                true,
+                null,
+                null
+        );
+
+        FinanceCalendarDailyBalance baseJan2 =
+                balanceOn(
+                        financeCalendarService.getDailyBalances(
+                                ownerId,
+                                new FinanceCalendarSearchRequest(
+                                        LocalDate.of(2026, 1, 2),
+                                        LocalDate.of(2026, 1, 2),
+                                        null,
+                                        null
+                                )
+                        ),
+                        LocalDate.of(2026, 1, 2)
+                );
+
+        FinanceCalendarAccountDailyBalance baseAccount =
+                accountBalance(baseJan2, accountId);
+
+        assertThat(baseAccount.endOfDayAccountBalance()).isEqualByComparingTo("1000.00");
+        assertThat(baseAccount.endOfDaySerenityline()).isEqualByComparingTo("1000.00");
+        assertThat(baseAccount.endOfDayBucketsBalance()).isEqualByComparingTo("0.00");
+
+        FinanceCalendarDailyBalance simulatedJan2 =
+                balanceOn(
+                        financeCalendarService.getDailyBalances(
+                                ownerId,
+                                new FinanceCalendarSearchRequest(
+                                        LocalDate.of(2026, 1, 2),
+                                        LocalDate.of(2026, 1, 2),
+                                        null,
+                                        List.of(selectedSimulationGroupId)
+                                )
+                        ),
+                        LocalDate.of(2026, 1, 2)
+                );
+
+        FinanceCalendarAccountDailyBalance simulatedAccount =
+                accountBalance(simulatedJan2, accountId);
+
+        assertThat(simulatedAccount.endOfDayAccountBalance()).isEqualByComparingTo("600.00");
+        assertThat(simulatedAccount.endOfDaySerenityline()).isEqualByComparingTo("600.00");
+        assertThat(simulatedAccount.endOfDayBucketsBalance()).isEqualByComparingTo("-400.00");
+    }
+
     private UUID givenUserGroup(String name) {
         UUID userGroupId = UUID.randomUUID();
 

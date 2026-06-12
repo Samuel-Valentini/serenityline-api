@@ -1296,6 +1296,17 @@ public class FinanceCalendarService {
         );
     }
 
+    private BigDecimal negativeBucketBalancesImpact(AccountDailyBalanceState state) {
+        return state.bucketBalancesByBucketId.values()
+                .stream()
+                .filter(balance -> balance.compareTo(BigDecimal.ZERO) < 0)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private BigDecimal effectiveSerenityline(AccountDailyBalanceState state) {
+        return state.serenityline.add(negativeBucketBalancesImpact(state));
+    }
+
     private FinanceCalendarAccountDailyBalance toAccountDailyBalance(
             AccountDailyBalanceState state
     ) {
@@ -1318,7 +1329,7 @@ public class FinanceCalendarService {
                 state.accountId,
                 state.currency,
                 state.accountBalance,
-                state.serenityline,
+                effectiveSerenityline(state),
                 endOfDayBucketsBalance,
                 buckets
         );
@@ -1370,7 +1381,7 @@ public class FinanceCalendarService {
                     );
 
             accumulator.accountBalance = accumulator.accountBalance.add(state.accountBalance);
-            accumulator.serenityline = accumulator.serenityline.add(state.serenityline);
+            accumulator.serenityline = accumulator.serenityline.add(effectiveSerenityline(state));
 
             BigDecimal bucketBalance = state.bucketBalancesByBucketId.values()
                     .stream()
