@@ -3650,12 +3650,14 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 "Categoria recurring dedup"
         );
 
+        LocalDate logicalDate = today();
+
         UUID recurringTransactionId = insertDailyRecurringTransactionUsingBucket(
                 owner.getUserGroup(),
                 account,
                 bucket,
                 categoryId,
-                today(),
+                logicalDate,
                 new BigDecimal("-200.00"),
                 false,
                 true,
@@ -3669,7 +3671,7 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 bucket,
                 categoryId,
                 recurringTransactionId,
-                today(),
+                logicalDate,
                 new BigDecimal("-200.00"),
                 false,
                 true
@@ -3683,11 +3685,11 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 new BigDecimal("-200.00"),
                 true,
                 false,
-                today(),
+                logicalDate,
                 false,
                 null
         );
-
+        
         mockMvc.perform(post(bucketClosePath(bucket))
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
@@ -4136,13 +4138,15 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                             recurrence_interval,
                             recurrence_unit,
                             payment_date_adjustment_policy,
-                            payment_amount
+                            payment_amount,
+                            recurring_transaction_end_date
                         )
-                        values (?, ?, 1, 1, 'DAY', 'PREVIOUS_BUSINESS_DAY', ?)
+                        values (?, ?, 1, 1, 'DAY', 'PREVIOUS_BUSINESS_DAY', ?, ?)
                         """,
                 recurringTransactionId,
                 firstPaymentDate,
-                paymentAmount
+                paymentAmount,
+                firstPaymentDate
         );
 
         jdbcTemplate.update(

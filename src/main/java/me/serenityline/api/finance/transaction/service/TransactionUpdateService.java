@@ -36,6 +36,7 @@ public class TransactionUpdateService {
     private final SimulationGroupRepository simulationGroupRepository;
     private final SimulationGroupAccountRepository simulationGroupAccountRepository;
     private final TransactionAccessService transactionAccessService;
+    private final FinanceMovementAssociationValidator associationValidator;
 
     public TransactionUpdateService(
             UserRepository userRepository,
@@ -46,7 +47,8 @@ public class TransactionUpdateService {
             BucketAccountRepository bucketAccountRepository,
             SimulationGroupRepository simulationGroupRepository,
             SimulationGroupAccountRepository simulationGroupAccountRepository,
-            TransactionAccessService transactionAccessService
+            TransactionAccessService transactionAccessService,
+            FinanceMovementAssociationValidator associationValidator
     ) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.transactionRepository = Objects.requireNonNull(transactionRepository, "transactionRepository");
@@ -57,6 +59,7 @@ public class TransactionUpdateService {
         this.simulationGroupRepository = Objects.requireNonNull(simulationGroupRepository, "simulationGroupRepository");
         this.simulationGroupAccountRepository = Objects.requireNonNull(simulationGroupAccountRepository, "simulationGroupAccountRepository");
         this.transactionAccessService = Objects.requireNonNull(transactionAccessService, "transactionAccessService");
+        this.associationValidator = Objects.requireNonNull(associationValidator, "associationValidator");
     }
 
     @Transactional
@@ -104,6 +107,11 @@ public class TransactionUpdateService {
                 request.bucketId(),
                 account,
                 userGroupId
+        );
+
+        associationValidator.validateTransactionCreditCardBucketExclusion(
+                creditCard,
+                bucket
         );
 
         SimulationGroup simulationGroup = resolveSimulationGroupForUpdate(

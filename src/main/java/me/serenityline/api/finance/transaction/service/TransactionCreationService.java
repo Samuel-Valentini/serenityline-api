@@ -41,6 +41,7 @@ public class TransactionCreationService {
     private final TransactionRepository transactionRepository;
     private final TransactionUserRepository transactionUserRepository;
     private final TransactionAccessService transactionAccessService;
+    private final FinanceMovementAssociationValidator associationValidator;
 
     public TransactionCreationService(
             UserRepository userRepository,
@@ -52,7 +53,8 @@ public class TransactionCreationService {
             SimulationGroupAccountRepository simulationGroupAccountRepository,
             TransactionRepository transactionRepository,
             TransactionUserRepository transactionUserRepository,
-            TransactionAccessService transactionAccessService
+            TransactionAccessService transactionAccessService,
+            FinanceMovementAssociationValidator associationValidator
     ) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.categoryRepository = Objects.requireNonNull(categoryRepository, "categoryRepository");
@@ -64,6 +66,7 @@ public class TransactionCreationService {
         this.transactionRepository = Objects.requireNonNull(transactionRepository, "transactionRepository");
         this.transactionUserRepository = Objects.requireNonNull(transactionUserRepository, "transactionUserRepository");
         this.transactionAccessService = Objects.requireNonNull(transactionAccessService, "transactionAccessService");
+        this.associationValidator = Objects.requireNonNull(associationValidator, "associationValidator");
     }
 
     @Transactional
@@ -98,6 +101,11 @@ public class TransactionCreationService {
                 request.bucketId(),
                 account,
                 userGroupId
+        );
+
+        associationValidator.validateTransactionCreditCardBucketExclusion(
+                creditCard,
+                bucket
         );
 
         boolean simulated = defaultFalse(request.transactionIsSimulated());

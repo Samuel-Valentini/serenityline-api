@@ -1197,7 +1197,7 @@ class AccountHardDeletionProcessorIntegrationTest extends IntegrationTestSupport
                 financialPriorityId,
                 accountId,
                 creditCardId,
-                bucketId,
+                (UUID) null,
                 LocalDate.now(clock),
                 userGroupId
         );
@@ -1229,7 +1229,7 @@ class AccountHardDeletionProcessorIntegrationTest extends IntegrationTestSupport
                 categoryId,
                 LocalDate.now(clock).plusDays(10),
                 accountId,
-                creditCardId,
+                (UUID) null,
                 bucketId,
                 userGroupId
         );
@@ -1262,7 +1262,7 @@ class AccountHardDeletionProcessorIntegrationTest extends IntegrationTestSupport
                 LocalDate.now(clock).plusDays(15),
                 accountId,
                 creditCardId,
-                bucketId,
+                (UUID) null,
                 recurringTransactionId,
                 LocalDate.now(clock).plusDays(15),
                 OffsetDateTime.now(clock),

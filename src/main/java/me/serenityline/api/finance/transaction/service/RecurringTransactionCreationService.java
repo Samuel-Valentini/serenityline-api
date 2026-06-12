@@ -48,6 +48,7 @@ public class RecurringTransactionCreationService {
     private final RecurringTransactionHistoryRepository recurringTransactionHistoryRepository;
     private final RecurringTransactionDetailsHistoryRepository recurringTransactionDetailsHistoryRepository;
     private final RecurringTransactionUserRepository recurringTransactionUserRepository;
+    private final FinanceMovementAssociationValidator associationValidator;
 
     public RecurringTransactionCreationService(
             UserRepository userRepository,
@@ -62,7 +63,8 @@ public class RecurringTransactionCreationService {
             RecurringTransactionRepository recurringTransactionRepository,
             RecurringTransactionHistoryRepository recurringTransactionHistoryRepository,
             RecurringTransactionDetailsHistoryRepository recurringTransactionDetailsHistoryRepository,
-            RecurringTransactionUserRepository recurringTransactionUserRepository
+            RecurringTransactionUserRepository recurringTransactionUserRepository,
+            FinanceMovementAssociationValidator associationValidator
     ) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.transactionAccessService = Objects.requireNonNull(transactionAccessService, "transactionAccessService");
@@ -77,6 +79,7 @@ public class RecurringTransactionCreationService {
         this.recurringTransactionHistoryRepository = Objects.requireNonNull(recurringTransactionHistoryRepository, "recurringTransactionHistoryRepository");
         this.recurringTransactionDetailsHistoryRepository = Objects.requireNonNull(recurringTransactionDetailsHistoryRepository, "recurringTransactionDetailsHistoryRepository");
         this.recurringTransactionUserRepository = Objects.requireNonNull(recurringTransactionUserRepository, "recurringTransactionUserRepository");
+        this.associationValidator = Objects.requireNonNull(associationValidator, "associationValidator");
     }
 
     @Transactional
@@ -117,6 +120,11 @@ public class RecurringTransactionCreationService {
                 request.linkedBucketId(),
                 linkedAccount,
                 userGroupId
+        );
+
+        associationValidator.validateRecurringCreditCardBucketExclusion(
+                linkedCreditCard,
+                linkedBucket
         );
 
         boolean simulated = defaultFalse(request.recurringTransactionIsSimulated());

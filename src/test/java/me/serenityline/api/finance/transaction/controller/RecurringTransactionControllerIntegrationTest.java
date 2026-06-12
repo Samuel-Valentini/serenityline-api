@@ -217,9 +217,6 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         CreditCardRef creditCard = createCreditCard(owner.userGroupId(), account, "Carta recurring full");
 
-        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket recurring full");
-        linkBucketToAccount(bucket, account, owner.userGroupId());
-
         UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation recurring full");
         linkSimulationGroupToAccount(simulationGroupId, account);
 
@@ -238,7 +235,6 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         body.put("recurringTransactionEndDate", "2027-06-03");
         body.put("finalPaymentAmount", new BigDecimal("-19.90"));
         body.put("linkedCreditCardId", creditCard.creditCardId());
-        body.put("linkedBucketId", bucket.bucketId());
         body.put("recurringTransactionAffectsAccountBalance", false);
         body.put("recurringtransactionAffectsSerenityline", true);
         body.put("recurringTransactionIsSimulated", true);
@@ -269,7 +265,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.financialPriorityId").value(financialPriorityId.toString()))
                 .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()))
                 .andExpect(jsonPath("$.linkedCreditCardId").value(creditCard.creditCardId().toString()))
-                .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()))
+                .andExpect(jsonPath("$.linkedBucketId").doesNotExist())
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
                 .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true))
                 .andReturn();
@@ -294,7 +290,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         assertThat((BigDecimal) historyRow.get("final_payment_amount")).isEqualByComparingTo("-19.90");
 
         assertThat(detailsRow.get("linked_credit_card_id")).isEqualTo(creditCard.creditCardId());
-        assertThat(detailsRow.get("linked_bucket_id")).isEqualTo(bucket.bucketId());
+        assertThat(detailsRow.get("linked_bucket_id")).isNull();
         assertThat(detailsRow.get("recurring_transaction_affects_account_balance")).isEqualTo(false);
         assertThat(detailsRow.get("recurring_transaction_affects_serenityline")).isEqualTo(true);
     }
@@ -1609,9 +1605,6 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         CreditCardRef creditCard = createCreditCard(owner.userGroupId(), account, "Carta get full");
 
-        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket get full");
-        linkBucketToAccount(bucket, account, owner.userGroupId());
-
         UUID simulationGroupId = createSimulationGroup(owner.userGroupId(), "Simulation get full");
         linkSimulationGroupToAccount(simulationGroupId, account);
 
@@ -1626,7 +1619,6 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
         body.put("recurringTransactionEndDate", "2027-06-03");
         body.put("finalPaymentAmount", new BigDecimal("2400.00"));
         body.put("linkedCreditCardId", creditCard.creditCardId());
-        body.put("linkedBucketId", bucket.bucketId());
         body.put("recurringTransactionAffectsAccountBalance", false);
         body.put("recurringtransactionAffectsSerenityline", true);
         body.put("recurringTransactionIsSimulated", true);
@@ -1654,7 +1646,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(jsonPath("$.financialPriorityId").value(financialPriorityId.toString()))
                 .andExpect(jsonPath("$.linkedAccountId").value(account.accountId().toString()))
                 .andExpect(jsonPath("$.linkedCreditCardId").value(creditCard.creditCardId().toString()))
-                .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()))
+                .andExpect(jsonPath("$.linkedBucketId").doesNotExist())
                 .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
                 .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true))
                 .andExpect(jsonPath("$.recurringTransactionIsSimulated").value(true))
@@ -2668,13 +2660,9 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
 
         CreditCardRef creditCard = createCreditCard(owner.userGroupId(), account, "Carta history optional");
 
-        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket history optional");
-        linkBucketToAccount(bucket, account, owner.userGroupId());
-
         Map<String, Object> body = minimalRecurringTransactionRequest(account, categoryId, financialPriorityId);
         body.put("recurringTransactionDescription", "Ricorrente history optional");
         body.put("linkedCreditCardId", creditCard.creditCardId());
-        body.put("linkedBucketId", bucket.bucketId());
         body.put("recurringTransactionAffectsAccountBalance", false);
         body.put("recurringtransactionAffectsSerenityline", true);
 
@@ -2685,7 +2673,7 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.detailsHistory", hasSize(1)))
                 .andExpect(jsonPath("$.detailsHistory[0].linkedCreditCardId").value(creditCard.creditCardId().toString()))
-                .andExpect(jsonPath("$.detailsHistory[0].linkedBucketId").value(bucket.bucketId().toString()))
+                .andExpect(jsonPath("$.detailsHistory[0].linkedBucketId").doesNotExist())
                 .andExpect(jsonPath("$.detailsHistory[0].recurringTransactionAffectsAccountBalance").value(false))
                 .andExpect(jsonPath("$.detailsHistory[0].recurringtransactionAffectsSerenityline").value(true));
     }
@@ -5415,6 +5403,398 @@ class RecurringTransactionControllerIntegrationTest extends IntegrationTestSuppo
                         .content("[]"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("validation.failed"));
+    }
+
+    @Test
+    void ownerShouldCreateRecurringTransactionWithOpenBucketLinkedToAccount() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(owner.userGroupId(), "Conto recurring bucket ok");
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria recurring bucket ok"
+        );
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        BucketRef bucket = createOpenBucket(owner.userGroupId(), "Bucket recurring bucket ok");
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        Map<String, Object> body = validRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+        body.put("linkedBucketId", bucket.bucketId());
+        body.put("linkedCreditCardId", null);
+        body.put("recurringTransactionAffectsAccountBalance", false);
+        body.put("recurringtransactionAffectsSerenityline", true);
+
+        MvcResult result = mockMvc.perform(post(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.linkedCreditCardId").doesNotExist())
+                .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()))
+                .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true))
+                .andReturn();
+
+        UUID recurringTransactionId = recurringTransactionIdFrom(result);
+        Map<String, Object> detailsRow = findRecurringTransactionDetailsHistory(recurringTransactionId);
+
+        assertThat(detailsRow.get("linked_credit_card_id")).isNull();
+        assertThat(detailsRow.get("linked_bucket_id")).isEqualTo(bucket.bucketId());
+        assertThat(detailsRow.get("recurring_transaction_affects_account_balance")).isEqualTo(false);
+        assertThat(detailsRow.get("recurring_transaction_affects_serenityline")).isEqualTo(true);
+    }
+
+    @Test
+    void createRecurringTransactionShouldRejectCreditCardAndBucketTogether() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto recurring card bucket reject"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria recurring card bucket reject"
+        );
+
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta recurring card bucket reject"
+        );
+
+        BucketRef bucket = createOpenBucket(
+                owner.userGroupId(),
+                "Bucket recurring card bucket reject"
+        );
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        Map<String, Object> body = validRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+        body.put("linkedCreditCardId", creditCard.creditCardId());
+        body.put("linkedBucketId", bucket.bucketId());
+
+        mockMvc.perform(post(RECURRING_TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(
+                        "finance.recurringTransaction.creditCardAndBucketMutuallyExclusive"
+                ));
+
+        assertThat(countAllRecurringRowsForUserGroup(owner.userGroupId())).isZero();
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectAddingCreditCardWhenBucketAlreadyPresent() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto patch card when bucket already present"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch card when bucket already present"
+        );
+
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        BucketRef bucket = createOpenBucket(
+                owner.userGroupId(),
+                "Bucket patch card when bucket already present"
+        );
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta patch card when bucket already present"
+        );
+
+        Map<String, Object> createBody = validRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+        createBody.put("linkedBucketId", bucket.bucketId());
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(owner, createBody);
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("effectiveFrom", "2026-07-01");
+        details.put("linkedCreditCardId", creditCard.creditCardId());
+
+        Map<String, Object> patchBody = new LinkedHashMap<>();
+        patchBody.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(patchBody)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(
+                        "finance.recurringTransaction.creditCardAndBucketMutuallyExclusive"
+                ));
+
+        assertThat(countRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                owner.userGroupId()
+        )).isEqualTo(1);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(latestDetails.get("linked_credit_card_id")).isNull();
+        assertThat(latestDetails.get("linked_bucket_id")).isEqualTo(bucket.bucketId());
+    }
+
+    @Test
+    void patchRecurringTransactionShouldRejectAddingBucketWhenCreditCardAlreadyPresent() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto patch bucket when card already present"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch bucket when card already present"
+        );
+
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta patch bucket when card already present"
+        );
+
+        BucketRef bucket = createOpenBucket(
+                owner.userGroupId(),
+                "Bucket patch bucket when card already present"
+        );
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        Map<String, Object> createBody = validRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+        createBody.put("linkedCreditCardId", creditCard.creditCardId());
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(owner, createBody);
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("effectiveFrom", "2026-07-01");
+        details.put("linkedBucketId", bucket.bucketId());
+
+        Map<String, Object> patchBody = new LinkedHashMap<>();
+        patchBody.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(patchBody)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(
+                        "finance.recurringTransaction.creditCardAndBucketMutuallyExclusive"
+                ));
+
+        assertThat(countRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                owner.userGroupId()
+        )).isEqualTo(1);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(latestDetails.get("linked_credit_card_id")).isEqualTo(creditCard.creditCardId());
+        assertThat(latestDetails.get("linked_bucket_id")).isNull();
+    }
+
+    @Test
+    void patchRecurringTransactionShouldAllowDetailsPatchWhenOnlyCreditCardIsPresent() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto patch harmless with card"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch harmless with card"
+        );
+
+        UUID newCategoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch harmless with card nuova"
+        );
+
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+        UUID newFinancialPriorityId = financialPriorityId("OPTIONAL");
+
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta patch harmless with card"
+        );
+
+        Map<String, Object> createBody = validRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+        createBody.put("linkedCreditCardId", creditCard.creditCardId());
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(owner, createBody);
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("effectiveFrom", "2026-07-01");
+        details.put("recurringTransactionDescription", "Ricorrente aggiornata con sola carta");
+        details.put("categoryId", newCategoryId);
+        details.put("financialPriorityId", newFinancialPriorityId);
+        details.put("recurringTransactionAffectsAccountBalance", false);
+        details.put("recurringtransactionAffectsSerenityline", true);
+
+        Map<String, Object> patchBody = new LinkedHashMap<>();
+        patchBody.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(patchBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedCreditCardId").value(creditCard.creditCardId().toString()))
+                .andExpect(jsonPath("$.linkedBucketId").doesNotExist())
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente aggiornata con sola carta"))
+                .andExpect(jsonPath("$.categoryId").value(newCategoryId.toString()))
+                .andExpect(jsonPath("$.financialPriorityId").value(newFinancialPriorityId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true));
+
+        assertThat(countRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                owner.userGroupId()
+        )).isEqualTo(2);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(latestDetails.get("linked_credit_card_id")).isEqualTo(creditCard.creditCardId());
+        assertThat(latestDetails.get("linked_bucket_id")).isNull();
+        assertThat(latestDetails.get("recurring_transaction_description"))
+                .isEqualTo("Ricorrente aggiornata con sola carta");
+        assertThat(latestDetails.get("category_id")).isEqualTo(newCategoryId);
+        assertThat(latestDetails.get("financial_priority_id")).isEqualTo(newFinancialPriorityId);
+    }
+
+    @Test
+    void patchRecurringTransactionShouldAllowDetailsPatchWhenOnlyBucketIsPresent() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto patch harmless with bucket"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch harmless with bucket"
+        );
+
+        UUID newCategoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria patch harmless with bucket nuova"
+        );
+
+        UUID financialPriorityId = financialPriorityId("ESSENTIAL");
+        UUID newFinancialPriorityId = financialPriorityId("OPTIONAL");
+
+        BucketRef bucket = createOpenBucket(
+                owner.userGroupId(),
+                "Bucket patch harmless with bucket"
+        );
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        Map<String, Object> createBody = validRecurringTransactionRequest(
+                account,
+                categoryId,
+                financialPriorityId
+        );
+        createBody.put("linkedBucketId", bucket.bucketId());
+
+        UUID recurringTransactionId = createRecurringTransactionThroughApi(owner, createBody);
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("effectiveFrom", "2026-07-01");
+        details.put("recurringTransactionDescription", "Ricorrente aggiornata con solo bucket");
+        details.put("categoryId", newCategoryId);
+        details.put("financialPriorityId", newFinancialPriorityId);
+        details.put("recurringTransactionAffectsAccountBalance", false);
+        details.put("recurringtransactionAffectsSerenityline", true);
+
+        Map<String, Object> patchBody = new LinkedHashMap<>();
+        patchBody.put("details", details);
+
+        mockMvc.perform(patch(RECURRING_TRANSACTIONS_PATH + "/" + recurringTransactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(patchBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedCreditCardId").doesNotExist())
+                .andExpect(jsonPath("$.linkedBucketId").value(bucket.bucketId().toString()))
+                .andExpect(jsonPath("$.recurringTransactionDescription").value("Ricorrente aggiornata con solo bucket"))
+                .andExpect(jsonPath("$.categoryId").value(newCategoryId.toString()))
+                .andExpect(jsonPath("$.financialPriorityId").value(newFinancialPriorityId.toString()))
+                .andExpect(jsonPath("$.recurringTransactionAffectsAccountBalance").value(false))
+                .andExpect(jsonPath("$.recurringtransactionAffectsSerenityline").value(true));
+
+        assertThat(countRecurringTransactionDetailsHistory(
+                recurringTransactionId,
+                owner.userGroupId()
+        )).isEqualTo(2);
+
+        Map<String, Object> latestDetails = findLatestDetailsHistoryRow(
+                recurringTransactionId,
+                owner.userGroupId()
+        );
+
+        assertThat(latestDetails.get("linked_credit_card_id")).isNull();
+        assertThat(latestDetails.get("linked_bucket_id")).isEqualTo(bucket.bucketId());
+        assertThat(latestDetails.get("recurring_transaction_description"))
+                .isEqualTo("Ricorrente aggiornata con solo bucket");
+        assertThat(latestDetails.get("category_id")).isEqualTo(newCategoryId);
+        assertThat(latestDetails.get("financial_priority_id")).isEqualTo(newFinancialPriorityId);
     }
 
     private UserRef createUserWithNewGroup(String role) {

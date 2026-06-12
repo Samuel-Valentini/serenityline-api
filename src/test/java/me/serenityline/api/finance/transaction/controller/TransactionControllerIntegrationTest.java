@@ -1062,15 +1062,10 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void ownerShouldReadTransactionWithOptionalReferencesById() throws Exception {
+    void ownerShouldReadTransactionWithBucketReferenceById() throws Exception {
         UserRef owner = createUserWithNewGroup("OWNER");
 
         AccountRef account = createAccount(owner.userGroupId(), "Conto read optional references");
-        CreditCardRef creditCard = createCreditCard(
-                owner.userGroupId(),
-                account,
-                "Carta read optional references"
-        );
 
         BucketRef bucket = createOpenBucket(
                 owner.userGroupId(),
@@ -1091,7 +1086,6 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
         );
 
         Map<String, Object> body = validTransactionRequest(account, categoryId);
-        body.put("creditCardId", creditCard.creditCardId());
         body.put("bucketId", bucket.bucketId());
         body.put("transactionIsSimulated", true);
         body.put("simulationGroupId", simulationGroupId);
@@ -1111,7 +1105,7 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.transactionAmount").value(-42.5))
                 .andExpect(jsonPath("$.categoryId").value(categoryId.toString()))
                 .andExpect(jsonPath("$.accountId").value(account.accountId().toString()))
-                .andExpect(jsonPath("$.creditCardId").value(creditCard.creditCardId().toString()))
+                .andExpect(jsonPath("$.creditCardId").doesNotExist())
                 .andExpect(jsonPath("$.bucketId").value(bucket.bucketId().toString()))
                 .andExpect(jsonPath("$.transactionIsSimulated").value(true))
                 .andExpect(jsonPath("$.simulationGroupId").value(simulationGroupId.toString()))
@@ -4031,6 +4025,111 @@ class TransactionControllerIntegrationTest extends IntegrationTestSupport {
                 OffsetDateTime.parse("2026-06-17T09:00:00Z")
         )).isInstanceOf(DataIntegrityViolationException.class);
 
+        assertThat(countTransactionsForUserGroup(owner.userGroupId())).isEqualTo(1L);
+    }
+
+    @Test
+    void createTransactionShouldRejectCreditCardAndBucketTogether() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto create card bucket reject"
+        );
+
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta create card bucket reject"
+        );
+
+        BucketRef bucket = createOpenBucket(
+                owner.userGroupId(),
+                "Bucket create card bucket reject"
+        );
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria create card bucket reject"
+        );
+
+        Map<String, Object> body = validTransactionRequest(account, categoryId);
+        body.put("creditCardId", creditCard.creditCardId());
+        body.put("bucketId", bucket.bucketId());
+
+        mockMvc.perform(post(TRANSACTIONS_PATH)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.creditCardAndBucketMutuallyExclusive"));
+
+        assertThat(countTransactionsForUserGroup(owner.userGroupId())).isZero();
+    }
+
+    @Test
+    void updateTransactionShouldRejectCreditCardAndBucketTogether() throws Exception {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        AccountRef account = createAccount(
+                owner.userGroupId(),
+                "Conto update card bucket reject"
+        );
+
+        CreditCardRef creditCard = createCreditCard(
+                owner.userGroupId(),
+                account,
+                "Carta update card bucket reject"
+        );
+
+        BucketRef bucket = createOpenBucket(
+                owner.userGroupId(),
+                "Bucket update card bucket reject"
+        );
+        linkBucketToAccount(bucket, account, owner.userGroupId());
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria update card bucket reject"
+        );
+
+        UUID transactionId = createTransactionViaApi(
+                owner,
+                transactionRequest(
+                        account,
+                        categoryId,
+                        "Transazione valida iniziale",
+                        "-10.00",
+                        LocalDate.of(2026, 6, 10)
+                )
+        );
+
+        Map<String, Object> body = validTransactionUpdateRequest(
+                account,
+                categoryId,
+                "Transazione invalida con carta e bucket",
+                "-20.00",
+                LocalDate.of(2026, 6, 11)
+        );
+        body.put("creditCardId", creditCard.creditCardId());
+        body.put("bucketId", bucket.bucketId());
+
+        mockMvc.perform(put(TRANSACTIONS_PATH + "/" + transactionId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("finance.transaction.creditCardAndBucketMutuallyExclusive"));
+
+        Map<String, Object> row = findTransaction(transactionId);
+
+        assertThat(row.get("credit_card_id")).isNull();
+        assertThat(row.get("bucket_id")).isNull();
+        assertThat(row.get("transaction_description")).isEqualTo("Transazione valida iniziale");
+        assertThat((BigDecimal) row.get("transaction_amount")).isEqualByComparingTo("-10.00");
         assertThat(countTransactionsForUserGroup(owner.userGroupId())).isEqualTo(1L);
     }
 

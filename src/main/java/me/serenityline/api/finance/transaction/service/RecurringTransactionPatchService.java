@@ -48,6 +48,7 @@ public class RecurringTransactionPatchService {
     private final RecurringTransactionRepository recurringTransactionRepository;
     private final RecurringTransactionHistoryRepository recurringTransactionHistoryRepository;
     private final RecurringTransactionDetailsHistoryRepository recurringTransactionDetailsHistoryRepository;
+    private final FinanceMovementAssociationValidator associationValidator;
 
     public RecurringTransactionPatchService(
             RecurringTransactionPatchParser patchParser,
@@ -63,7 +64,8 @@ public class RecurringTransactionPatchService {
             SimulationGroupAccountRepository simulationGroupAccountRepository,
             RecurringTransactionRepository recurringTransactionRepository,
             RecurringTransactionHistoryRepository recurringTransactionHistoryRepository,
-            RecurringTransactionDetailsHistoryRepository recurringTransactionDetailsHistoryRepository
+            RecurringTransactionDetailsHistoryRepository recurringTransactionDetailsHistoryRepository,
+            FinanceMovementAssociationValidator associationValidator
     ) {
         this.patchParser = Objects.requireNonNull(patchParser, "patchParser");
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
@@ -79,6 +81,7 @@ public class RecurringTransactionPatchService {
         this.recurringTransactionRepository = Objects.requireNonNull(recurringTransactionRepository);
         this.recurringTransactionHistoryRepository = Objects.requireNonNull(recurringTransactionHistoryRepository);
         this.recurringTransactionDetailsHistoryRepository = Objects.requireNonNull(recurringTransactionDetailsHistoryRepository);
+        this.associationValidator = Objects.requireNonNull(associationValidator, "associationValidator");
     }
 
     @Transactional
@@ -291,6 +294,11 @@ public class RecurringTransactionPatchService {
                 baseDetails,
                 linkedAccount,
                 userGroupId
+        );
+
+        associationValidator.validateRecurringCreditCardBucketExclusion(
+                linkedCreditCard,
+                linkedBucket
         );
 
         RecurringTransactionDetailsHistory newDetails = RecurringTransactionDetailsHistory.create(
