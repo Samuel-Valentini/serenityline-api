@@ -69,6 +69,11 @@ public class BucketLifecycleService {
             throw new IllegalStateException("finance.bucket.balanceMustBeZero");
         }
 
+        assertCurrentBucketAccountBalancesAreZero(
+                bucket.getBucketId(),
+                userGroupId
+        );
+
         assertNoFutureBucketTransactions(
                 bucket.getBucketId(),
                 userGroupId
@@ -257,6 +262,22 @@ public class BucketLifecycleService {
                 LocalDate.now(clock)
         )) {
             throw new IllegalStateException("finance.bucket.openRecurringTransactionsExist");
+        }
+    }
+
+    private void assertCurrentBucketAccountBalancesAreZero(UUID bucketId, UUID userGroupId) {
+        Objects.requireNonNull(bucketId, "bucketId");
+        Objects.requireNonNull(userGroupId, "userGroupId");
+
+        boolean hasNonZeroAccountBalance =
+                !transactionRepository.findNonZeroPersistedBaseBucketBalancesByAccountAt(
+                        bucketId,
+                        userGroupId,
+                        LocalDate.now(clock)
+                ).isEmpty();
+
+        if (hasNonZeroAccountBalance) {
+            throw new IllegalStateException("finance.bucket.accountBalancesMustBeZero");
         }
     }
 }

@@ -369,11 +369,50 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("asOfDate") LocalDate asOfDate
     );
 
+    @Query(value = """
+            SELECT
+                t.account_id AS "accountId",
+                COALESCE(SUM(
+                    CASE
+                        WHEN t.transaction_affects_account_balance = FALSE
+                         AND t.transaction_affects_serenityline = TRUE
+                            THEN -t.transaction_amount
+                        ELSE t.transaction_amount
+                    END
+                ), 0) AS "balance"
+            FROM transactions t
+            WHERE t.bucket_id = :bucketId
+              AND t.user_group_id = :userGroupId
+              AND t.transaction_is_simulated = FALSE
+              AND t.transaction_charge_date <= :asOfDate
+            GROUP BY t.account_id
+            HAVING COALESCE(SUM(
+                CASE
+                    WHEN t.transaction_affects_account_balance = FALSE
+                     AND t.transaction_affects_serenityline = TRUE
+                        THEN -t.transaction_amount
+                    ELSE t.transaction_amount
+                END
+            ), 0) <> 0
+            """, nativeQuery = true)
+    List<BucketAccountBalanceView> findNonZeroPersistedBaseBucketBalancesByAccountAt(
+            @Param("bucketId") UUID bucketId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
     interface ConfirmedRecurringOccurrenceKeyView {
 
         UUID getRecurringTransactionId();
 
         LocalDate getRecurringTransactionLogicalDate();
+    }
+
+    interface BucketAccountBalanceView {
+
+        UUID getAccountId();
+
+        BigDecimal getBalance();
     }
 
 }

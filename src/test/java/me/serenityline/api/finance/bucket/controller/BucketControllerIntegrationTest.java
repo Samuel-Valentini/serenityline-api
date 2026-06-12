@@ -4045,6 +4045,266 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(unchangedBucket.getBucketClosedAt()).isNull();
     }
 
+    @Test
+    void closeBucketShouldRejectBucketWithZeroAggregatedBalanceButNonZeroAccountBalances() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account firstAccount = createAccount(owner.getUserGroup(), "Conto positivo portafoglio");
+        Account secondAccount = createAccount(owner.getUserGroup(), "Conto negativo portafoglio");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio zero aggregato");
+
+        linkBucketToAccount(bucket, firstAccount);
+        linkBucketToAccount(bucket, secondAccount);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria zero aggregato"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                firstAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                false,
+                true,
+                today(),
+                false,
+                null
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                secondAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                true,
+                false,
+                today(),
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.accountBalancesMustBeZero"));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void closeBucketShouldAllowBucketWhenEveryAccountBalanceIsZero() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account firstAccount = createAccount(owner.getUserGroup(), "Conto zero per conto A");
+        Account secondAccount = createAccount(owner.getUserGroup(), "Conto zero per conto B");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio zero per conto");
+
+        linkBucketToAccount(bucket, firstAccount);
+        linkBucketToAccount(bucket, secondAccount);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria zero per conto"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                firstAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                false,
+                true,
+                today(),
+                false,
+                null
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                firstAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                true,
+                false,
+                today(),
+                false,
+                null
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                secondAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-5000.00"),
+                false,
+                true,
+                today(),
+                false,
+                null
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                secondAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-5000.00"),
+                true,
+                false,
+                today(),
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldIgnoreSimulatedAccountLevelBalances() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account firstAccount = createAccount(owner.getUserGroup(), "Conto simulato per conto A");
+        Account secondAccount = createAccount(owner.getUserGroup(), "Conto simulato per conto B");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio simulato per conto");
+
+        linkBucketToAccount(bucket, firstAccount);
+        linkBucketToAccount(bucket, secondAccount);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria simulata per conto"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.getUserGroup(),
+                "Simulazione saldo per conto"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                firstAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                false,
+                true,
+                today(),
+                true,
+                simulationGroupId
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                secondAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                true,
+                false,
+                today(),
+                true,
+                simulationGroupId
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldRejectNonZeroBalanceOnUnlinkedAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account firstAccount = createAccount(owner.getUserGroup(), "Conto scollegato A");
+        Account secondAccount = createAccount(owner.getUserGroup(), "Conto scollegato B");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Portafoglio con conti scollegati");
+
+        linkBucketToAccount(bucket, firstAccount);
+        linkBucketToAccount(bucket, secondAccount);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria conti scollegati"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                firstAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                false,
+                true,
+                today(),
+                false,
+                null
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                secondAccount,
+                bucket,
+                categoryId,
+                new BigDecimal("-10000.00"),
+                true,
+                false,
+                today(),
+                false,
+                null
+        );
+
+        jdbcTemplate.update(
+                """
+                        delete from buckets_accounts
+                        where bucket_id = ?
+                          and user_group_id = ?
+                        """,
+                bucket.getBucketId(),
+                owner.getUserGroup().getUserGroupId()
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.accountBalancesMustBeZero"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
     private User createVerifiedUser(UserRole userRole) {
         return transactionTemplate.execute(status -> {
             UserGroup userGroup = new UserGroup("Test group " + UUID.randomUUID());
