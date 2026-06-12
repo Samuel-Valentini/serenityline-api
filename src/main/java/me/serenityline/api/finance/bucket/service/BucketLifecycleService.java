@@ -4,6 +4,8 @@ import me.serenityline.api.common.error.ResourceNotFoundException;
 import me.serenityline.api.finance.bucket.entity.Bucket;
 import me.serenityline.api.finance.bucket.repository.BucketAccountRepository;
 import me.serenityline.api.finance.bucket.repository.BucketRepository;
+import me.serenityline.api.finance.transaction.repository.RecurringTransactionRepository;
+import me.serenityline.api.finance.transaction.repository.TransactionRepository;
 import me.serenityline.api.user.entity.User;
 import me.serenityline.api.user.entity.UserRole;
 import me.serenityline.api.user.repository.UserRepository;
@@ -12,6 +14,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -24,17 +28,26 @@ public class BucketLifecycleService {
     private final BucketAccountRepository bucketAccountRepository;
     private final UserRepository userRepository;
     private final BucketBalanceCalculator bucketBalanceCalculator;
+    private final TransactionRepository transactionRepository;
+    private final RecurringTransactionRepository recurringTransactionRepository;
+    private final Clock clock;
 
     public BucketLifecycleService(
             BucketRepository bucketRepository,
             BucketAccountRepository bucketAccountRepository,
             UserRepository userRepository,
-            BucketBalanceCalculator bucketBalanceCalculator
+            BucketBalanceCalculator bucketBalanceCalculator,
+            TransactionRepository transactionRepository,
+            RecurringTransactionRepository recurringTransactionRepository,
+            Clock clock
     ) {
         this.bucketRepository = Objects.requireNonNull(bucketRepository, "bucketRepository");
         this.bucketAccountRepository = Objects.requireNonNull(bucketAccountRepository, "bucketAccountRepository");
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
         this.bucketBalanceCalculator = Objects.requireNonNull(bucketBalanceCalculator, "bucketBalanceCalculator");
+        this.transactionRepository = Objects.requireNonNull(transactionRepository, "transactionRepository");
+        this.recurringTransactionRepository = Objects.requireNonNull(recurringTransactionRepository, "recurringTransactionRepository");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     @Transactional
@@ -52,9 +65,19 @@ public class BucketLifecycleService {
                 userGroupId
         );
 
-        if (currentBucketBalance.compareTo(BigDecimal.ZERO) > 0) {
-            throw new IllegalStateException("finance.bucket.balanceMustBeZeroOrNegative");
+        if (currentBucketBalance.compareTo(BigDecimal.ZERO) != 0) {
+            throw new IllegalStateException("finance.bucket.balanceMustBeZero");
         }
+
+        assertNoFutureBucketTransactions(
+                bucket.getBucketId(),
+                userGroupId
+        );
+
+        assertNoOpenOrFutureBucketRecurringTransactions(
+                bucket.getBucketId(),
+                userGroupId
+        );
 
         bucket.close();
 
@@ -209,5 +232,31 @@ public class BucketLifecycleService {
         return value.trim()
                 .replaceAll("\\s+", " ")
                 .toLowerCase(Locale.ROOT);
+    }
+
+    private void assertNoFutureBucketTransactions(UUID bucketId, UUID userGroupId) {
+        Objects.requireNonNull(bucketId, "bucketId");
+        Objects.requireNonNull(userGroupId, "userGroupId");
+
+        if (transactionRepository.existsFutureBaseBucketTransaction(
+                bucketId,
+                userGroupId,
+                LocalDate.now(clock)
+        )) {
+            throw new IllegalStateException("finance.bucket.futureTransactionsExist");
+        }
+    }
+
+    private void assertNoOpenOrFutureBucketRecurringTransactions(UUID bucketId, UUID userGroupId) {
+        Objects.requireNonNull(bucketId, "bucketId");
+        Objects.requireNonNull(userGroupId, "userGroupId");
+
+        if (recurringTransactionRepository.existsOpenOrFutureBaseRecurringTransactionLinkedToBucket(
+                bucketId,
+                userGroupId,
+                LocalDate.now(clock)
+        )) {
+            throw new IllegalStateException("finance.bucket.openRecurringTransactionsExist");
+        }
     }
 }

@@ -3404,7 +3404,7 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("finance.bucket.balanceMustBeZeroOrNegative"))
+                .andExpect(jsonPath("$.code").value("finance.bucket.balanceMustBeZero"))
                 .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
 
         Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
@@ -3444,7 +3444,7 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("finance.bucket.balanceMustBeZeroOrNegative"))
+                .andExpect(jsonPath("$.code").value("finance.bucket.balanceMustBeZero"))
                 .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
 
         Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
@@ -3506,7 +3506,7 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void closeBucketShouldAllowBucketWithNegativeResidualBalance() throws Exception {
+    void closeBucketShouldRejectBucketWithNegativeResidualBalance() throws Exception {
         User owner = createVerifiedUser(UserRole.OWNER);
 
         Account account = createAccount(owner.getUserGroup(), "Conto bucket negativo");
@@ -3536,13 +3536,13 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         mockMvc.perform(post(bucketClosePath(bucket))
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
-                .andExpect(jsonPath("$.bucketClosedAt").exists());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.balanceMustBeZero"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
 
-        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
 
-        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
     }
 
     @Test
@@ -3689,7 +3689,7 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
                 false,
                 null
         );
-        
+
         mockMvc.perform(post(bucketClosePath(bucket))
                         .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
@@ -3700,6 +3700,349 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
 
         assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldRejectBucketWithFutureBaseTransaction() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto bucket future transaction");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket future transaction");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria bucket future transaction"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                new BigDecimal("-50.00"),
+                true,
+                false,
+                today().plusDays(1),
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.futureTransactionsExist"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void closeBucketShouldRejectBucketWithOpenBaseRecurringTransaction() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto bucket open recurring");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket open recurring");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria bucket open recurring"
+        );
+
+        insertOpenDailyRecurringTransactionUsingBucket(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                today().plusDays(100),
+                new BigDecimal("-200.00"),
+                false,
+                true,
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.openRecurringTransactionsExist"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void closeBucketShouldIgnoreFutureSimulatedTransaction() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto bucket simulated future");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket simulated future");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria simulated future"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.getUserGroup(),
+                "Simulazione future bucket"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                new BigDecimal("-200.00"),
+                true,
+                false,
+                today().plusDays(1),
+                true,
+                simulationGroupId
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldIgnoreFutureTransactionLinkedToDifferentBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto bucket other future");
+        Bucket bucketToClose = createBucket(owner.getUserGroup(), "Bucket da chiudere other future");
+        Bucket otherBucket = createBucket(owner.getUserGroup(), "Altro bucket future");
+
+        linkBucketToAccount(bucketToClose, account);
+        linkBucketToAccount(otherBucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria other bucket future"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                account,
+                otherBucket,
+                categoryId,
+                new BigDecimal("-200.00"),
+                true,
+                false,
+                today().plusDays(1),
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucketToClose))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucketToClose.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucketToClose.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldIgnoreOpenSimulatedRecurringTransaction() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto bucket open simulated recurring");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket open simulated recurring");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria open simulated recurring"
+        );
+
+        UUID simulationGroupId = createSimulationGroup(
+                owner.getUserGroup(),
+                "Simulazione open recurring bucket"
+        );
+
+        insertOpenDailyRecurringTransactionUsingBucket(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                today().plusDays(1),
+                new BigDecimal("-200.00"),
+                false,
+                true,
+                true,
+                simulationGroupId
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldRejectRecurringTransactionWithFutureDetailsLinkedToBucket() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto future details bucket");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket future details");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria future details bucket"
+        );
+
+        insertOpenDailyRecurringTransactionWithBucketDetailsChange(
+                owner.getUserGroup(),
+                account,
+                categoryId,
+                today().plusDays(100),
+                new BigDecimal("-200.00"),
+                today(),
+                null,
+                today().plusDays(1),
+                bucket
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.openRecurringTransactionsExist"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
+    @Test
+    void closeBucketShouldIgnoreRecurringTransactionLinkedToBucketOnlyInPastDetails() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto past details bucket");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket past details");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria past details bucket"
+        );
+
+        insertOpenDailyRecurringTransactionWithBucketDetailsChange(
+                owner.getUserGroup(),
+                account,
+                categoryId,
+                today().plusDays(1),
+                new BigDecimal("-200.00"),
+                today().minusDays(2),
+                bucket,
+                today(),
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId").value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldReturnBalanceErrorBeforeFutureTransactionErrorWhenBothExist() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(owner.getUserGroup(), "Conto balance and future");
+        Bucket bucket = createBucket(owner.getUserGroup(), "Bucket balance and future");
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria balance and future"
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                new BigDecimal("-50.00"),
+                false,
+                true,
+                today(),
+                false,
+                null
+        );
+
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                new BigDecimal("-25.00"),
+                true,
+                false,
+                today().plusDays(1),
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessTokenFor(owner))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("finance.bucket.balanceMustBeZero"))
+                .andExpect(jsonPath("$.path").value(bucketClosePath(bucket)));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId()).orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
     }
 
     private User createVerifiedUser(UserRole userRole) {
@@ -4182,6 +4525,92 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         return recurringTransactionId;
     }
 
+    private UUID insertOpenDailyRecurringTransactionUsingBucket(
+            UserGroup userGroup,
+            Account account,
+            Bucket bucket,
+            UUID categoryId,
+            LocalDate firstPaymentDate,
+            BigDecimal paymentAmount,
+            boolean affectsAccountBalance,
+            boolean affectsSerenityline,
+            boolean simulated,
+            UUID simulationGroupId
+    ) {
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transactions (
+                            recurring_transaction_id,
+                            recurring_transaction_amount_is_adjustable,
+                            recurring_transaction_first_payment_date,
+                            recurring_transaction_is_simulated,
+                            simulation_group_id,
+                            recurring_transaction_reminder_enabled,
+                            recurring_transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        values (?, false, ?, ?, ?, true, 7, ?)
+                        """,
+                recurringTransactionId,
+                firstPaymentDate,
+                simulated,
+                simulationGroupId,
+                userGroup.getUserGroupId()
+        );
+
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transaction_history (
+                            recurring_transaction_id,
+                            effective_from,
+                            day_of_unit,
+                            recurrence_interval,
+                            recurrence_unit,
+                            payment_date_adjustment_policy,
+                            payment_amount
+                        )
+                        values (?, ?, 1, 1, 'DAY', 'PREVIOUS_BUSINESS_DAY', ?)
+                        """,
+                recurringTransactionId,
+                firstPaymentDate,
+                paymentAmount
+        );
+
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transaction_details_history (
+                            recurring_transaction_details_history_id,
+                            recurring_transaction_id,
+                            recurring_transaction_description,
+                            category_id,
+                            financial_priority_id,
+                            linked_account_id,
+                            linked_bucket_id,
+                            recurring_transaction_affects_account_balance,
+                            recurring_transaction_affects_serenityline,
+                            recurring_transaction_details_effective_from,
+                            user_group_id
+                        )
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                UUID.randomUUID(),
+                recurringTransactionId,
+                "Ricorrente bucket aperta",
+                categoryId,
+                financialPriorityId("ESSENTIAL"),
+                account.getAccountId(),
+                bucket.getBucketId(),
+                affectsAccountBalance,
+                affectsSerenityline,
+                firstPaymentDate,
+                userGroup.getUserGroupId()
+        );
+
+        return recurringTransactionId;
+    }
+
     private void insertConfirmedRecurringBucketTransaction(
             UserGroup userGroup,
             Account account,
@@ -4259,6 +4688,117 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
 
     private LocalDate today() {
         return LocalDate.now(clock);
+    }
+
+    private UUID insertOpenDailyRecurringTransactionWithBucketDetailsChange(
+            UserGroup userGroup,
+            Account account,
+            UUID categoryId,
+            LocalDate firstPaymentDate,
+            BigDecimal paymentAmount,
+            LocalDate firstDetailsEffectiveFrom,
+            Bucket firstBucket,
+            LocalDate secondDetailsEffectiveFrom,
+            Bucket secondBucket
+    ) {
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transactions (
+                            recurring_transaction_id,
+                            recurring_transaction_amount_is_adjustable,
+                            recurring_transaction_first_payment_date,
+                            recurring_transaction_is_simulated,
+                            simulation_group_id,
+                            recurring_transaction_reminder_enabled,
+                            recurring_transaction_reminder_days_before,
+                            user_group_id
+                        )
+                        values (?, false, ?, false, null, true, 7, ?)
+                        """,
+                recurringTransactionId,
+                firstPaymentDate,
+                userGroup.getUserGroupId()
+        );
+
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transaction_history (
+                            recurring_transaction_id,
+                            effective_from,
+                            day_of_unit,
+                            recurrence_interval,
+                            recurrence_unit,
+                            payment_date_adjustment_policy,
+                            payment_amount
+                        )
+                        values (?, ?, 1, 1, 'DAY', 'PREVIOUS_BUSINESS_DAY', ?)
+                        """,
+                recurringTransactionId,
+                firstPaymentDate,
+                paymentAmount
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                userGroup,
+                account,
+                categoryId,
+                recurringTransactionId,
+                "Ricorrente bucket storico iniziale",
+                firstDetailsEffectiveFrom,
+                firstBucket
+        );
+
+        insertRecurringTransactionDetailsHistory(
+                userGroup,
+                account,
+                categoryId,
+                recurringTransactionId,
+                "Ricorrente bucket storico successivo",
+                secondDetailsEffectiveFrom,
+                secondBucket
+        );
+
+        return recurringTransactionId;
+    }
+
+    private void insertRecurringTransactionDetailsHistory(
+            UserGroup userGroup,
+            Account account,
+            UUID categoryId,
+            UUID recurringTransactionId,
+            String description,
+            LocalDate effectiveFrom,
+            Bucket bucket
+    ) {
+        jdbcTemplate.update(
+                """
+                        insert into recurring_transaction_details_history (
+                            recurring_transaction_details_history_id,
+                            recurring_transaction_id,
+                            recurring_transaction_description,
+                            category_id,
+                            financial_priority_id,
+                            linked_account_id,
+                            linked_bucket_id,
+                            recurring_transaction_affects_account_balance,
+                            recurring_transaction_affects_serenityline,
+                            recurring_transaction_details_effective_from,
+                            user_group_id
+                        )
+                        values (?, ?, ?, ?, ?, ?, ?, true, true, ?, ?)
+                        """,
+                UUID.randomUUID(),
+                recurringTransactionId,
+                description,
+                categoryId,
+                financialPriorityId("ESSENTIAL"),
+                account.getAccountId(),
+                bucket == null ? null : bucket.getBucketId(),
+                effectiveFrom,
+                userGroup.getUserGroupId()
+        );
     }
 
 }

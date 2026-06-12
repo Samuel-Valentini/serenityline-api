@@ -353,6 +353,22 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("asOfDate") LocalDate asOfDate
     );
 
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM transactions t
+                WHERE t.bucket_id = :bucketId
+                  AND t.user_group_id = :userGroupId
+                  AND t.transaction_is_simulated = FALSE
+                  AND t.transaction_charge_date > :asOfDate
+            )
+            """, nativeQuery = true)
+    boolean existsFutureBaseBucketTransaction(
+            @Param("bucketId") UUID bucketId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
     interface ConfirmedRecurringOccurrenceKeyView {
 
         UUID getRecurringTransactionId();

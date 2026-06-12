@@ -964,4 +964,64 @@ public interface RecurringTransactionRepository extends JpaRepository<RecurringT
             @Param("latestRelevantDate") LocalDate latestRelevantDate
     );
 
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM recurring_transactions rt
+                WHERE rt.user_group_id = :userGroupId
+                  AND rt.recurring_transaction_is_simulated = FALSE
+                  AND EXISTS (
+                        SELECT 1
+                        FROM recurring_transaction_history rth
+                        WHERE rth.recurring_transaction_id = rt.recurring_transaction_id
+                          AND rth.effective_from <= GREATEST(
+                                CAST(:asOfDate AS date),
+                                rt.recurring_transaction_first_payment_date
+                          )
+                          AND (
+                                rth.effective_to IS NULL
+                                OR rth.effective_to > CAST(:asOfDate AS date)
+                          )
+                          AND (
+                                rth.recurring_transaction_end_date IS NULL
+                                OR rth.recurring_transaction_end_date > CAST(:asOfDate AS date)
+                          )
+                  )
+                  AND (
+                        EXISTS (
+                            SELECT 1
+                            FROM LATERAL (
+                                SELECT rdth.linked_bucket_id
+                                FROM recurring_transaction_details_history rdth
+                                WHERE rdth.recurring_transaction_id = rt.recurring_transaction_id
+                                  AND rdth.user_group_id = rt.user_group_id
+                                  AND rdth.recurring_transaction_details_effective_from <= GREATEST(
+                                        CAST(:asOfDate AS date),
+                                        rt.recurring_transaction_first_payment_date
+                                  )
+                                ORDER BY
+                                    rdth.recurring_transaction_details_effective_from DESC,
+                                    rdth.recurring_transaction_details_history_created_at DESC,
+                                    rdth.recurring_transaction_details_history_id DESC
+                                LIMIT 1
+                            ) current_details
+                            WHERE current_details.linked_bucket_id = :bucketId
+                        )
+                        OR EXISTS (
+                            SELECT 1
+                            FROM recurring_transaction_details_history future_details
+                            WHERE future_details.recurring_transaction_id = rt.recurring_transaction_id
+                              AND future_details.user_group_id = rt.user_group_id
+                              AND future_details.linked_bucket_id = :bucketId
+                              AND future_details.recurring_transaction_details_effective_from > CAST(:asOfDate AS date)
+                        )
+                  )
+            )
+            """, nativeQuery = true)
+    boolean existsOpenOrFutureBaseRecurringTransactionLinkedToBucket(
+            @Param("bucketId") UUID bucketId,
+            @Param("userGroupId") UUID userGroupId,
+            @Param("asOfDate") LocalDate asOfDate
+    );
+
 }
