@@ -66,35 +66,53 @@ public class BucketBalanceCalculator {
             UUID userGroupId,
             LocalDate asOfDate
     ) {
-        Objects.requireNonNull(bucketId, "bucketId");
-        Objects.requireNonNull(userGroupId, "userGroupId");
-        Objects.requireNonNull(asOfDate, "asOfDate");
-
-        BigDecimal persistedBalance = transactionRepository.calculatePersistedBaseBucketBalanceAt(
-                bucketId,
-                userGroupId,
-                asOfDate
-        );
-
-        if (persistedBalance == null) {
-            persistedBalance = BigDecimal.ZERO;
-        }
-
-        BigDecimal projectedBalance = calculateProjectedRecurringBalanceAt(
-                bucketId,
-                userGroupId,
-                asOfDate
-        );
-
-        return persistedBalance.add(projectedBalance);
+        return calculateBalancesByAccountAt(bucketId, userGroupId, asOfDate)
+                .values()
+                .stream()
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private BigDecimal calculateProjectedRecurringBalanceAt(
+    @Transactional(readOnly = true)
+    public Map<UUID, BigDecimal> calculateBalancesByAccountAt(
             UUID bucketId,
             UUID userGroupId,
             LocalDate asOfDate
     ) {
-        LocalDate latestRelevantDate = asOfDate.plusDays(PROJECTED_MOVEMENT_BOUNDARY_DAYS);
+        Objects.requireNonNull(bucketId, "bucketId");
+        Objects.requireNonNull(userGroupId, "userGroupId");
+        Objects.requireNonNull(asOfDate, "asOfDate");
+
+        Map<UUID, BigDecimal> balancesByAccount = new HashMap<>();
+
+        transactionRepository.findNonZeroPersistedBaseBucketBalancesByAccountAt(
+                bucketId,
+                userGroupId,
+                asOfDate
+        ).forEach(row -> balancesByAccount.put(
+                row.getAccountId(),
+                row.getBalance()
+        ));
+
+        findUnconfirmedProjectedBucketMovementsAt(
+                bucketId,
+                userGroupId,
+                asOfDate
+        ).forEach(projectedMovement -> balancesByAccount.merge(
+                projectedMovement.linkedAccount().getAccountId(),
+                bucketDelta(projectedMovement),
+                BigDecimal::add
+        ));
+
+        return Map.copyOf(balancesByAccount);
+    }
+
+    private List<RecurringTransactionProjectedMovement> findUnconfirmedProjectedBucketMovementsAt(
+            UUID bucketId,
+            UUID userGroupId,
+            LocalDate asOfDate
+    ) {
+        LocalDate latestRelevantDate =
+                asOfDate.plusDays(PROJECTED_MOVEMENT_BOUNDARY_DAYS);
 
         List<RecurringTransaction> recurringTransactions =
                 recurringTransactionRepository.findBaseOpenRecurringTransactionsEverLinkedToBucket(
@@ -104,7 +122,7 @@ public class BucketBalanceCalculator {
                 );
 
         if (recurringTransactions.isEmpty()) {
-            return BigDecimal.ZERO;
+            return List.of();
         }
 
         LocalDate from = recurringTransactions.stream()
@@ -114,25 +132,30 @@ public class BucketBalanceCalculator {
                 .minusDays(PROJECTED_MOVEMENT_BOUNDARY_DAYS);
 
         if (from.isAfter(asOfDate)) {
-            return BigDecimal.ZERO;
+            return List.of();
         }
 
-        List<RecurringTransactionProjectedMovementSeed> seeds = recurringTransactions.stream()
-                .map(recurringTransaction -> new RecurringTransactionProjectedMovementSeed(
-                        recurringTransaction.getRecurringTransactionId(),
-                        userGroupId,
-                        recurringTransaction.getRecurringTransactionFirstPaymentDate()
-                ))
-                .toList();
+        List<RecurringTransactionProjectedMovementSeed> seeds =
+                recurringTransactions.stream()
+                        .map(recurringTransaction ->
+                                new RecurringTransactionProjectedMovementSeed(
+                                        recurringTransaction.getRecurringTransactionId(),
+                                        userGroupId,
+                                        recurringTransaction.getRecurringTransactionFirstPaymentDate()
+                                )
+                        )
+                        .toList();
 
         List<RecurringTransactionProjectedMovement> projectedBucketMovements =
                 generateProjectedMovementsInChunks(seeds, from, asOfDate)
                         .stream()
-                        .filter(projectedMovement -> isForBucket(projectedMovement, bucketId))
+                        .filter(projectedMovement ->
+                                isForBucket(projectedMovement, bucketId)
+                        )
                         .toList();
 
         if (projectedBucketMovements.isEmpty()) {
-            return BigDecimal.ZERO;
+            return List.of();
         }
 
         Set<ConfirmedRecurringOccurrenceKey> confirmedOccurrences =
@@ -142,12 +165,10 @@ public class BucketBalanceCalculator {
                 );
 
         return projectedBucketMovements.stream()
-                .filter(projectedMovement -> !isAlreadyConfirmed(
-                        projectedMovement,
-                        confirmedOccurrences
-                ))
-                .map(this::bucketDelta)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .filter(projectedMovement ->
+                        !isAlreadyConfirmed(projectedMovement, confirmedOccurrences)
+                )
+                .toList();
     }
 
     private List<RecurringTransactionProjectedMovement> generateProjectedMovementsInChunks(

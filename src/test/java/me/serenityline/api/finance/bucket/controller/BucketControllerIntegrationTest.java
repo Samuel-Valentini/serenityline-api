@@ -4305,6 +4305,150 @@ class BucketControllerIntegrationTest extends IntegrationTestSupport {
         assertThat(unchangedBucket.getBucketClosedAt()).isNull();
     }
 
+    @Test
+    void closeBucketShouldAllowZeroBalanceFromProjectedAndPersistedMovements() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account account = createAccount(
+                owner.getUserGroup(),
+                "Conto saldo misto"
+        );
+
+        Bucket bucket = createBucket(
+                owner.getUserGroup(),
+                "Portafoglio saldo misto"
+        );
+
+        linkBucketToAccount(bucket, account);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria saldo misto"
+        );
+
+        LocalDate referenceDate = today();
+
+        // Accantonamento proiettato: +100 nel portafoglio.
+        // L'helper crea una ricorrenza con inizio e fine nella stessa data.
+        insertDailyRecurringTransactionUsingBucket(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                referenceDate.minusDays(1),
+                new BigDecimal("-100.00"),
+                false,
+                true,
+                false,
+                null
+        );
+
+        // Spesa registrata: -100 dal portafoglio sullo stesso conto.
+        insertBucketTransaction(
+                owner.getUserGroup(),
+                account,
+                bucket,
+                categoryId,
+                new BigDecimal("-100.00"),
+                true,
+                false,
+                referenceDate,
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(
+                                HttpHeaders.AUTHORIZATION,
+                                bearer(accessTokenFor(owner))
+                        ))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucketId")
+                        .value(bucket.getBucketId().toString()))
+                .andExpect(jsonPath("$.bucketClosedAt").exists());
+
+        Bucket closedBucket = bucketRepository.findById(bucket.getBucketId())
+                .orElseThrow();
+
+        assertThat(closedBucket.getBucketClosedAt()).isNotNull();
+    }
+
+    @Test
+    void closeBucketShouldRejectOffsettingProjectedBalancesOnDifferentAccounts() throws Exception {
+        User owner = createVerifiedUser(UserRole.OWNER);
+
+        Account firstAccount = createAccount(
+                owner.getUserGroup(),
+                "Conto positivo ricorrenti"
+        );
+
+        Account secondAccount = createAccount(
+                owner.getUserGroup(),
+                "Conto negativo ricorrenti"
+        );
+
+        Bucket bucket = createBucket(
+                owner.getUserGroup(),
+                "Portafoglio ricorrenti compensate"
+        );
+
+        linkBucketToAccount(bucket, firstAccount);
+        linkBucketToAccount(bucket, secondAccount);
+
+        UUID categoryId = createActiveCategory(
+                owner.getUserGroup(),
+                owner,
+                "Categoria ricorrenti compensate"
+        );
+
+        LocalDate occurrenceDate = today().minusDays(1);
+
+        // Accantonamento proiettato: +100 sul primo conto.
+        insertDailyRecurringTransactionUsingBucket(
+                owner.getUserGroup(),
+                firstAccount,
+                bucket,
+                categoryId,
+                occurrenceDate,
+                new BigDecimal("-100.00"),
+                false,
+                true,
+                false,
+                null
+        );
+
+        // Spesa proiettata: -100 sul secondo conto.
+        insertDailyRecurringTransactionUsingBucket(
+                owner.getUserGroup(),
+                secondAccount,
+                bucket,
+                categoryId,
+                occurrenceDate,
+                new BigDecimal("-100.00"),
+                true,
+                false,
+                false,
+                null
+        );
+
+        mockMvc.perform(post(bucketClosePath(bucket))
+                        .header(HttpHeaders.ACCEPT_LANGUAGE, IT_LOCALE)
+                        .header(
+                                HttpHeaders.AUTHORIZATION,
+                                bearer(accessTokenFor(owner))
+                        ))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code")
+                        .value("finance.bucket.accountBalancesMustBeZero"));
+
+        Bucket unchangedBucket = bucketRepository.findById(bucket.getBucketId())
+                .orElseThrow();
+
+        assertThat(unchangedBucket.getBucketClosedAt()).isNull();
+    }
+
     private User createVerifiedUser(UserRole userRole) {
         return transactionTemplate.execute(status -> {
             UserGroup userGroup = new UserGroup("Test group " + UUID.randomUUID());

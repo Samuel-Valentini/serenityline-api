@@ -16,10 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
-import java.util.List;
-import java.util.Locale;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 public class BucketLifecycleService {
@@ -60,19 +57,28 @@ public class BucketLifecycleService {
 
         Bucket bucket = findClosableBucket(currentUser, bucketId, userGroupId);
 
-        BigDecimal currentBucketBalance = calculateCurrentBucketBalance(
-                bucket.getBucketId(),
-                userGroupId
-        );
+        Map<UUID, BigDecimal> currentBucketBalancesByAccount =
+                bucketBalanceCalculator.calculateBalancesByAccountAt(
+                        bucket.getBucketId(),
+                        userGroupId,
+                        LocalDate.now(clock)
+                );
+
+        BigDecimal currentBucketBalance = currentBucketBalancesByAccount.values()
+                .stream()
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         if (currentBucketBalance.compareTo(BigDecimal.ZERO) != 0) {
             throw new IllegalStateException("finance.bucket.balanceMustBeZero");
         }
 
-        assertCurrentBucketAccountBalancesAreZero(
-                bucket.getBucketId(),
-                userGroupId
-        );
+        boolean hasNonZeroAccountBalance = currentBucketBalancesByAccount.values()
+                .stream()
+                .anyMatch(balance -> balance.compareTo(BigDecimal.ZERO) != 0);
+
+        if (hasNonZeroAccountBalance) {
+            throw new IllegalStateException("finance.bucket.accountBalancesMustBeZero");
+        }
 
         assertNoFutureBucketTransactions(
                 bucket.getBucketId(),
@@ -177,16 +183,6 @@ public class BucketLifecycleService {
         );
     }
 
-    private BigDecimal calculateCurrentBucketBalance(UUID bucketId, UUID userGroupId) {
-        Objects.requireNonNull(bucketId, "bucketId");
-        Objects.requireNonNull(userGroupId, "userGroupId");
-
-        return bucketBalanceCalculator.calculateCurrentBalance(
-                bucketId,
-                userGroupId
-        );
-    }
-
     private User findCurrentUser(UUID currentUserId) {
         User currentUser = userRepository.findById(currentUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("finance.bucket.notFound"));
@@ -262,22 +258,6 @@ public class BucketLifecycleService {
                 LocalDate.now(clock)
         )) {
             throw new IllegalStateException("finance.bucket.openRecurringTransactionsExist");
-        }
-    }
-
-    private void assertCurrentBucketAccountBalancesAreZero(UUID bucketId, UUID userGroupId) {
-        Objects.requireNonNull(bucketId, "bucketId");
-        Objects.requireNonNull(userGroupId, "userGroupId");
-
-        boolean hasNonZeroAccountBalance =
-                !transactionRepository.findNonZeroPersistedBaseBucketBalancesByAccountAt(
-                        bucketId,
-                        userGroupId,
-                        LocalDate.now(clock)
-                ).isEmpty();
-
-        if (hasNonZeroAccountBalance) {
-            throw new IllegalStateException("finance.bucket.accountBalancesMustBeZero");
         }
     }
 }
