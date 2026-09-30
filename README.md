@@ -1,6 +1,7 @@
 # SerenityLine API
 
-Backend API for **SerenityLine**, a deployed personal finance forecasting SaaS that helps users project future liquidity, manage recurring transactions, and compare financial scenarios before making important decisions.
+Backend API for **SerenityLine**, a deployed personal finance forecasting SaaS that helps users project future
+liquidity, manage recurring transactions, and compare financial scenarios before making important decisions.
 
 SerenityLine is not just a budgeting tool. Its core goal is to help users answer a practical question:
 
@@ -12,7 +13,8 @@ SerenityLine is not just a budgeting tool. Its core goal is to help users answer
 * Frontend repository: [serenityline-web](https://github.com/Samuel-Valentini/serenityline-web)
 * Author GitHub profile: [Samuel-Valentini](https://github.com/Samuel-Valentini)
 
-A short demo video is available in the [How it works](https://serenityline.me/come-funziona#tutorial-serenityline) section of the live application.
+A short demo video is available in the [How it works](https://serenityline.me/come-funziona#tutorial-serenityline)
+section of the live application.
 
 Registration is required to use the private application area.
 
@@ -31,7 +33,9 @@ SerenityLine allows users to:
 
 This backend was developed as the main backend component of my Full-Stack Development capstone project.
 
-The goal was to build a production-oriented MVP: not only a functional prototype, but a backend designed with realistic concerns in mind, including security, data separation, test coverage, maintainability, deployment, and a clear domain model.
+The goal was to build a production-oriented MVP: not only a functional prototype, but a backend designed with realistic
+concerns in mind, including security, data separation, test coverage, maintainability, deployment, and a clear domain
+model.
 
 ## What this project demonstrates
 
@@ -108,7 +112,8 @@ The backend domain model is organized around the following areas:
 * Session tracking
 * Selective logout support
 * Logout from all devices
-* Temporary action tokens for email verification, password reset, email change, invitation, restore-account, and 2FA-related flows
+* Temporary action tokens for email verification, password reset, email change, invitation, restore-account, and
+  2FA-related flows
 * Email-based 2FA support
 * User/group-based data separation
 * Role-based collaboration model
@@ -148,7 +153,7 @@ OpenAPI/Swagger is intentionally not publicly exposed in production.
 ### Backend
 
 * Java 25
-* Spring Boot 4.0.6
+* Spring Boot 4.0.8
 * Spring Web MVC
 * Spring Data JPA
 * Spring Security
@@ -181,7 +186,8 @@ OpenAPI/Swagger is intentionally not publicly exposed in production.
 
 The backend includes more than **1,700 automated tests**.
 
-The test suite was created to support confidence in the core business logic, authentication flows, persistence behavior, validation, authorization rules, and API behavior.
+The test suite was created to support confidence in the core business logic, authentication flows, persistence behavior,
+validation, authorization rules, and API behavior.
 
 Typical test command:
 
@@ -221,7 +227,7 @@ Production secrets and environment-specific values are intentionally not committ
 Typical required configuration includes:
 
 | Area                    | Examples                                                                                                          |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+|-------------------------|-------------------------------------------------------------------------------------------------------------------|
 | Spring profile          | `SPRING_PROFILES_ACTIVE`                                                                                          |
 | Server                  | `SERVER_PORT`                                                                                                     |
 | Database                | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`                                                                            |
@@ -277,7 +283,8 @@ The frontend web application is available here:
 
 This project is publicly visible as part of my developer portfolio.
 
-The live application is deployed and usable, but it requires registration. A demo video is available inside the landing page under [How it works](https://serenityline.me/come-funziona#tutorial-serenityline).
+The live application is deployed and usable, but it requires registration. A demo video is available inside the landing
+page under [How it works](https://serenityline.me/come-funziona#tutorial-serenityline).
 
 For security reasons, production API documentation is not publicly exposed.
 
@@ -287,8 +294,11 @@ Copyright (c) 2026 Samuel Valentini. All rights reserved.
 
 This project is proprietary and publicly visible only as part of the author's portfolio.
 
-Recruiters, hiring managers, instructors, examiners, and authorized reviewers may view, clone, download, run, and test this software solely for professional recruitment evaluation, academic evaluation, or portfolio review, as described in `LICENSE.md`.
+Recruiters, hiring managers, instructors, examiners, and authorized reviewers may view, clone, download, run, and test
+this software solely for professional recruitment evaluation, academic evaluation, or portfolio review, as described in
+`LICENSE.md`.
 
-No permission is granted to copy, modify, distribute, publish, sublicense, or use this code for any other purpose without prior written permission.
+No permission is granted to copy, modify, distribute, publish, sublicense, or use this code for any other purpose
+without prior written permission.
 
 See `LICENSE.md` for details.
