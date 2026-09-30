@@ -169,97 +169,6 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void correctCredentialsAfterFailuresShouldRecordSuccessfulAttempt() throws Exception {
-        String ip = "203.0.113.30";
-
-        registerAndVerifyDefaultUser();
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").exists());
-
-        String emailHash = emailHash(DEFAULT_EMAIL);
-        String ipHash = ipHash(ip);
-
-        assertThat(countSuccessful(emailHash, ipHash)).isEqualTo(1);
-        assertThat(countInvalidCredentials(emailHash, ipHash)).isEqualTo(2);
-    }
-
-    @Test
-    void successfulCredentialsShouldResetEmailIpCounterLogically() throws Exception {
-        String ip = "203.0.113.31";
-
-        registerAndVerifyDefaultUser();
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
-                .andExpect(status().isOk());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-4", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-5", ip)
-                .andExpect(status().isTooManyRequests());
-    }
-
-    @Test
-    void logoutShouldNotDeleteAttemptsAndPreviousSuccessShouldStillResetCounterLogically() throws Exception {
-        String ip = "203.0.113.32";
-
-        registerAndVerifyDefaultUser();
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
-                .andExpect(status().isBadRequest());
-
-        MvcResult loginResult = performLoginWithDeviceFromIp(
-                DEFAULT_EMAIL,
-                DEFAULT_PASSWORD,
-                DEFAULT_DEVICE_LABEL,
-                ip
-        )
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String refreshToken = extractRefreshCookie(loginResult);
-
-        String emailHash = emailHash(DEFAULT_EMAIL);
-        String ipHash = ipHash(ip);
-
-        assertThat(countAttempts(emailHash, ipHash)).isEqualTo(3);
-
-        performLogout(refreshToken)
-                .andExpect(status().isNoContent());
-
-        assertThat(countAttempts(emailHash, ipHash)).isEqualTo(3);
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-4", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-5", ip)
-                .andExpect(status().isTooManyRequests());
-    }
-
-    @Test
     void unverifiedUserWithCorrectCredentialsShouldRecordSuccessfulAttemptAndReturnVerificationChallenge() throws Exception {
         String ip = "203.0.113.40";
 
@@ -349,29 +258,6 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void successfulCredentialsShouldResetEmailCounterLogically() throws Exception {
-        registerAndVerifyDefaultUser();
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", "203.0.113.71")
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", "203.0.113.72")
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", "203.0.113.73")
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-4", "203.0.113.74")
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, "203.0.113.75")
-                .andExpect(status().isOk());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-after-success", "203.0.113.76")
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
     void wrongCredentialsForDifferentEmailsFromSameIpShouldHitIpLimit() throws Exception {
         String ip = "203.0.113.80";
 
@@ -399,6 +285,119 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
+    void correctCredentialsAfterFailuresShouldRecordSuccessfulAttempt() throws Exception {
+        String ip = "203.0.113.30";
+
+        registerAndVerifyDefaultUser();
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists());
+
+        String emailHash = emailHash(DEFAULT_EMAIL);
+        String ipHash = ipHash(ip);
+
+        assertThat(countSuccessful(emailHash, ipHash)).isEqualTo(1);
+        assertThat(countInvalidCredentials(emailHash, ipHash)).isEqualTo(1);
+    }
+
+    @Test
+    void successfulCredentialsShouldResetEmailIpCounterLogically() throws Exception {
+        String ip = "203.0.113.31";
+
+        registerAndVerifyDefaultUser();
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
+                .andExpect(status().isOk());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-4", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-5", ip)
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void logoutShouldNotDeleteAttemptsAndPreviousSuccessShouldStillResetCounterLogically() throws Exception {
+        String ip = "203.0.113.32";
+
+        registerAndVerifyDefaultUser();
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
+                .andExpect(status().isBadRequest());
+
+        MvcResult loginResult = performLoginWithDeviceFromIp(
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
+                DEFAULT_DEVICE_LABEL,
+                ip
+        )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String refreshToken = extractRefreshCookie(loginResult);
+
+        String emailHash = emailHash(DEFAULT_EMAIL);
+        String ipHash = ipHash(ip);
+
+        assertThat(countAttempts(emailHash, ipHash)).isEqualTo(2);
+
+        performLogout(refreshToken)
+                .andExpect(status().isNoContent());
+
+        assertThat(countAttempts(emailHash, ipHash)).isEqualTo(2);
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-4", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-5", ip)
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void successfulCredentialsShouldResetEmailCounterLogically() throws Exception {
+        registerAndVerifyDefaultUser();
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", "203.0.113.71")
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", "203.0.113.72")
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", "203.0.113.73")
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, "203.0.113.75")
+                .andExpect(status().isOk());
+
+        performLoginFromIp(
+                DEFAULT_EMAIL,
+                "wrong-after-success-1",
+                "203.0.113.76"
+        )
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(
+                DEFAULT_EMAIL,
+                "wrong-after-success-2",
+                "203.0.113.77"
+        )
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void successfulCredentialsShouldNotResetIpOnlyLimit() throws Exception {
         String ip = "203.0.113.81";
 
@@ -419,11 +418,11 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
         performLoginFromIp(uniqueEmail("spray5"), WRONG_PASSWORD, ip)
                 .andExpect(status().isBadRequest());
 
-        performLoginFromIp(uniqueEmail("spray6"), WRONG_PASSWORD, ip)
-                .andExpect(status().isBadRequest());
-
         performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
                 .andExpect(status().isOk());
+
+        performLoginFromIp(uniqueEmail("spray6"), WRONG_PASSWORD, ip)
+                .andExpect(status().isBadRequest());
 
         performLoginFromIp(uniqueEmail("spray7"), WRONG_PASSWORD, ip)
                 .andExpect(status().isTooManyRequests())
@@ -488,52 +487,26 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void correctCredentialsAfterRateLimitShouldStillAuthenticateUser() throws Exception {
+    void correctCredentialsAfterRateLimitShouldNotAuthenticateUser() throws Exception {
         String ip = "203.0.113.101";
 
         registerAndVerifyDefaultUser();
 
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", ip)
-                .andExpect(status().isTooManyRequests());
-
-        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").exists());
-
-        assertThat(countSuccessful(emailHash(DEFAULT_EMAIL), ipHash(ip))).isEqualTo(1);
+        assertCorrectCredentialsAreRateLimited(ip);
     }
 
     @Test
-    void correctCredentialsAfterRateLimitShouldStillReturnEmailVerificationChallenge() throws Exception {
+    void correctCredentialsAfterRateLimitShouldNotReturnEmailVerificationChallenge() throws Exception {
         String ip = "203.0.113.102";
 
         performDefaultRegister()
                 .andExpect(status().isCreated());
 
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", ip)
-                .andExpect(status().isTooManyRequests());
-
-        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.emailVerificationResendToken").exists());
-
-        assertThat(countSuccessful(emailHash(DEFAULT_EMAIL), ipHash(ip))).isEqualTo(1);
+        assertCorrectCredentialsAreRateLimited(ip);
     }
 
     @Test
-    void correctCredentialsAfterRateLimitShouldStillReturnRestoreChallenge() throws Exception {
+    void correctCredentialsAfterRateLimitShouldNotReturnRestoreChallenge() throws Exception {
         String ip = "203.0.113.103";
 
         registerAndVerifyDefaultUser();
@@ -542,20 +515,7 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
         user.markAsSoftDeleted();
         userRepository.saveAndFlush(user);
 
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
-                .andExpect(status().isBadRequest());
-
-        performLoginFromIp(DEFAULT_EMAIL, "wrong-3", ip)
-                .andExpect(status().isTooManyRequests());
-
-        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.restoreToken").exists());
-
-        assertThat(countSuccessful(emailHash(DEFAULT_EMAIL), ipHash(ip))).isEqualTo(1);
+        assertCorrectCredentialsAreRateLimited(ip);
     }
 
     @Test
@@ -749,6 +709,44 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
                     assertThat(indexDefinition).contains("failure_reason");
                     assertThat(indexDefinition).contains("INVALID_CREDENTIALS");
                 });
+    }
+
+    @Test
+    void correctCredentialsShouldAuthenticateAfterFailuresLeaveWindow() throws Exception {
+        String ip = "203.0.113.105";
+
+        registerAndVerifyDefaultUser();
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("auth.login.tooManyAttempts"));
+
+        jdbcTemplate.update("""
+                        update auth_login_attempts
+                        set auth_login_attempt_at = now() - interval '20 minutes'
+                        where email_hash = ?
+                          and ip_address_hash = ?
+                          and failure_reason = 'INVALID_CREDENTIALS'
+                        """,
+                emailHash(DEFAULT_EMAIL),
+                ipHash(ip)
+        );
+
+        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists());
+
+        assertThat(countSuccessful(emailHash(DEFAULT_EMAIL), ipHash(ip)))
+                .isEqualTo(1);
+
+        assertThat(countRateLimited(emailHash(DEFAULT_EMAIL), ipHash(ip)))
+                .isEqualTo(1);
     }
 
 
@@ -999,5 +997,31 @@ class AuthLoginAttemptGuardIntegrationTest extends IntegrationTestSupport {
         );
 
         return count == null ? 0 : count;
+    }
+
+    private void assertCorrectCredentialsAreRateLimited(String ip) throws Exception {
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-1", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, "wrong-2", ip)
+                .andExpect(status().isBadRequest());
+
+        performLoginFromIp(DEFAULT_EMAIL, DEFAULT_PASSWORD, ip)
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("auth.login.tooManyAttempts"))
+                .andExpect(jsonPath("$.accessToken").doesNotExist())
+                .andExpect(jsonPath("$.emailVerificationResendToken").doesNotExist())
+                .andExpect(jsonPath("$.restoreToken").doesNotExist())
+                .andExpect(jsonPath("$.login2faChallengeId").doesNotExist())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+
+        String emailHash = emailHash(DEFAULT_EMAIL);
+        String ipHash = ipHash(ip);
+
+        assertThat(countInvalidCredentials(emailHash, ipHash)).isEqualTo(2);
+        assertThat(countRateLimited(emailHash, ipHash)).isEqualTo(1);
+        assertThat(countSuccessful(emailHash, ipHash)).isZero();
+        assertThat(userSessionRepository.findAll()).isEmpty();
+        assertThat(refreshTokenRepository.findAll()).isEmpty();
     }
 }

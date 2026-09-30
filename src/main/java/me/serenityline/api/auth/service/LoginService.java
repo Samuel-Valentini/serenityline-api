@@ -111,6 +111,11 @@ public class LoginService {
         String emailHash = sensitiveHashService.hash(email);
         String ipAddressHash = sensitiveHashService.hash(normalizeClientIp(metadata));
 
+        if (loginAttemptService.isOverLimit(emailHash, ipAddressHash)) {
+            loginAttemptService.recordRateLimited(emailHash, ipAddressHash);
+            throw new TooManyLoginAttemptsException();
+        }
+
         if (password == null || password.isBlank()) {
             rejectInvalidCredentials(null, emailHash, ipAddressHash);
         }
@@ -163,11 +168,6 @@ public class LoginService {
             String emailHash,
             String ipAddressHash
     ) {
-        if (loginAttemptService.isOverLimit(emailHash, ipAddressHash)) {
-            loginAttemptService.recordRateLimited(emailHash, ipAddressHash);
-            throw new TooManyLoginAttemptsException();
-        }
-
         loginAttemptService.recordInvalidCredentials(user, emailHash, ipAddressHash);
 
         throw invalidCredentials();
