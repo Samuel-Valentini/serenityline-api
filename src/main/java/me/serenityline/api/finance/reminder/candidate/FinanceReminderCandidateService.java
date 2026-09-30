@@ -6,7 +6,6 @@ import me.serenityline.api.finance.transaction.service.RecurringTransactionProje
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.function.Function;
@@ -40,24 +39,21 @@ public class FinanceReminderCandidateService {
     public List<FinanceReminderCandidate> findDueCandidates(LocalDate today) {
         Objects.requireNonNull(today, "today");
 
-        List<FinanceReminderCandidate> transactionCandidates =
-                candidateRepository.findDueTransactionCandidates(
-                        today,
-                        DEFAULT_TRANSACTION_LIMIT
-                );
+        List<FinanceReminderCandidate> result = new ArrayList<>();
 
-        List<FinanceReminderCandidate> recurringCandidates =
-                findDueRecurringCandidates(
-                        today,
-                        DEFAULT_RECURRING_SEED_PAGE_SIZE
-                );
+        result.addAll(candidateRepository.findDueTransactionCandidates(
+                today,
+                DEFAULT_TRANSACTION_LIMIT
+        ));
 
-        List<FinanceReminderCandidate> result = new ArrayList<>(
-                transactionCandidates.size() + recurringCandidates.size()
-        );
+        result.addAll(candidateRepository.findDueConfirmedRecurringCandidates(
+                today
+        ));
 
-        result.addAll(transactionCandidates);
-        result.addAll(recurringCandidates);
+        result.addAll(findDueRecurringCandidates(
+                today,
+                DEFAULT_RECURRING_SEED_PAGE_SIZE
+        ));
 
         return result.stream()
                 .sorted(Comparator
@@ -139,13 +135,12 @@ public class FinanceReminderCandidateService {
                         ))
                         .toList();
 
-        LocalDate generationFrom = today;
         LocalDate generationTo = today.plusDays(maxReminderDaysBefore(seeds));
 
         List<RecurringTransactionProjectedMovement> projectedMovements =
                 recurringProjectionService.generateProjectedMovementsAcrossRange(
                         projectionSeeds,
-                        generationFrom,
+                        today,
                         generationTo
                 );
 
@@ -153,7 +148,7 @@ public class FinanceReminderCandidateService {
             return List.of();
         }
 
-        Map<RecurringOccurrenceKey, FinanceReminderConfirmedRecurringOccurrenceSnapshot> confirmedSnapshotByKey =
+        Map<RecurringOccurrenceKey, FinanceReminderConfirmedRecurringOccurrenceSnapshot> confirmedSnapshots =
                 confirmedSnapshotByKey(
                         userGroupId,
                         seedByRecurringTransactionId.keySet(),
@@ -163,29 +158,27 @@ public class FinanceReminderCandidateService {
         List<RecurringTransactionProjectedMovement> dueProjectedMovements =
                 projectedMovements.stream()
                         .filter(projectedMovement -> {
-                            RecurringFinanceReminderSeed seed = seedByRecurringTransactionId.get(
-                                    projectedMovement.recurringTransactionId()
-                            );
+                            if (confirmedSnapshots.containsKey(
+                                    RecurringOccurrenceKey.from(projectedMovement)
+                            )) {
+                                return false;
+                            }
+
+                            RecurringFinanceReminderSeed seed =
+                                    seedByRecurringTransactionId.get(
+                                            projectedMovement.recurringTransactionId()
+                                    );
 
                             if (seed == null) {
                                 return false;
                             }
 
-                            FinanceReminderConfirmedRecurringOccurrenceSnapshot confirmedSnapshot =
-                                    confirmedSnapshotByKey.get(RecurringOccurrenceKey.from(projectedMovement));
+                            LocalDate chargeDate = projectedMovement.chargeDate();
+                            LocalDate reminderDate =
+                                    chargeDate.minusDays(seed.reminderDaysBefore());
 
-                            LocalDate effectiveChargeDate = confirmedSnapshot == null
-                                    ? projectedMovement.chargeDate()
-                                    : confirmedSnapshot.chargeDate();
-
-                            if (effectiveChargeDate.isBefore(today)) {
-                                return false;
-                            }
-
-                            LocalDate reminderDate = effectiveChargeDate
-                                    .minusDays(seed.reminderDaysBefore());
-
-                            return !reminderDate.isAfter(today);
+                            return !chargeDate.isBefore(today)
+                                    && !reminderDate.isAfter(today);
                         })
                         .toList();
 
@@ -202,30 +195,13 @@ public class FinanceReminderCandidateService {
         List<FinanceReminderCandidate> result = new ArrayList<>();
 
         for (RecurringTransactionProjectedMovement projectedMovement : dueProjectedMovements) {
-            RecurringFinanceReminderSeed seed = seedByRecurringTransactionId.get(
-                    projectedMovement.recurringTransactionId()
-            );
+            RecurringFinanceReminderSeed seed =
+                    seedByRecurringTransactionId.get(
+                            projectedMovement.recurringTransactionId()
+                    );
 
-            FinanceReminderConfirmedRecurringOccurrenceSnapshot confirmedSnapshot =
-                    confirmedSnapshotByKey.get(RecurringOccurrenceKey.from(projectedMovement));
-
-            LocalDate chargeDate = confirmedSnapshot == null
-                    ? projectedMovement.chargeDate()
-                    : confirmedSnapshot.chargeDate();
-
-            String notifiedDescription = confirmedSnapshot == null
-                    ? projectedMovement.description()
-                    : confirmedSnapshot.notifiedDescription();
-
-            BigDecimal notifiedAmount = confirmedSnapshot == null
-                    ? projectedMovement.amount()
-                    : confirmedSnapshot.notifiedAmount();
-
-            String notifiedCurrency = confirmedSnapshot == null
-                    ? projectedMovement.linkedAccount().getCurrency()
-                    : confirmedSnapshot.notifiedCurrency();
-
-            LocalDate reminderDate = chargeDate.minusDays(seed.reminderDaysBefore());
+            LocalDate reminderDate = projectedMovement.chargeDate()
+                    .minusDays(seed.reminderDaysBefore());
 
             List<UUID> userIds = userIdsByRecurringTransactionId.getOrDefault(
                     projectedMovement.recurringTransactionId(),
@@ -238,10 +214,10 @@ public class FinanceReminderCandidateService {
                         userGroupId,
                         projectedMovement.recurringTransactionId(),
                         projectedMovement.logicalDate(),
-                        chargeDate,
-                        notifiedDescription,
-                        notifiedAmount,
-                        notifiedCurrency,
+                        projectedMovement.chargeDate(),
+                        projectedMovement.description(),
+                        projectedMovement.amount(),
+                        projectedMovement.linkedAccount().getCurrency(),
                         reminderDate
                 ));
             }

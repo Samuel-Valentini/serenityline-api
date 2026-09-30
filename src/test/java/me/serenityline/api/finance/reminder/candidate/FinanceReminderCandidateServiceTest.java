@@ -435,92 +435,76 @@ class FinanceReminderCandidateServiceTest {
     @Test
     void findDueCandidatesShouldUseConfirmedRecurringOccurrenceSnapshotWhenPresent() {
         LocalDate today = LocalDate.of(2026, 6, 10);
+        LocalDate logicalDate = today.plusDays(3);
+        LocalDate chargeDate = today.plusDays(5);
 
         UUID userGroupId = UUID.randomUUID();
         UUID recurringTransactionId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
 
-        LocalDate logicalDate = LocalDate.of(2026, 6, 17);
+        RecurringFinanceReminderSeed seed = new RecurringFinanceReminderSeed(
+                recurringTransactionId,
+                userGroupId,
+                LocalDate.of(2026, 1, 10),
+                (short) 5
+        );
 
-        RecurringFinanceReminderSeed recurringSeed =
-                new RecurringFinanceReminderSeed(
-                        recurringTransactionId,
-                        userGroupId,
-                        LocalDate.of(2026, 1, 10),
-                        (short) 5
-                );
-
-        RecurringTransactionProjectedMovement projectedMovement =
-                projectedMovementWithoutCurrencyStub(
-                        recurringTransactionId,
-                        logicalDate,
-                        LocalDate.of(2026, 6, 17),
-                        "Descrizione projected",
-                        new BigDecimal("-100.00")
-                );
-
-        FinanceReminderConfirmedRecurringOccurrenceSnapshot confirmedSnapshot =
+        FinanceReminderConfirmedRecurringOccurrenceSnapshot snapshot =
                 new FinanceReminderConfirmedRecurringOccurrenceSnapshot(
                         recurringTransactionId,
                         logicalDate,
-                        LocalDate.of(2026, 6, 15),
-                        "Descrizione transaction confermata",
+                        chargeDate,
+                        "Descrizione confermata",
                         new BigDecimal("-95.50"),
                         "EUR"
                 );
 
-        when(candidateRepository.findDueTransactionCandidates(today, 500))
-                .thenReturn(List.of());
+        FinanceReminderCandidate expected =
+                FinanceReminderCandidate.forRecurringOccurrence(
+                        userId,
+                        userGroupId,
+                        recurringTransactionId,
+                        logicalDate,
+                        chargeDate,
+                        snapshot.notifiedDescription(),
+                        snapshot.notifiedAmount(),
+                        snapshot.notifiedCurrency(),
+                        today
+                );
+
+        when(candidateRepository.findDueConfirmedRecurringCandidates(today))
+                .thenReturn(List.of(expected));
 
         when(candidateRepository.findRecurringReminderSeedsPage(today, 500, null))
-                .thenReturn(List.of(recurringSeed));
+                .thenReturn(List.of(seed));
 
         when(recurringProjectionService.generateProjectedMovementsAcrossRange(
                 anyList(),
                 eq(today),
                 eq(today.plusDays(5))
-        )).thenReturn(List.of(projectedMovement));
+        )).thenReturn(List.of(projectedMovementWithoutCurrencyStub(
+                recurringTransactionId,
+                logicalDate,
+                logicalDate,
+                "Descrizione projected",
+                new BigDecimal("-100.00")
+        )));
 
         when(candidateRepository.findConfirmedRecurringOccurrenceSnapshots(
                 eq(userGroupId),
                 anyCollection(),
                 eq(logicalDate),
                 eq(logicalDate)
-        )).thenReturn(List.of(confirmedSnapshot));
+        )).thenReturn(List.of(snapshot));
 
-        when(candidateRepository.findReminderEnabledUserIdsByRecurringTransactionId(
-                eq(userGroupId),
-                anyCollection()
-        )).thenReturn(Map.of(
-                recurringTransactionId,
-                List.of(userId)
-        ));
+        assertThat(service.findDueCandidates(today))
+                .containsExactly(expected);
 
-        List<FinanceReminderCandidate> result = service.findDueCandidates(today);
-
-        assertThat(result)
-                .extracting(
-                        FinanceReminderCandidate::userId,
-                        FinanceReminderCandidate::transactionId,
-                        FinanceReminderCandidate::recurringTransactionId,
-                        FinanceReminderCandidate::recurringTransactionLogicalDate,
-                        FinanceReminderCandidate::chargeDate,
-                        FinanceReminderCandidate::notifiedDescription,
-                        FinanceReminderCandidate::notifiedAmount,
-                        FinanceReminderCandidate::notifiedCurrency,
-                        FinanceReminderCandidate::reminderDate
-                )
-                .containsExactly(tuple(
-                        userId,
-                        null,
-                        recurringTransactionId,
-                        logicalDate,
-                        LocalDate.of(2026, 6, 15),
-                        "Descrizione transaction confermata",
-                        new BigDecimal("-95.50"),
-                        "EUR",
-                        today
-                ));
+        verify(candidateRepository, never())
+                .findReminderEnabledUserIdsByRecurringTransactionId(
+                        any(),
+                        anyCollection()
+                );
     }
 
     @Test

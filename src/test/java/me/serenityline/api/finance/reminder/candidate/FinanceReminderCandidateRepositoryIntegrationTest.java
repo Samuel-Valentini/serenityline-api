@@ -3,6 +3,8 @@ package me.serenityline.api.finance.reminder.candidate;
 import me.serenityline.api.support.IntegrationTestSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -27,6 +29,8 @@ class FinanceReminderCandidateRepositoryIntegrationTest extends IntegrationTestS
     private FinanceReminderCandidateRepository repository;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private FinanceReminderCandidateService candidateService;
 
     private static String uniqueEmail(String label) {
         return label + "-" + UUID.randomUUID() + "@example.com";
@@ -633,6 +637,196 @@ class FinanceReminderCandidateRepositoryIntegrationTest extends IntegrationTestS
                         new BigDecimal("-95.50"),
                         CURRENCY
                 ));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "2026-06-27, 2026-06-15, 1",
+            "2026-06-06, 2026-06-15, 1",
+            "2026-06-13, 2026-06-15, 1",
+            "2026-06-13, 2026-06-10, 1",
+            "2026-06-13, 2026-06-12, 1",
+            "2026-06-13, 2026-06-09, 0",
+            "2026-06-13, 2026-06-20, 0",
+            "2028-06-10, 2026-06-15, 1"
+    })
+    void shouldUseActualChargeDateForConfirmedRecurringReminders(
+            LocalDate logicalDate,
+            LocalDate chargeDate,
+            int expectedCount
+    ) {
+        TestContext context = createContext();
+        UUID recurringTransactionId = UUID.randomUUID();
+
+        insertRecurringTransaction(
+                context,
+                recurringTransactionId,
+                logicalDate,
+                false,
+                null,
+                true,
+                (short) 5
+        );
+
+        // Una sola occorrenza, per isolare il comportamento sotto test.
+        jdbcTemplate.update("""
+                        UPDATE recurring_transaction_history
+                        SET recurring_transaction_end_date = ?
+                        WHERE recurring_transaction_id = ?
+                        """,
+                logicalDate,
+                recurringTransactionId
+        );
+
+        insertRecurringTransactionUser(
+                recurringTransactionId,
+                context.ownerUserId(),
+                context.userGroupId()
+        );
+
+        insertConfirmedRecurringOccurrenceTransaction(
+                context,
+                UUID.randomUUID(),
+                recurringTransactionId,
+                logicalDate,
+                chargeDate,
+                "Addebito confermato",
+                new BigDecimal("-95.50")
+        );
+
+        List<FinanceReminderCandidate> candidates =
+                candidateService.findDueCandidates(TODAY)
+                        .stream()
+                        .filter(candidate ->
+                                candidate.userGroupId().equals(context.userGroupId())
+                        )
+                        .toList();
+
+        assertThat(candidates)
+                .hasSize(expectedCount)
+                .allSatisfy(candidate -> assertThat(candidate).isEqualTo(
+                        FinanceReminderCandidate.forRecurringOccurrence(
+                                context.ownerUserId(),
+                                context.userGroupId(),
+                                recurringTransactionId,
+                                logicalDate,
+                                chargeDate,
+                                "Addebito confermato",
+                                new BigDecimal("-95.50"),
+                                CURRENCY,
+                                chargeDate.minusDays(5)
+                        )
+                ));
+    }
+
+    @Test
+    void shouldReturnConfirmedRemindersOnlyForEligibleUnnotifiedRecipients() {
+        TestContext context = createContext();
+
+        UUID collaboratorUserId = insertUser(
+                context.userGroupId(), "COLLABORATOR", true, true
+        );
+
+        UUID remindersDisabledUserId = insertUser(
+                context.userGroupId(), "COLLABORATOR", true, false
+        );
+
+        UUID disabledUserId = insertUser(
+                context.userGroupId(), "COLLABORATOR", false, true
+        );
+
+        UUID recurringTransactionId = UUID.randomUUID();
+        LocalDate logicalDate = LocalDate.of(2026, 6, 27);
+        LocalDate chargeDate = TODAY.plusDays(5);
+
+        insertRecurringTransaction(
+                context,
+                recurringTransactionId,
+                logicalDate,
+                false,
+                null,
+                true,
+                (short) 5
+        );
+
+        for (UUID userId : List.of(
+                context.ownerUserId(),
+                collaboratorUserId,
+                remindersDisabledUserId,
+                disabledUserId
+        )) {
+            insertRecurringTransactionUser(
+                    recurringTransactionId,
+                    userId,
+                    context.userGroupId()
+            );
+        }
+
+        insertConfirmedRecurringOccurrenceTransaction(
+                context,
+                UUID.randomUUID(),
+                recurringTransactionId,
+                logicalDate,
+                chargeDate,
+                "Addebito confermato",
+                new BigDecimal("-95.50")
+        );
+
+        assertThat(repository.findDueConfirmedRecurringCandidates(TODAY))
+                .filteredOn(candidate ->
+                        candidate.userGroupId().equals(context.userGroupId())
+                )
+                .extracting(FinanceReminderCandidate::userId)
+                .containsExactlyInAnyOrder(
+                        context.ownerUserId(),
+                        collaboratorUserId
+                );
+
+        jdbcTemplate.update("""
+                        INSERT INTO finance_reminder_notifications (
+                            user_id,
+                            user_group_id,
+                            recurring_transaction_id,
+                            recurring_transaction_logical_date,
+                            charge_date,
+                            notified_description,
+                            notified_amount,
+                            notified_currency,
+                            reminder_date
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                context.ownerUserId(),
+                context.userGroupId(),
+                recurringTransactionId,
+                logicalDate,
+                chargeDate,
+                "Addebito confermato",
+                new BigDecimal("-95.50"),
+                CURRENCY,
+                TODAY
+        );
+
+        assertThat(repository.findDueConfirmedRecurringCandidates(TODAY))
+                .filteredOn(candidate ->
+                        candidate.userGroupId().equals(context.userGroupId())
+                )
+                .extracting(FinanceReminderCandidate::userId)
+                .containsExactly(collaboratorUserId);
+
+        jdbcTemplate.update("""
+                        UPDATE recurring_transactions
+                        SET recurring_transaction_reminder_enabled = FALSE
+                        WHERE recurring_transaction_id = ?
+                        """,
+                recurringTransactionId
+        );
+
+        assertThat(repository.findDueConfirmedRecurringCandidates(TODAY))
+                .filteredOn(candidate ->
+                        candidate.userGroupId().equals(context.userGroupId())
+                )
+                .isEmpty();
     }
 
     private List<FinanceReminderCandidate> transactionCandidatesForGroup(UUID userGroupId) {

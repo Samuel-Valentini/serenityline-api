@@ -289,4 +289,85 @@ public class FinanceReminderCandidateRepository {
                 )
         );
     }
+
+    public List<FinanceReminderCandidate> findDueConfirmedRecurringCandidates(
+            LocalDate today
+    ) {
+        Objects.requireNonNull(today, "today");
+
+        String sql = """
+                SELECT
+                    rtu.user_id,
+                    t.user_group_id,
+                    t.recurring_transaction_id,
+                    t.recurring_transaction_logical_date,
+                    t.transaction_charge_date,
+                    t.transaction_description,
+                    t.transaction_amount,
+                    a.currency,
+                    (
+                        t.transaction_charge_date
+                        - rt.recurring_transaction_reminder_days_before::integer
+                    ) AS reminder_date
+                FROM transactions t
+                JOIN recurring_transactions rt
+                    ON rt.recurring_transaction_id = t.recurring_transaction_id
+                   AND rt.user_group_id = t.user_group_id
+                JOIN recurring_transactions_users rtu
+                    ON rtu.recurring_transaction_id = rt.recurring_transaction_id
+                   AND rtu.user_group_id = rt.user_group_id
+                JOIN users u
+                    ON u.user_id = rtu.user_id
+                   AND u.user_group_id = rtu.user_group_id
+                JOIN accounts a
+                    ON a.account_id = t.account_id
+                   AND a.user_group_id = t.user_group_id
+                WHERE t.transaction_is_user_entered = FALSE
+                  AND t.transaction_is_confirmed = TRUE
+                  AND t.transaction_is_simulated = FALSE
+                  AND rt.recurring_transaction_is_simulated = FALSE
+                  AND rt.recurring_transaction_reminder_enabled = TRUE
+                  AND u.user_is_enabled = TRUE
+                  AND u.payment_email_reminders_enabled = TRUE
+                  AND t.transaction_charge_date >= :today
+                  AND (
+                        t.transaction_charge_date
+                        - rt.recurring_transaction_reminder_days_before::integer
+                  ) <= :today
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM finance_reminder_notifications frn
+                        WHERE frn.user_group_id = t.user_group_id
+                          AND frn.user_id = rtu.user_id
+                          AND frn.recurring_transaction_id = t.recurring_transaction_id
+                          AND frn.recurring_transaction_logical_date =
+                              t.recurring_transaction_logical_date
+                  )
+                ORDER BY
+                    reminder_date,
+                    t.transaction_charge_date,
+                    t.recurring_transaction_id,
+                    t.recurring_transaction_logical_date,
+                    rtu.user_id
+                """;
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("today", today);
+
+        return jdbcTemplate.query(
+                sql,
+                params,
+                (rs, rowNum) -> FinanceReminderCandidate.forRecurringOccurrence(
+                        rs.getObject("user_id", UUID.class),
+                        rs.getObject("user_group_id", UUID.class),
+                        rs.getObject("recurring_transaction_id", UUID.class),
+                        rs.getDate("recurring_transaction_logical_date").toLocalDate(),
+                        rs.getDate("transaction_charge_date").toLocalDate(),
+                        rs.getString("transaction_description"),
+                        rs.getBigDecimal("transaction_amount"),
+                        rs.getString("currency"),
+                        rs.getDate("reminder_date").toLocalDate()
+                )
+        );
+    }
 }
