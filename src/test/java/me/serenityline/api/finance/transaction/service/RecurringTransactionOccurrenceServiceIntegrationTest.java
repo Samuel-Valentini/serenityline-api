@@ -1,19 +1,23 @@
 package me.serenityline.api.finance.transaction.service;
 
+import me.serenityline.api.finance.transaction.dto.RecurringTransactionOccurrenceConfirmRequest;
 import me.serenityline.api.finance.transaction.entity.RecurringTransaction;
 import me.serenityline.api.finance.transaction.repository.RecurringTransactionRepository;
+import me.serenityline.api.finance.transaction.repository.TransactionRepository;
 import me.serenityline.api.support.IntegrationTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.doReturn;
 
 class RecurringTransactionOccurrenceServiceIntegrationTest extends IntegrationTestSupport {
 
@@ -25,6 +29,12 @@ class RecurringTransactionOccurrenceServiceIntegrationTest extends IntegrationTe
 
     @Autowired
     private RecurringTransactionOccurrenceService recurringTransactionOccurrenceService;
+
+    @Autowired
+    private RecurringTransactionOccurrenceConfirmationService confirmationService;
+
+    @MockitoSpyBean
+    private TransactionRepository transactionRepository;
 
     private static String unique(String prefix) {
         return prefix + " " + UUID.randomUUID();
@@ -201,6 +211,92 @@ class RecurringTransactionOccurrenceServiceIntegrationTest extends IntegrationTe
                     assertThat(movement.linkedCreditCard()).isNull();
                     assertThat(movement.linkedBucket()).isNull();
                 });
+    }
+
+    @Test
+    void shouldTranslateRealDatabaseDuplicateAfterStalePrecheck() {
+        UserRef owner = createUserWithNewGroup("OWNER");
+
+        UUID accountId = createAccount(
+                owner.userGroupId(),
+                "Conto conferma duplicata",
+                "EUR"
+        );
+
+        UUID categoryId = createActiveCategory(
+                owner.userGroupId(),
+                owner.userId(),
+                "Categoria conferma duplicata"
+        );
+
+        LocalDate logicalDate = LocalDate.of(2026, 6, 1);
+
+        UUID recurringTransactionId = createWeeklyRecurringTransaction(
+                owner.userGroupId(),
+                accountId,
+                categoryId,
+                financialPriorityId("ESSENTIAL"),
+                logicalDate,
+                new BigDecimal("-100.00")
+        );
+
+        RecurringTransactionOccurrenceConfirmRequest request =
+                new RecurringTransactionOccurrenceConfirmRequest(
+                        logicalDate,
+                        null,
+                        null
+                );
+
+        UUID firstTransactionId = confirmationService.confirmOccurrence(
+                owner.userId(),
+                recurringTransactionId,
+                request
+        ).transactionId();
+
+        // Riproduce un controllo preliminare che non ha visto la conferma.
+        // Il successivo inserimento e la violazione del vincolo sono reali.
+        doReturn(false)
+                .when(transactionRepository)
+                .existsConfirmedRecurringOccurrence(
+                        owner.userGroupId(),
+                        recurringTransactionId,
+                        logicalDate
+                );
+
+        assertThatThrownBy(() -> confirmationService.confirmOccurrence(
+                owner.userId(),
+                recurringTransactionId,
+                request
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("finance.recurringTransaction.occurrenceAlreadyConfirmed")
+                .hasCauseInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(jdbcTemplate.queryForList("""
+                        SELECT transaction_id
+                        FROM transactions
+                        WHERE user_group_id = ?
+                          AND recurring_transaction_id = ?
+                          AND recurring_transaction_logical_date = ?
+                        """,
+                UUID.class,
+                owner.userGroupId(),
+                recurringTransactionId,
+                logicalDate
+        )).containsExactly(firstTransactionId);
+
+        assertThat(jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM transactions_users
+                        WHERE user_group_id = ?
+                          AND transaction_id = ?
+                          AND user_id = ?
+                        """,
+                Long.class,
+                owner.userGroupId(),
+                firstTransactionId,
+                owner.userId()
+        )).isEqualTo(1L);
     }
 
     private UserRef createUserWithNewGroup(String role) {

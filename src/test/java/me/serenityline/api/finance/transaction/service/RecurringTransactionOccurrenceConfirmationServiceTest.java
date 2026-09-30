@@ -14,9 +14,12 @@ import me.serenityline.api.finance.transaction.repository.TransactionUserReposit
 import me.serenityline.api.user.entity.User;
 import me.serenityline.api.user.entity.UserGroup;
 import me.serenityline.api.user.repository.UserRepository;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -24,9 +27,11 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -66,6 +71,38 @@ class RecurringTransactionOccurrenceConfirmationServiceTest {
     private RecurringTransactionProjectedMovementBatchService recurringTransactionProjectedMovementBatchService;
 
     private RecurringTransactionOccurrenceConfirmationService service;
+
+    private static Stream<DataIntegrityViolationException> unrelatedIntegrityViolations() {
+        return Stream.of(
+                new DataIntegrityViolationException(
+                        "Primary key violation",
+                        new ConstraintViolationException(
+                                "Duplicate primary key",
+                                new SQLException("Unique constraint violation", "23505"),
+                                "transactions_pkey"
+                        )
+                ),
+                new DataIntegrityViolationException(
+                        "Foreign key violation",
+                        new ConstraintViolationException(
+                                "Invalid account reference",
+                                new SQLException("Foreign key violation", "23503"),
+                                "fk_transactions_account_group"
+                        )
+                ),
+                new DataIntegrityViolationException(
+                        "Unknown unique constraint",
+                        new ConstraintViolationException(
+                                "Unique constraint violation",
+                                new SQLException("Unique constraint violation", "23505"),
+                                null
+                        )
+                ),
+                new DataIntegrityViolationException(
+                        "uq_transactions_recurring_logical_occurrence"
+                )
+        );
+    }
 
     @BeforeEach
     void setUp() {
@@ -435,18 +472,21 @@ class RecurringTransactionOccurrenceConfirmationServiceTest {
         UserFixture userFixture = givenCurrentUser();
         givenOperableRecurringTransaction(userFixture, true);
 
-        RecurringTransactionProjectedMovement projectedMovement = projectedMovement(userFixture.userGroup());
+        RecurringTransactionProjectedMovement projectedMovement =
+                projectedMovement(userFixture.userGroup());
 
         when(transactionRepository.existsConfirmedRecurringOccurrence(
                 USER_GROUP_ID,
                 RECURRING_TRANSACTION_ID,
                 LOGICAL_DATE
-        )).thenReturn(false, true);
+        )).thenReturn(false);
 
-        when(recurringTransactionProjectedMovementBatchService.generateProjectedMovementForLogicalDate(
-                eq(seed()),
-                eq(LOGICAL_DATE)
-        )).thenReturn(Optional.of(projectedMovement));
+        when(recurringTransactionProjectedMovementBatchService
+                .generateProjectedMovementForLogicalDate(
+                        eq(seed()),
+                        eq(LOGICAL_DATE)
+                ))
+                .thenReturn(Optional.of(projectedMovement));
 
         when(transactionAccessService.findOperableAccount(
                 userFixture.user(),
@@ -454,8 +494,18 @@ class RecurringTransactionOccurrenceConfirmationServiceTest {
                 ACCOUNT_ID
         )).thenReturn(projectedMovement.linkedAccount());
 
+        ConstraintViolationException constraintViolation =
+                new ConstraintViolationException(
+                        "Duplicate recurring occurrence",
+                        new SQLException("Unique constraint violation", "23505"),
+                        "uq_transactions_recurring_logical_occurrence"
+                );
+
         DataIntegrityViolationException duplicateException =
-                new DataIntegrityViolationException("duplicate recurring occurrence");
+                new DataIntegrityViolationException(
+                        "Could not execute statement",
+                        constraintViolation
+                );
 
         when(transactionRepository.saveAndFlush(any(Transaction.class)))
                 .thenThrow(duplicateException);
@@ -476,11 +526,70 @@ class RecurringTransactionOccurrenceConfirmationServiceTest {
                 .hasMessage("finance.recurringTransaction.occurrenceAlreadyConfirmed")
                 .hasCause(duplicateException);
 
-        verify(transactionRepository, times(2)).existsConfirmedRecurringOccurrence(
+        // Solo il controllo iniziale: nessuna nuova query dopo il fallimento.
+        verify(transactionRepository, times(1))
+                .existsConfirmedRecurringOccurrence(
+                        USER_GROUP_ID,
+                        RECURRING_TRANSACTION_ID,
+                        LOGICAL_DATE
+                );
+
+        verifyNoInteractions(transactionUserRepository);
+    }
+
+    @ParameterizedTest
+    @MethodSource("unrelatedIntegrityViolations")
+    void confirmOccurrenceShouldPropagateUnrelatedIntegrityViolations(
+            DataIntegrityViolationException exception
+    ) {
+        UserFixture userFixture = givenCurrentUser();
+        givenOperableRecurringTransaction(userFixture, true);
+
+        RecurringTransactionProjectedMovement projectedMovement =
+                projectedMovement(userFixture.userGroup());
+
+        when(transactionRepository.existsConfirmedRecurringOccurrence(
                 USER_GROUP_ID,
                 RECURRING_TRANSACTION_ID,
                 LOGICAL_DATE
-        );
+        )).thenReturn(false);
+
+        when(recurringTransactionProjectedMovementBatchService
+                .generateProjectedMovementForLogicalDate(
+                        eq(seed()),
+                        eq(LOGICAL_DATE)
+                ))
+                .thenReturn(Optional.of(projectedMovement));
+
+        when(transactionAccessService.findOperableAccount(
+                userFixture.user(),
+                USER_GROUP_ID,
+                ACCOUNT_ID
+        )).thenReturn(projectedMovement.linkedAccount());
+
+        when(transactionRepository.saveAndFlush(any(Transaction.class)))
+                .thenThrow(exception);
+
+        RecurringTransactionOccurrenceConfirmRequest request =
+                new RecurringTransactionOccurrenceConfirmRequest(
+                        LOGICAL_DATE,
+                        null,
+                        null
+                );
+
+        assertThatThrownBy(() -> service.confirmOccurrence(
+                CURRENT_USER_ID,
+                RECURRING_TRANSACTION_ID,
+                request
+        ))
+                .isSameAs(exception);
+
+        verify(transactionRepository, times(1))
+                .existsConfirmedRecurringOccurrence(
+                        USER_GROUP_ID,
+                        RECURRING_TRANSACTION_ID,
+                        LOGICAL_DATE
+                );
 
         verifyNoInteractions(transactionUserRepository);
     }

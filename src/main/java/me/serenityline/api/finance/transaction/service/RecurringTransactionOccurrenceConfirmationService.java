@@ -10,6 +10,7 @@ import me.serenityline.api.finance.transaction.repository.TransactionRepository;
 import me.serenityline.api.finance.transaction.repository.TransactionUserRepository;
 import me.serenityline.api.user.entity.User;
 import me.serenityline.api.user.repository.UserRepository;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,8 @@ import java.util.UUID;
 @Service
 public class RecurringTransactionOccurrenceConfirmationService {
 
+    private static final String RECURRING_OCCURRENCE_UNIQUE_CONSTRAINT =
+            "uq_transactions_recurring_logical_occurrence";
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
     private final TransactionUserRepository transactionUserRepository;
@@ -54,6 +57,24 @@ public class RecurringTransactionOccurrenceConfirmationService {
                 recurringTransactionProjectedMovementBatchService,
                 "recurringTransactionProjectedMovementBatchService"
         );
+    }
+
+    private static boolean isDuplicateRecurringOccurrence(Throwable exception) {
+        Throwable cause = exception;
+
+        while (cause != null) {
+            if (cause instanceof ConstraintViolationException violation
+                    && "23505".equals(violation.getSQLState())
+                    && RECURRING_OCCURRENCE_UNIQUE_CONSTRAINT.equals(
+                    violation.getConstraintName()
+            )) {
+                return true;
+            }
+
+            cause = cause.getCause();
+        }
+
+        return false;
     }
 
     @Transactional
@@ -139,11 +160,7 @@ public class RecurringTransactionOccurrenceConfirmationService {
         try {
             transaction = transactionRepository.saveAndFlush(transaction);
         } catch (DataIntegrityViolationException exception) {
-            if (transactionRepository.existsConfirmedRecurringOccurrence(
-                    userGroupId,
-                    recurringTransactionId,
-                    logicalDate
-            )) {
+            if (isDuplicateRecurringOccurrence(exception)) {
                 throw new IllegalArgumentException(
                         "finance.recurringTransaction.occurrenceAlreadyConfirmed",
                         exception
